@@ -135,7 +135,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             idea_id = path.rsplit("/", 1)[-1]
             idea = self.idea_vault.get_idea(idea_id)
             if not idea:
-                self.send_error(404, "Идея не найдена")
+                self.send_error(404, "Not Found")
                 return
             self._send_html(render_idea_detail(idea))
             return
@@ -143,14 +143,14 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             document_id = path.rsplit("/", 1)[-1]
             document = self.knowledge_base.get_document(document_id)
             if not document:
-                self.send_error(404, "Документ не найден")
+                self.send_error(404, "Not Found")
                 return
             self._send_html(render_knowledge_document(document))
             return
         if path == "/health":
             self._send_text("ok")
             return
-        self.send_error(404, "Не найдено")
+        self.send_error(404, "Not Found")
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
@@ -391,7 +391,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Location", "/ideas?deleted=1")
             self.end_headers()
             return
-        self.send_error(404, "Не найдено")
+        self.send_error(404, "Not Found")
 
     def log_message(self, format: str, *args: object) -> None:
         return
