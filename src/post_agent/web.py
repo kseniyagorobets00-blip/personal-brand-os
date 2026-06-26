@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -102,7 +102,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             saved = query.get("saved", ["0"])[0] == "1"
             view = query.get("view", ["list"])[0]
-            self._send_html(render_content_plan_page(_load_content_plan_raw(), saved=saved, view=view))
+            action_status = query.get("status", [""])[0]
+            self._send_html(render_content_plan_page(_load_content_plan_raw(), saved=saved, view=view, action_status=action_status))
             return
         if path == "/knowledge":
             query_params = parse_qs(urlparse(self.path).query)
@@ -1285,8 +1286,14 @@ def _week_group_card(group_key: str, items: list[object]) -> str:
     """
 
 
-def render_content_plan_page(plan: dict[str, object], saved: bool = False, view: str = "list") -> str:
+def render_content_plan_page(plan: dict[str, object], saved: bool = False, view: str = "list", action_status: str = "") -> str:
     notice = "<div class=\"notice\">Контент-план сохранен.</div>" if saved else ""
+    if action_status == "updated":
+        notice += "<div class=\"notice\">Обновлено.</div>"
+    if plan.get("updated_at"):
+        notice += f"<div class=\"state-note\">Последнее обновление: {escape(str(plan.get('updated_at')))}</div>"
+    if plan.get("last_action"):
+        notice += f"<div class=\"state-note\">{escape(str(plan.get('last_action')))}</div>"
     if plan.get("ai_error"):
         notice += f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(plan.get('ai_error')))}</div>"
     publications = plan.get("planned_publications", [])
@@ -1322,7 +1329,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
       <a class="{'active' if view == 'calendar' else ''}" href="/content-plan?view=calendar">Календарь</a>
     </div>
     {calendar_block}
-    <form class="profile-form" method="post" action="/content-plan">
+    <form class="profile-form" method="post" action="/content-plan" onsubmit="if (document.activeElement && document.activeElement.tagName === 'BUTTON') {{ document.activeElement.dataset.originalText = document.activeElement.textContent; document.activeElement.textContent = 'Генерируется...'; }}">
       <input type="hidden" name="view" value="{escape(view)}">
       <section class="profile-section">
         <p class="eyebrow">неделя</p>
@@ -1371,6 +1378,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     error = ""
     if item.get("ai_error"):
         error = f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(item.get('ai_error')))}</div>"
+    updated = f"<div class=\"state-note\">Обновлено: {escape(str(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
     return f"""
     <article class="plan-item edit-row" id="publication-{index}">
@@ -1383,6 +1391,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
       {_status_select(f"pub_{index}_status", "Статус", str(item.get("status", "")))}
       {_textarea(f"pub_{index}_summary", "Краткое содержание", item.get("summary", item.get("note", "")))}
       {_textarea(f"pub_{index}_note", "Заметка", item.get("note", ""))}
+      {updated}
       {error}
       <div class="form-actions">
         <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/содержание</button>
@@ -1498,6 +1507,10 @@ def _date_for_input(value: str) -> str:
     return parsed.isoformat() if parsed else ""
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 def _save_content_plan_form(data: dict[str, list[str]]) -> str:
     def value(name: str) -> str:
         return data.get(name, [""])[0].strip()
@@ -1568,6 +1581,8 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         "platform_targets": text_to_list(value("platform_targets")),
         "today_recommendation": value("today_recommendation"),
         "planned_publications": publications,
+        "updated_at": _now_iso(),
+        "last_action": "Сохранено вручную.",
     }
     if action == "request_ai":
         raw = _generate_content_plan_with_ai(raw)
@@ -1577,6 +1592,15 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         target_index = generate_index if generate_index is not None else change_index
         if target_index is not None and target_index < len(publications):
             raw["planned_publications"][target_index] = _generate_content_plan_publication_with_ai(raw, publications[target_index])
+            raw["updated_at"] = _now_iso()
+            if raw["planned_publications"][target_index].get("ai_error"):
+                raw["last_action"] = f"AI не обновил публикацию #{target_index + 1}."
+            else:
+                raw["last_action"] = f"Обновлена публикация #{target_index + 1}."
+        elif action == "approve":
+            raw["last_action"] = "План утвержден."
+        elif action == "add_publication":
+            raw["last_action"] = "Публикация добавлена."
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     anchor = ""
     target_index = _action_index(action, "generate_pub_")
@@ -1584,7 +1608,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         target_index = _action_index(action, "change_pub_")
     if target_index is not None:
         anchor = f"#publication-{target_index}"
-    return f"/content-plan?saved=1&view={view}{anchor}"
+    return f"/content-plan?saved=1&status=updated&view={view}{anchor}"
 
 
 def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
@@ -1646,6 +1670,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
             ),
             action="content_plan_publication",
         )
+        response = _extract_publication_response(response)
         updated["topic"] = str(response.get("topic") or response.get("title") or updated.get("topic") or "Тема для публикации").strip()
         updated["goal"] = str(response.get("goal") or response.get("purpose") or updated.get("goal", "")).strip()
         updated["summary"] = str(response.get("summary") or response.get("content") or response.get("description") or updated.get("summary", "")).strip()
@@ -1653,6 +1678,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
         updated["day"] = weekday_name_for_date(str(updated.get("date", "")))
+        updated["updated_at"] = _now_iso()
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
         _save_ai_action_error("content_plan_publication", exc)
@@ -1682,9 +1708,13 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
             ),
             action="content_plan_full",
         )
+        response = _extract_plan_response(response)
         for field in ("week", "focus", "month_focus", "today_recommendation"):
             if response.get(field):
                 updated[field] = response[field]
+        for field in ("week_start", "week_end"):
+            if response.get(field):
+                updated[field] = _normalize_plan_date_value(str(response.get(field))) or str(updated.get(field, ""))
         for field in ("content_pillars", "platform_targets"):
             value = response.get(field)
             if isinstance(value, list):
@@ -1703,14 +1733,36 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
         updated["week_start"] = week_start
         updated["week_end"] = week_end
         updated["week"] = _format_week_range(week_start, week_end)
+        updated["updated_at"] = _now_iso()
+        updated["last_action"] = "Создан новый план через AI."
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
         _save_ai_action_error("content_plan_full", exc)
         updated["ai_error"] = str(exc)
+        updated["updated_at"] = _now_iso()
+        updated["last_action"] = "AI не обновил план."
     except Exception as exc:
         _save_ai_action_error("content_plan_full", exc)
         updated["ai_error"] = f"Не удалось сгенерировать контент-план: {exc}"
+        updated["updated_at"] = _now_iso()
+        updated["last_action"] = "AI не обновил план."
     return updated
+
+
+def _extract_publication_response(response: dict[str, object]) -> dict[str, object]:
+    for key in ("publication", "post", "item", "result"):
+        value = response.get(key)
+        if isinstance(value, dict):
+            return value
+    return response
+
+
+def _extract_plan_response(response: dict[str, object]) -> dict[str, object]:
+    for key in ("content_plan", "plan", "week_plan", "result"):
+        value = response.get(key)
+        if isinstance(value, dict):
+            return value
+    return response
 
 
 def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:

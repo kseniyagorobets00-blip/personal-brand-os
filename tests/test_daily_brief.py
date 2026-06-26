@@ -294,11 +294,13 @@ class DailyBriefTests(unittest.TestCase):
         class Gateway:
             def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
                 return {
-                    "topic": "Generated topic",
-                    "goal": "Generated goal",
-                    "summary": "Generated summary",
-                    "status": "suggested",
-                    "note": "Generated note",
+                    "publication": {
+                        "topic": "Generated topic",
+                        "goal": "Generated goal",
+                        "summary": "Generated summary",
+                        "status": "suggested",
+                        "note": "Generated note",
+                    },
                 }
 
         with TemporaryDirectory() as directory:
@@ -336,20 +338,24 @@ class DailyBriefTests(unittest.TestCase):
                 location = _save_content_plan_form(form)
                 saved = json.loads(plan_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(location, "/content-plan?saved=1&view=list#publication-1")
+        self.assertEqual(location, "/content-plan?saved=1&status=updated&view=list#publication-1")
         self.assertEqual(saved["planned_publications"][0]["topic"], "Keep me")
         self.assertEqual(saved["planned_publications"][1]["topic"], "Generated topic")
         self.assertEqual(saved["planned_publications"][1]["day"], "Суббота")
+        self.assertTrue(saved["planned_publications"][1]["updated_at"])
+        self.assertTrue(saved["updated_at"])
 
     def test_content_plan_generate_full_plan_replaces_week_plan(self) -> None:
         class Gateway:
             def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, object]:
                 return {
-                    "focus": "Generated focus",
-                    "planned_publications": [
-                        {"platform": "LinkedIn", "topic": "Generated Monday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
-                        {"platform": "Telegram", "topic": "Generated Tuesday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
-                    ],
+                    "content_plan": {
+                        "focus": "Generated focus",
+                        "planned_publications": [
+                            {"platform": "LinkedIn", "topic": "Generated Monday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                            {"platform": "Telegram", "topic": "Generated Tuesday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                        ],
+                    },
                 }
 
         with TemporaryDirectory() as directory:
@@ -371,11 +377,13 @@ class DailyBriefTests(unittest.TestCase):
                 location = _save_content_plan_form(form)
                 saved = json.loads(plan_path.read_text(encoding="utf-8"))
 
-        self.assertEqual(location, "/content-plan?saved=1&view=calendar")
+        self.assertEqual(location, "/content-plan?saved=1&status=updated&view=calendar")
         self.assertEqual(saved["focus"], "Generated focus")
         self.assertEqual(saved["planned_publications"][0]["date"], "2026-06-22")
         self.assertEqual(saved["planned_publications"][1]["date"], "2026-06-23")
         self.assertEqual(saved["planned_publications"][0]["topic"], "Generated Monday")
+        self.assertEqual(saved["last_action"], "Создан новый план через AI.")
+        self.assertTrue(saved["updated_at"])
 
     def test_author_profile_form_can_be_saved_as_json(self) -> None:
         raw = _author_profile_form_to_raw(
