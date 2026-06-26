@@ -1,0 +1,14 @@
+[project]
+name = "codex-post-agent"
+version = "0.1.0"
+description = "Python agent for generating LinkedIn and Setka posts."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+post-agent = "post_agent.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+

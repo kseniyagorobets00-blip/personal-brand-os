@@ -1,0 +1,26 @@
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+build/
+dist/
+*.egg-info/
+
+.venv/
+venv/
+
+# Runtime/local product state
+data/ai/
+data/idea_vault/
+data/knowledge/
+data/learning/
+data/memory/
+data/trend_radar/
+data/ui_state.json
+!data/seeds/
+!data/seeds/**
