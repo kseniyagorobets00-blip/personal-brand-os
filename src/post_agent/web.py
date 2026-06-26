@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from .ai_gateway import AIGateway, AIGatewayError
 from .ai_pipeline import AIPipeline, ai_diagnostics, load_ai_result, load_ai_status
+from .author_brain import AuthorBrain
 from .author_profile import AuthorProfileRepository, list_to_text, text_to_list
 from .daily_brief import (
     DEFAULT_CONTENT_PLAN_PATH,
@@ -27,7 +28,7 @@ from .daily_brief import (
 from .idea_vault import IDEA_STATUSES, Idea, IdeaVault
 from .knowledge import KnowledgeBase, KnowledgeSearchResult, SUPPORTED_EXTENSIONS
 from .knowledge_graph import KnowledgeGraph
-from .learning import LearningCenter
+from .learning import LearningCenter, lessons_for_prompt
 from .memory import MemoryInbox
 from .trend_radar import TrendRadar
 from .writing_dna import WritingDNARepository, writing_dna_form_to_raw
@@ -103,7 +104,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             saved = query.get("saved", ["0"])[0] == "1"
             view = query.get("view", ["list"])[0]
             action_status = query.get("status", [""])[0]
-            self._send_html(render_content_plan_page(_load_content_plan_raw(), saved=saved, view=view, action_status=action_status))
+            plan = _content_plan_with_query_period(_load_content_plan_raw(), query)
+            self._send_html(render_content_plan_page(plan, saved=saved, view=view, action_status=action_status))
             return
         if path == "/knowledge":
             query_params = parse_qs(urlparse(self.path).query)
@@ -1329,6 +1331,13 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
       <a class="{'active' if view == 'calendar' else ''}" href="/content-plan?view=calendar">Календарь</a>
     </div>
     {calendar_block}
+    <form class="period-picker" method="get" action="/content-plan">
+      <input type="hidden" name="view" value="{escape(view)}">
+      <label><span>Месяц</span><input type="month" name="month" value="{escape(_month_for_input(week_start))}" onchange="this.form.submit()"></label>
+      <label><span>Дата начала периода</span><input type="date" name="week_start" value="{escape(_date_for_input(week_start))}" onchange="this.form.submit()"></label>
+      <label><span>Дата конца периода</span><input type="date" name="week_end" value="{escape(_date_for_input(week_end))}" onchange="this.form.submit()"></label>
+      <button class="ghost" type="submit">Открыть период</button>
+    </form>
     <form class="profile-form" method="post" action="/content-plan" onsubmit="if (document.activeElement && document.activeElement.tagName === 'BUTTON') {{ document.activeElement.dataset.originalText = document.activeElement.textContent; document.activeElement.textContent = 'Генерируется...'; }}">
       <input type="hidden" name="view" value="{escape(view)}">
       <section class="profile-section">
@@ -1463,6 +1472,28 @@ def _load_content_plan_raw() -> dict[str, object]:
     return json.loads(DEFAULT_CONTENT_PLAN_PATH.read_text(encoding="utf-8"))
 
 
+def _content_plan_with_query_period(plan: dict[str, object], query: dict[str, list[str]]) -> dict[str, object]:
+    month = query.get("month", [""])[0].strip()
+    month_start, month_end = _month_range(month)
+    start = _normalize_plan_date_value(query.get("week_start", [""])[0])
+    end = _normalize_plan_date_value(query.get("week_end", [""])[0])
+    if month_start and month_end:
+        start, end = month_start, month_end
+    if not start and not end:
+        return plan
+    updated = dict(plan)
+    if start:
+        updated["week_start"] = start
+    if end:
+        updated["week_end"] = end
+    week_start, week_end = _content_plan_period(updated)
+    updated["week_start"] = week_start
+    updated["week_end"] = week_end
+    updated["week"] = _format_week_range(week_start, week_end)
+    updated["last_action"] = "Открыт выбранный период. Нажмите «Сохранить план» или «Создать новый план», чтобы закрепить изменения."
+    return updated
+
+
 def _content_plan_period(plan: dict[str, object]) -> tuple[str, str]:
     start = _normalize_plan_date_value(str(plan.get("week_start", "")))
     end = _normalize_plan_date_value(str(plan.get("week_end", "")))
@@ -1507,8 +1538,64 @@ def _date_for_input(value: str) -> str:
     return parsed.isoformat() if parsed else ""
 
 
+def _month_for_input(value: str) -> str:
+    parsed = parse_plan_date(value)
+    return f"{parsed.year:04d}-{parsed.month:02d}" if parsed else ""
+
+
+def _month_range(value: str) -> tuple[str, str]:
+    if not re.fullmatch(r"\d{4}-\d{2}", value):
+        return "", ""
+    year, month = (int(part) for part in value.split("-", 1))
+    if month < 1 or month > 12:
+        return "", ""
+    return date(year, month, 1).isoformat(), date(year, month, monthrange(year, month)[1]).isoformat()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[str, object]:
+    knowledge_base = DailyBriefRequestHandler.knowledge_base
+    author_brain = AuthorBrain(
+        author_profile=DailyBriefRequestHandler.author_profile_repository.load_raw(),
+        writing_dna=DailyBriefRequestHandler.writing_dna_repository.load_raw(),
+        documents=knowledge_base.list_documents()[:8],
+        cases=knowledge_base.list_cases()[:8],
+        ideas=DailyBriefRequestHandler.idea_vault.list_ideas()[:12],
+    ).build(target or {})
+    trend_cache = DailyBriefRequestHandler.trend_radar.get_cached()
+    trend_topics = trend_cache.get("topics", [])
+    return {
+        "author_brain": author_brain,
+        "knowledge": [
+            {
+                "title": getattr(document, "title", ""),
+                "excerpt": getattr(document, "excerpt", ""),
+            }
+            for document in knowledge_base.list_documents()[:8]
+        ],
+        "cases": [
+            {
+                "title": getattr(case, "title", ""),
+                "company": getattr(case, "company", ""),
+                "result": getattr(case, "result", ""),
+                "topics": list(getattr(case, "key_topics", ())),
+            }
+            for case in knowledge_base.list_cases()[:8]
+        ],
+        "trend_radar": [
+            {
+                "title": str(topic.get("title", "")),
+                "why_now": str(topic.get("why_now", "")),
+                "brand_fit_score": topic.get("brand_fit_score", ""),
+            }
+            for topic in trend_topics[:6]
+            if isinstance(topic, dict)
+        ] if isinstance(trend_topics, list) else [],
+        "accepted_lessons": lessons_for_prompt(DailyBriefRequestHandler.learning_center.list_lessons("accepted")),
+    }
 
 
 def _save_content_plan_form(data: dict[str, list[str]]) -> str:
@@ -1651,33 +1738,52 @@ def _action_index(action: str, prefix: str) -> int | None:
 def _generate_content_plan_publication_with_ai(plan: dict[str, object], publication: dict[str, str]) -> dict[str, str]:
     updated = dict(publication)
     try:
-        response = _complete_json_with_retry(
-            AIGateway(),
-            system_prompt=(
-                "Ты AI Chief Content Officer. Сгенерируй тему и краткое содержание "
-                "для одной публикации в контент-плане. Ответь строго JSON."
-            ),
-            user_prompt=(
-                f"Неделя: {plan.get('week', '')}\n"
-                f"Фокус недели: {plan.get('focus', '')}\n"
-                f"Опорные темы: {plan.get('content_pillars', [])}\n"
-                f"Дата: {publication.get('date', '')}\n"
-                f"Площадка: {publication.get('platform', '')}\n"
-                f"Текущая тема: {publication.get('topic', '')}\n"
-                f"Цель: {publication.get('goal', '')}\n"
-                f"Краткое содержание: {publication.get('summary', '')}\n\n"
-                "Верни JSON с полями: topic, goal, summary, status, note."
-            ),
-            action="content_plan_publication",
-        )
-        response = _extract_publication_response(response)
+        context = _content_plan_ai_context(publication)
+        previous = _publication_signature(publication)
+        response: dict[str, object] = {}
+        for attempt in range(2):
+            raw_response = _complete_json_with_retry(
+                AIGateway(),
+                system_prompt=(
+                    "Ты AI Chief Content Officer. Создай совершенно новую идею для одной публикации. "
+                    "Не переписывай существующую тему и не делай рерайт. Ответь строго JSON."
+                ),
+                user_prompt=(
+                    "Строгая иерархия смысла:\n"
+                    f"1. Фокус месяца: {plan.get('month_focus', '')}\n"
+                    f"2. Фокус недели: {plan.get('focus', '')}\n"
+                    "3. Из фокуса недели нужно придумать новую публикацию.\n\n"
+                    "Сохрани только эти поля публикации:\n"
+                    f"- date: {publication.get('date', '')}\n"
+                    f"- platform: {publication.get('platform', '')}\n"
+                    f"- goal: {publication.get('goal', '')}\n"
+                    f"- pillar: {publication.get('pillar', '')}\n\n"
+                    "Заново придумай: topic, angle, main_thought, summary, note. "
+                    "Тема должна быть заметно другой, не рерайтом старой.\n\n"
+                    f"Предыдущий вариант, который нельзя повторять: {previous}\n"
+                    f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
+                    f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
+                    "Верни JSON с полями: topic, angle, main_thought, goal, summary, status, note."
+                ),
+                action="content_plan_publication",
+            )
+            response = _extract_publication_response(raw_response)
+            if attempt == 1 or not _publication_too_similar(publication, response):
+                break
         updated["topic"] = str(response.get("topic") or response.get("title") or updated.get("topic") or "Тема для публикации").strip()
         updated["goal"] = str(response.get("goal") or response.get("purpose") or updated.get("goal", "")).strip()
-        updated["summary"] = str(response.get("summary") or response.get("content") or response.get("description") or updated.get("summary", "")).strip()
+        summary_parts = [
+            str(response.get("angle", "")).strip(),
+            str(response.get("main_thought", "")).strip(),
+            str(response.get("summary") or response.get("content") or response.get("description") or "").strip(),
+        ]
+        updated["summary"] = "\n".join(part for part in summary_parts if part) or str(updated.get("summary", "")).strip()
         updated["status"] = str(response.get("status") or "suggested").strip()
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
         updated["day"] = weekday_name_for_date(str(updated.get("date", "")))
+        updated["month_focus"] = str(plan.get("month_focus", ""))
+        updated["week_focus"] = str(plan.get("focus", ""))
         updated["updated_at"] = _now_iso()
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
@@ -1692,23 +1798,48 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
 def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]:
     updated = dict(plan)
     try:
-        response = _complete_json_with_retry(
-            AIGateway(),
-            system_prompt=(
-                "Ты AI Chief Content Officer. Создай новый недельный контент-план с нуля на основе текущей стратегии и внутренних данных. "
-                "Сохрани структуру: planned_publications должен быть списком публикаций. "
-                "Ответь строго JSON."
-            ),
-            user_prompt=(
-                f"Текущий план:\n{json.dumps(plan, ensure_ascii=False)}\n\n"
-                "Верни JSON с полями week, focus, month_focus, content_pillars, "
-                "platform_targets, today_recommendation, planned_publications. "
-                "У каждой публикации: date, platform, topic, goal, summary, status, note. "
-                "День недели не возвращай: он вычисляется системой из date."
-            ),
-            action="content_plan_full",
-        )
-        response = _extract_plan_response(response)
+        context = _content_plan_ai_context()
+        previous_publications = [
+            {
+                "topic": item.get("topic", ""),
+                "summary": item.get("summary", ""),
+                "platform": item.get("platform", ""),
+            }
+            for item in plan.get("planned_publications", [])
+            if isinstance(item, dict)
+        ]
+        response: dict[str, object] = {}
+        for attempt in range(2):
+            raw_response = _complete_json_with_retry(
+                AIGateway(),
+                system_prompt=(
+                    "Ты AI Chief Content Officer. Создай новый недельный контент-план с нуля. "
+                    "Не используй предыдущий Content Plan как основу. Ответь строго JSON."
+                ),
+                user_prompt=(
+                    "Строгая иерархия:\n"
+                    f"1. Фокус месяца: {plan.get('month_focus', '')}\n"
+                    "2. Сначала сформируй новый фокус недели из фокуса месяца.\n"
+                    "3. Затем сформируй недельный контент-план.\n"
+                    "4. Затем сформируй публикации по дням, связанные с фокусом недели.\n\n"
+                    f"Период: {plan.get('week_start', '')} - {plan.get('week_end', '')}\n"
+                    f"Площадки: {plan.get('platform_targets', [])}\n"
+                    f"Опорные направления: {plan.get('content_pillars', [])}\n\n"
+                    "Предыдущие публикации запрещено использовать как основу; их нужно только избегать:\n"
+                    f"{json.dumps(previous_publications, ensure_ascii=False)}\n\n"
+                    "Каждый повторный запуск должен давать другой план: другие темы, идеи, углы и содержание.\n"
+                    f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
+                    f"Контекст автора, Knowledge, Trend Radar и Lessons: {json.dumps(context, ensure_ascii=False)}\n\n"
+                    "Верни JSON с полями week, week_start, week_end, focus, month_focus, content_pillars, "
+                    "platform_targets, today_recommendation, planned_publications. "
+                    "У каждой публикации: date, platform, topic, goal, pillar, summary, status, note. "
+                    "Не возвращай day: день недели вычисляется системой."
+                ),
+                action="content_plan_full",
+            )
+            response = _extract_plan_response(raw_response)
+            if attempt == 1 or not _plan_too_similar(previous_publications, response):
+                break
         for field in ("week", "focus", "month_focus", "today_recommendation"):
             if response.get(field):
                 updated[field] = response[field]
@@ -1733,6 +1864,10 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
         updated["week_start"] = week_start
         updated["week_end"] = week_end
         updated["week"] = _format_week_range(week_start, week_end)
+        for publication in updated.get("planned_publications", []):
+            if isinstance(publication, dict):
+                publication["month_focus"] = str(updated.get("month_focus", ""))
+                publication["week_focus"] = str(updated.get("focus", ""))
         updated["updated_at"] = _now_iso()
         updated["last_action"] = "Создан новый план через AI."
         updated.pop("ai_error", None)
@@ -1763,6 +1898,51 @@ def _extract_plan_response(response: dict[str, object]) -> dict[str, object]:
         if isinstance(value, dict):
             return value
     return response
+
+
+def _publication_signature(item: dict[str, object]) -> str:
+    return " ".join(
+        str(item.get(field, ""))
+        for field in ("topic", "summary", "note")
+    ).strip()
+
+
+def _publication_too_similar(previous: dict[str, object], response: dict[str, object]) -> bool:
+    old_text = _publication_signature(previous)
+    new_text = " ".join(
+        str(response.get(field, ""))
+        for field in ("topic", "title", "angle", "main_thought", "summary", "content", "description", "note")
+    )
+    return _text_similarity(old_text, new_text) >= 0.58
+
+
+def _plan_too_similar(previous_publications: list[dict[str, object]], response: dict[str, object]) -> bool:
+    publications = response.get("planned_publications") or response.get("publications") or response.get("plan")
+    if not isinstance(publications, list) or not publications:
+        return False
+    old_text = " ".join(_publication_signature(item) for item in previous_publications)
+    new_text = " ".join(
+        _publication_signature(item)
+        for item in publications
+        if isinstance(item, dict)
+    )
+    return _text_similarity(old_text, new_text) >= 0.48
+
+
+def _text_similarity(left: str, right: str) -> float:
+    left_tokens = set(_similarity_tokens(left))
+    right_tokens = set(_similarity_tokens(right))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+
+
+def _similarity_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[A-Za-zА-Яа-я0-9]+", text.lower(), flags=re.UNICODE)
+        if len(token) > 3
+    ]
 
 
 def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:
@@ -3806,6 +3986,20 @@ def _styles() -> str:
       color: white;
       background: var(--accent);
     }
+    .period-picker {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, max-content));
+      gap: 12px;
+      align-items: end;
+      margin: 18px 0 0;
+      padding: 16px;
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      background: rgba(255, 254, 250, .72);
+    }
+    .period-picker input {
+      min-width: 180px;
+    }
     .calendar-block {
       margin-top: 26px;
     }
@@ -3978,6 +4172,7 @@ def _styles() -> str:
     }
     @media (min-width: 641px) and (max-width: 1100px) {
       .shell { width: min(100% - 40px, 960px); }
+      .period-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .hero-cards, .memory-categories, .today-details, .week-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .today-card { grid-template-columns: 1fr; }
       .draft-grid, .approval-grid, .plan-list, .form-grid, .edit-row, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -3991,6 +4186,8 @@ def _styles() -> str:
       .meta { justify-content: flex-start; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
       .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: 1fr; }
+      .period-picker { grid-template-columns: 1fr; }
+      .period-picker input { min-width: 0; }
       .summary { padding-top: 28px; }
       h1 { font-size: 42px; }
       .section-title { display: grid; }

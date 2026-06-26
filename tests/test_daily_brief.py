@@ -9,7 +9,7 @@ from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.daily_brief import DailyBriefService, SeedRepository, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _refine_with_ai, _save_content_plan_form, render_author_profile, render_content_plan_page, render_daily_brief, render_writing_dna
+from post_agent.web import _author_profile_form_to_raw, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, render_author_profile, render_content_plan_page, render_daily_brief, render_writing_dna
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -266,6 +266,14 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn('type="date" name="week_end"', html)
         self.assertIn('type="date" name="pub_0_date"', html)
         self.assertIn('value="2026-06-26"', html)
+        self.assertIn('type="month" name="month"', html)
+
+    def test_content_plan_period_query_can_open_month(self) -> None:
+        plan = _content_plan_with_query_period({}, {"month": ["2026-06"]})
+
+        self.assertEqual(plan["week_start"], "2026-06-01")
+        self.assertEqual(plan["week_end"], "2026-06-30")
+        self.assertEqual(plan["week"], "01.06.2026 - 30.06.2026")
 
     def test_content_plan_calendar_view_groups_same_day_publications(self) -> None:
         html = render_content_plan_page(
@@ -344,6 +352,59 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(saved["planned_publications"][1]["day"], "Суббота")
         self.assertTrue(saved["planned_publications"][1]["updated_at"])
         self.assertTrue(saved["updated_at"])
+
+    def test_content_plan_publication_regenerates_when_ai_returns_similar_variant(self) -> None:
+        class Gateway:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.prompts: list[str] = []
+
+            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
+                self.calls += 1
+                self.prompts.append(user_prompt)
+                if self.calls == 1:
+                    return {
+                        "topic": "Old topic",
+                        "summary": "Old summary",
+                        "note": "Old note",
+                    }
+                return {
+                    "topic": "Completely new operations angle",
+                    "summary": "A different idea about service ownership and operational accountability.",
+                    "note": "Use a fresh observation, not the previous post.",
+                }
+
+        gateway = Gateway()
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            plan_path.write_text("{}", encoding="utf-8")
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch("post_agent.web.AIGateway", return_value=gateway):
+                result = _save_content_plan_form(
+                    {
+                        "view": ["list"],
+                        "plan_action": ["generate_pub_0"],
+                        "week_start": ["2026-06-22"],
+                        "week_end": ["2026-06-28"],
+                        "focus": ["Weekly focus"],
+                        "month_focus": ["Month focus"],
+                        "content_pillars": ["Operations"],
+                        "platform_targets": ["LinkedIn"],
+                        "today_recommendation": ["Today"],
+                        "pub_0_date": ["2026-06-26"],
+                        "pub_0_platform": ["LinkedIn"],
+                        "pub_0_topic": ["Old topic"],
+                        "pub_0_goal": ["Goal"],
+                        "pub_0_pillar": ["Operations"],
+                        "pub_0_status": ["planned"],
+                        "pub_0_summary": ["Old summary"],
+                        "pub_0_note": ["Old note"],
+                    }
+                )
+
+        self.assertIn("status=updated", result)
+        self.assertEqual(gateway.calls, 2)
+        self.assertIn("Month focus", gateway.prompts[0])
+        self.assertIn("Weekly focus", gateway.prompts[0])
 
     def test_content_plan_generate_full_plan_replaces_week_plan(self) -> None:
         class Gateway:
