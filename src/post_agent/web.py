@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import date
 from calendar import monthrange
+from datetime import date, timedelta
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -182,9 +182,9 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         if path == "/content-plan":
             length = int(self.headers.get("Content-Length", "0"))
             data = parse_qs(self.rfile.read(length).decode("utf-8"))
-            _save_content_plan_form(data)
+            redirect_target = _save_content_plan_form(data)
             self.send_response(303)
-            self.send_header("Location", "/content-plan?saved=1")
+            self.send_header("Location", redirect_target)
             self.end_headers()
             return
         if path == "/daily-brief/approval":
@@ -1292,6 +1292,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     publications = plan.get("planned_publications", [])
     rows = "".join(_content_plan_edit_row(item, index) for index, item in enumerate(publications))
     new_index = len(publications) if isinstance(publications, list) else 0
+    week_start, week_end = _content_plan_period(plan)
     view = "calendar" if view == "calendar" else "list"
     calendar_block = _content_plan_calendar(publications) if view == "calendar" else ""
     return f"""<!doctype html>
@@ -1322,12 +1323,15 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     </div>
     {calendar_block}
     <form class="profile-form" method="post" action="/content-plan">
+      <input type="hidden" name="view" value="{escape(view)}">
       <section class="profile-section">
         <p class="eyebrow">неделя</p>
         <div class="form-grid">
-          {_input("week", "Неделя", plan.get("week", ""))}
+          {_date_input("week_start", "Дата начала недели", week_start)}
+          {_date_input("week_end", "Дата конца недели", week_end)}
           {_input("month_focus", "Фокус месяца", plan.get("month_focus", ""))}
         </div>
+        <div class="state-note">Период: {escape(_format_week_range(week_start, week_end))}</div>
         {_textarea("focus", "Фокус недели", plan.get("focus", ""))}
         {_textarea("today_recommendation", "Что подготовить сегодня", plan.get("today_recommendation", ""))}
         {_textarea("content_pillars", "Опорные темы", list_to_text(plan.get("content_pillars", [])))}
@@ -1338,7 +1342,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <div class="plan-edit-list">{rows}</div>
         <article class="plan-item edit-row">
           <h3>Добавить публикацию</h3>
-          {_input("new_pub_date", "Дата", "")}
+          {_date_input("new_pub_date", "Дата", week_start)}
           {_input("new_pub_platform", "Площадка", "")}
           {_input("new_pub_topic", "Тема", "")}
           {_input("new_pub_goal", "Цель", "")}
@@ -1370,7 +1374,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
     return f"""
     <article class="plan-item edit-row" id="publication-{index}">
-      {_input(f"pub_{index}_date", "Дата", item.get("date", ""))}
+      {_date_input(f"pub_{index}_date", "Дата", str(item.get("date", "")))}
       <label>День недели<span>{escape(day or "Будет определен по дате")}</span></label>
       {_input(f"pub_{index}_platform", "Площадка", item.get("platform", ""))}
       {_input(f"pub_{index}_topic", "Тема", item.get("topic", ""))}
@@ -1450,11 +1454,61 @@ def _load_content_plan_raw() -> dict[str, object]:
     return json.loads(DEFAULT_CONTENT_PLAN_PATH.read_text(encoding="utf-8"))
 
 
-def _save_content_plan_form(data: dict[str, list[str]]) -> None:
+def _content_plan_period(plan: dict[str, object]) -> tuple[str, str]:
+    start = _normalize_plan_date_value(str(plan.get("week_start", "")))
+    end = _normalize_plan_date_value(str(plan.get("week_end", "")))
+    publications = plan.get("planned_publications", [])
+    dates = [
+        parsed
+        for parsed in (
+            parse_plan_date(str(item.get("date", "")))
+            for item in publications
+            if isinstance(item, dict)
+        )
+        if parsed is not None
+    ]
+    if not start and dates:
+        start = min(dates).isoformat()
+    if not end and dates:
+        end = max(dates).isoformat()
+    if not start:
+        today = date.today()
+        start = (today - timedelta(days=today.weekday())).isoformat()
+    if not end:
+        parsed_start = parse_plan_date(start)
+        end = (parsed_start + timedelta(days=6)).isoformat() if parsed_start else start
+    return start, end
+
+
+def _normalize_plan_date_value(value: str) -> str:
+    parsed = parse_plan_date(value)
+    return parsed.isoformat() if parsed else ""
+
+
+def _format_week_range(start: str, end: str) -> str:
+    parsed_start = parse_plan_date(start)
+    parsed_end = parse_plan_date(end)
+    if parsed_start and parsed_end:
+        return f"{parsed_start.strftime('%d.%m.%Y')} - {parsed_end.strftime('%d.%m.%Y')}"
+    return start or end
+
+
+def _date_for_input(value: str) -> str:
+    parsed = parse_plan_date(value)
+    return parsed.isoformat() if parsed else ""
+
+
+def _save_content_plan_form(data: dict[str, list[str]]) -> str:
     def value(name: str) -> str:
         return data.get(name, [""])[0].strip()
 
     action = value("plan_action")
+    view = "calendar" if value("view") == "calendar" else "list"
+    week_start = _normalize_plan_date_value(value("week_start")) or _content_plan_period(_load_content_plan_raw())[0]
+    week_end = _normalize_plan_date_value(value("week_end"))
+    if not week_end:
+        parsed_start = parse_plan_date(week_start)
+        week_end = (parsed_start + timedelta(days=6)).isoformat() if parsed_start else week_start
     delete_index = _action_index(action, "delete_pub_")
     publications = []
     indexes = sorted(
@@ -1470,7 +1524,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> None:
             continue
         topic = value(f"pub_{index}_topic")
         platform = value(f"pub_{index}_platform")
-        publication_date = value(f"pub_{index}_date")
+        publication_date = _normalize_plan_date_value(value(f"pub_{index}_date"))
         if not (topic or platform or publication_date):
             continue
         status = value(f"pub_{index}_status")
@@ -1478,8 +1532,8 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> None:
             status = "approved"
         publications.append(
             {
-                "date": value(f"pub_{index}_date"),
-                "day": weekday_name_for_date(value(f"pub_{index}_date")),
+                "date": publication_date,
+                "day": weekday_name_for_date(publication_date),
                 "platform": value(f"pub_{index}_platform"),
                 "topic": topic,
                 "goal": value(f"pub_{index}_goal"),
@@ -1490,9 +1544,10 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> None:
             }
         )
     if action == "add_publication":
+        new_pub_date = _normalize_plan_date_value(value("new_pub_date"))
         new_publication = {
-            "date": value("new_pub_date"),
-            "day": weekday_name_for_date(value("new_pub_date")),
+            "date": new_pub_date,
+            "day": weekday_name_for_date(new_pub_date),
             "platform": value("new_pub_platform"),
             "topic": value("new_pub_topic") or "Новая публикация",
             "goal": value("new_pub_goal"),
@@ -1504,7 +1559,9 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> None:
         publications.append(new_publication)
 
     raw = {
-        "week": value("week"),
+        "week": _format_week_range(week_start, week_end),
+        "week_start": week_start,
+        "week_end": week_end,
         "focus": value("focus"),
         "month_focus": value("month_focus"),
         "content_pillars": text_to_list(value("content_pillars")),
@@ -1521,6 +1578,13 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> None:
         if target_index is not None and target_index < len(publications):
             raw["planned_publications"][target_index] = _generate_content_plan_publication_with_ai(raw, publications[target_index])
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    anchor = ""
+    target_index = _action_index(action, "generate_pub_")
+    if target_index is None:
+        target_index = _action_index(action, "change_pub_")
+    if target_index is not None:
+        anchor = f"#publication-{target_index}"
+    return f"/content-plan?saved=1&view={view}{anchor}"
 
 
 def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
@@ -1582,11 +1646,13 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
             ),
             action="content_plan_publication",
         )
-        updated["topic"] = str(response.get("topic") or updated.get("topic") or "Тема для публикации").strip()
-        updated["goal"] = str(response.get("goal") or updated.get("goal", "")).strip()
-        updated["summary"] = str(response.get("summary") or updated.get("summary", "")).strip()
+        updated["topic"] = str(response.get("topic") or response.get("title") or updated.get("topic") or "Тема для публикации").strip()
+        updated["goal"] = str(response.get("goal") or response.get("purpose") or updated.get("goal", "")).strip()
+        updated["summary"] = str(response.get("summary") or response.get("content") or response.get("description") or updated.get("summary", "")).strip()
         updated["status"] = str(response.get("status") or "suggested").strip()
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
+        updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
+        updated["day"] = weekday_name_for_date(str(updated.get("date", "")))
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
         _save_ai_action_error("content_plan_publication", exc)
@@ -1623,13 +1689,20 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
             value = response.get(field)
             if isinstance(value, list):
                 updated[field] = [str(item) for item in value if str(item).strip()]
-        publications = response.get("planned_publications")
+        publications = response.get("planned_publications") or response.get("publications") or response.get("plan")
         if isinstance(publications, list) and publications:
-            updated["planned_publications"] = [
-                _normalize_plan_publication(item)
-                for item in publications
-                if isinstance(item, dict)
-            ]
+            updated["planned_publications"] = _apply_week_dates_to_publications(
+                [
+                    _normalize_plan_publication(item)
+                    for item in publications
+                    if isinstance(item, dict)
+                ],
+                str(updated.get("week_start", "")),
+            )
+        week_start, week_end = _content_plan_period(updated)
+        updated["week_start"] = week_start
+        updated["week_end"] = week_end
+        updated["week"] = _format_week_range(week_start, week_end)
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
         _save_ai_action_error("content_plan_full", exc)
@@ -1641,7 +1714,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
 
 
 def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:
-    publication_date = str(item.get("date", "")).strip()
+    publication_date = _normalize_plan_date_value(str(item.get("date", "")).strip())
     return {
         "date": publication_date,
         "day": weekday_name_for_date(publication_date),
@@ -1653,6 +1726,16 @@ def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:
         "summary": str(item.get("summary", "")).strip(),
         "note": str(item.get("note", "")).strip(),
     }
+
+
+def _apply_week_dates_to_publications(publications: list[dict[str, str]], week_start: str) -> list[dict[str, str]]:
+    parsed_start = parse_plan_date(week_start)
+    if not parsed_start:
+        return publications
+    for index, item in enumerate(publications):
+        item["date"] = _normalize_plan_date_value(str(item.get("date", ""))) or (parsed_start + timedelta(days=index)).isoformat()
+        item["day"] = weekday_name_for_date(item["date"])
+    return publications
 
 
 def render_knowledge(
@@ -2261,6 +2344,15 @@ def _input(name: str, label: str, value: object) -> str:
     <label>
       <span>{escape(label)}</span>
       <input name="{escape(name)}" value="{escape(str(value))}">
+    </label>
+    """
+
+
+def _date_input(name: str, label: str, value: object) -> str:
+    return f"""
+    <label>
+      <span>{escape(label)}</span>
+      <input type="date" name="{escape(name)}" value="{escape(_date_for_input(str(value)))}">
     </label>
     """
 

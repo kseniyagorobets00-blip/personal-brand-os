@@ -1,4 +1,5 @@
 import unittest
+import json
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import patch
@@ -8,7 +9,7 @@ from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.daily_brief import DailyBriefService, SeedRepository, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _refine_with_ai, render_author_profile, render_content_plan_page, render_daily_brief, render_writing_dna
+from post_agent.web import _author_profile_form_to_raw, _refine_with_ai, _save_content_plan_form, render_author_profile, render_content_plan_page, render_daily_brief, render_writing_dna
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -252,6 +253,20 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Цель", html)
         self.assertIn("Дата", html)
 
+    def test_content_plan_page_uses_browser_date_inputs(self) -> None:
+        html = render_content_plan_page(
+            {
+                "week_start": "2026-06-22",
+                "week_end": "2026-06-28",
+                "planned_publications": [{"date": "26.06.2026", "platform": "LinkedIn", "topic": "CX"}],
+            }
+        )
+
+        self.assertIn('type="date" name="week_start"', html)
+        self.assertIn('type="date" name="week_end"', html)
+        self.assertIn('type="date" name="pub_0_date"', html)
+        self.assertIn('value="2026-06-26"', html)
+
     def test_content_plan_calendar_view_groups_same_day_publications(self) -> None:
         html = render_content_plan_page(
             {
@@ -274,6 +289,93 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("#publication-1", html)
         self.assertIn("Первая тема", html)
         self.assertIn("Вторая тема", html)
+
+    def test_content_plan_generate_publication_updates_only_selected_item(self) -> None:
+        class Gateway:
+            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
+                return {
+                    "topic": "Generated topic",
+                    "goal": "Generated goal",
+                    "summary": "Generated summary",
+                    "status": "suggested",
+                    "note": "Generated note",
+                }
+
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            plan_path.write_text("{}", encoding="utf-8")
+            form = {
+                "view": ["list"],
+                "plan_action": ["generate_pub_1"],
+                "week_start": ["2026-06-22"],
+                "week_end": ["2026-06-28"],
+                "focus": ["Focus"],
+                "month_focus": ["Month"],
+                "content_pillars": ["Operations"],
+                "platform_targets": ["LinkedIn"],
+                "today_recommendation": ["Today"],
+                "pub_0_date": ["2026-06-26"],
+                "pub_0_platform": ["LinkedIn"],
+                "pub_0_topic": ["Keep me"],
+                "pub_0_goal": [""],
+                "pub_0_pillar": [""],
+                "pub_0_status": ["planned"],
+                "pub_0_summary": [""],
+                "pub_0_note": [""],
+                "pub_1_date": ["2026-06-27"],
+                "pub_1_platform": ["Telegram"],
+                "pub_1_topic": ["Old"],
+                "pub_1_goal": [""],
+                "pub_1_pillar": [""],
+                "pub_1_status": ["planned"],
+                "pub_1_summary": [""],
+                "pub_1_note": [""],
+            }
+
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch("post_agent.web.AIGateway", return_value=Gateway()):
+                location = _save_content_plan_form(form)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(location, "/content-plan?saved=1&view=list#publication-1")
+        self.assertEqual(saved["planned_publications"][0]["topic"], "Keep me")
+        self.assertEqual(saved["planned_publications"][1]["topic"], "Generated topic")
+        self.assertEqual(saved["planned_publications"][1]["day"], "Суббота")
+
+    def test_content_plan_generate_full_plan_replaces_week_plan(self) -> None:
+        class Gateway:
+            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, object]:
+                return {
+                    "focus": "Generated focus",
+                    "planned_publications": [
+                        {"platform": "LinkedIn", "topic": "Generated Monday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                        {"platform": "Telegram", "topic": "Generated Tuesday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                    ],
+                }
+
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            plan_path.write_text("{}", encoding="utf-8")
+            form = {
+                "view": ["calendar"],
+                "plan_action": ["request_ai"],
+                "week_start": ["2026-06-22"],
+                "week_end": ["2026-06-28"],
+                "focus": ["Old"],
+                "month_focus": ["Month"],
+                "content_pillars": ["Operations"],
+                "platform_targets": ["LinkedIn"],
+                "today_recommendation": ["Today"],
+            }
+
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch("post_agent.web.AIGateway", return_value=Gateway()):
+                location = _save_content_plan_form(form)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(location, "/content-plan?saved=1&view=calendar")
+        self.assertEqual(saved["focus"], "Generated focus")
+        self.assertEqual(saved["planned_publications"][0]["date"], "2026-06-22")
+        self.assertEqual(saved["planned_publications"][1]["date"], "2026-06-23")
+        self.assertEqual(saved["planned_publications"][0]["topic"], "Generated Monday")
 
     def test_author_profile_form_can_be_saved_as_json(self) -> None:
         raw = _author_profile_form_to_raw(
