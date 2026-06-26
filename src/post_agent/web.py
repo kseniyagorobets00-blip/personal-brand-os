@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+from calendar import monthrange
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
+import socket
 from urllib.parse import parse_qs, quote, urlparse
 
 from .ai_gateway import AIGateway, AIGatewayError
@@ -38,6 +40,8 @@ REFINEMENT_ACTIONS = (
     "Сделать мягче",
 )
 UI_STATE_PATH = DEFAULT_CONTENT_PLAN_PATH.parents[1] / "ui_state.json"
+AI_ACTION_DIAGNOSTICS_PATH = DEFAULT_CONTENT_PLAN_PATH.parents[1] / "ai" / "action_errors.json"
+AI_TIMEOUT_MESSAGE = "AI не успел ответить. Попробуйте еще раз."
 
 
 class DailyBriefRequestHandler(BaseHTTPRequestHandler):
@@ -95,8 +99,10 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             )
             return
         if path == "/content-plan":
-            saved = parse_qs(urlparse(self.path).query).get("saved", ["0"])[0] == "1"
-            self._send_html(render_content_plan_page(_load_content_plan_raw(), saved=saved))
+            query = parse_qs(urlparse(self.path).query)
+            saved = query.get("saved", ["0"])[0] == "1"
+            view = query.get("view", ["list"])[0]
+            self._send_html(render_content_plan_page(_load_content_plan_raw(), saved=saved, view=view))
             return
         if path == "/knowledge":
             query_params = parse_qs(urlparse(self.path).query)
@@ -983,6 +989,7 @@ def _ai_diagnostics_block(diagnostics: dict[str, object]) -> str:
         ("ProxyAPI настроен", "да" if diagnostics.get("proxy_configured") else "нет"),
         ("Модель", diagnostics.get("model", "")),
         ("Последняя ошибка AI Pipeline", diagnostics.get("last_error", "") or "нет"),
+        ("Последняя техническая ошибка AI-действия", diagnostics.get("last_action_error", "") or "нет"),
     )
     return f"""
       <details class="ai-diagnostics">
@@ -1266,13 +1273,15 @@ def _week_group_card(group_key: str, items: list[object]) -> str:
     """
 
 
-def render_content_plan_page(plan: dict[str, object], saved: bool = False) -> str:
+def render_content_plan_page(plan: dict[str, object], saved: bool = False, view: str = "list") -> str:
     notice = "<div class=\"notice\">Контент-план сохранен.</div>" if saved else ""
     if plan.get("ai_error"):
         notice += f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(plan.get('ai_error')))}</div>"
     publications = plan.get("planned_publications", [])
     rows = "".join(_content_plan_edit_row(item, index) for index, item in enumerate(publications))
     new_index = len(publications) if isinstance(publications, list) else 0
+    view = "calendar" if view == "calendar" else "list"
+    calendar_block = _content_plan_calendar(publications) if view == "calendar" else ""
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -1295,6 +1304,11 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False) -> st
       </div>
     </header>
     {notice}
+    <div class="view-switch">
+      <a class="{'active' if view == 'list' else ''}" href="/content-plan?view=list">Список</a>
+      <a class="{'active' if view == 'calendar' else ''}" href="/content-plan?view=calendar">Календарь</a>
+    </div>
+    {calendar_block}
     <form class="profile-form" method="post" action="/content-plan">
       <section class="profile-section">
         <p class="eyebrow">неделя</p>
@@ -1327,7 +1341,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False) -> st
         <div class="form-actions">
           <button name="plan_action" value="save" type="submit">Сохранить план</button>
           <button name="plan_action" value="approve" type="submit">Утвердить план</button>
-          <button class="ghost" name="plan_action" value="request_ai" type="submit">Попросить AI сформировать новый план</button>
+          <button class="ghost" name="plan_action" value="request_ai" type="submit">Создать новый план</button>
         </div>
       </section>
     </form>
@@ -1343,7 +1357,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         error = f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(item.get('ai_error')))}</div>"
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
     return f"""
-    <article class="plan-item edit-row">
+    <article class="plan-item edit-row" id="publication-{index}">
       {_input(f"pub_{index}_date", "Дата", item.get("date", ""))}
       <label>День недели<span>{escape(day or "Будет определен по дате")}</span></label>
       {_input(f"pub_{index}_platform", "Площадка", item.get("platform", ""))}
@@ -1360,6 +1374,63 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         <button class="ghost" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
       </div>
     </article>
+    """
+
+
+def _content_plan_calendar(publications: object) -> str:
+    items = publications if isinstance(publications, list) else []
+    dates = [
+        parse_plan_date(str(item.get("date", "")))
+        for item in items
+        if isinstance(item, dict)
+    ]
+    dates = [item for item in dates if item is not None]
+    base = dates[0] if dates else date.today()
+    first_weekday, days_in_month = monthrange(base.year, base.month)
+    by_day: dict[int, list[tuple[int, dict[str, object]]]] = {}
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        parsed = parse_plan_date(str(item.get("date", "")))
+        if parsed and parsed.year == base.year and parsed.month == base.month:
+            by_day.setdefault(parsed.day, []).append((index, item))
+    blanks = "".join('<div class="calendar-day muted"></div>' for _ in range(first_weekday))
+    days = []
+    for day_number in range(1, days_in_month + 1):
+        day_items = "".join(_calendar_publication(index, item) for index, item in by_day.get(day_number, []))
+        days.append(
+            f"""
+            <div class="calendar-day">
+              <strong>{day_number}</strong>
+              {day_items}
+            </div>
+            """
+        )
+    weekdays = "".join(f"<span>{label}</span>" for label in ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"))
+    return f"""
+    <section class="block calendar-block">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">календарь</p>
+          <h2>{base.strftime('%m.%Y')}</h2>
+        </div>
+        <span>{len(items)} публикаций</span>
+      </div>
+      <div class="calendar-weekdays">{weekdays}</div>
+      <div class="calendar-grid">{blanks}{''.join(days)}</div>
+    </section>
+    """
+
+
+def _calendar_publication(index: int, item: dict[str, object]) -> str:
+    platform = str(item.get("platform", ""))
+    topic = str(item.get("topic", ""))
+    status = _status_ru(str(item.get("status", "")))
+    return f"""
+    <a class="calendar-publication" href="#publication-{index}">
+      <span>{escape(platform)} · {escape(status)}</span>
+      <b>{escape(topic or "Без темы")}</b>
+    </a>
     """
 
 
@@ -1480,7 +1551,8 @@ def _action_index(action: str, prefix: str) -> int | None:
 def _generate_content_plan_publication_with_ai(plan: dict[str, object], publication: dict[str, str]) -> dict[str, str]:
     updated = dict(publication)
     try:
-        response = AIGateway().complete_json(
+        response = _complete_json_with_retry(
+            AIGateway(),
             system_prompt=(
                 "Ты AI Chief Content Officer. Сгенерируй тему и краткое содержание "
                 "для одной публикации в контент-плане. Ответь строго JSON."
@@ -1496,6 +1568,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                 f"Краткое содержание: {publication.get('summary', '')}\n\n"
                 "Верни JSON с полями: topic, goal, summary, status, note."
             ),
+            action="content_plan_publication",
         )
         updated["topic"] = str(response.get("topic") or updated.get("topic") or "Тема для публикации").strip()
         updated["goal"] = str(response.get("goal") or updated.get("goal", "")).strip()
@@ -1504,8 +1577,10 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
+        _save_ai_action_error("content_plan_publication", exc)
         updated["ai_error"] = str(exc)
     except Exception as exc:
+        _save_ai_action_error("content_plan_publication", exc)
         updated["ai_error"] = f"Не удалось сгенерировать публикацию: {exc}"
     return updated
 
@@ -1513,9 +1588,10 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
 def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]:
     updated = dict(plan)
     try:
-        response = AIGateway().complete_json(
+        response = _complete_json_with_retry(
+            AIGateway(),
             system_prompt=(
-                "Ты AI Chief Content Officer. Обнови недельный контент-план. "
+                "Ты AI Chief Content Officer. Создай новый недельный контент-план с нуля на основе текущей стратегии и внутренних данных. "
                 "Сохрани структуру: planned_publications должен быть списком публикаций. "
                 "Ответь строго JSON."
             ),
@@ -1526,6 +1602,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
                 "У каждой публикации: date, platform, topic, goal, summary, status, note. "
                 "День недели не возвращай: он вычисляется системой из date."
             ),
+            action="content_plan_full",
         )
         for field in ("week", "focus", "month_focus", "today_recommendation"):
             if response.get(field):
@@ -1543,8 +1620,10 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
             ]
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
+        _save_ai_action_error("content_plan_full", exc)
         updated["ai_error"] = str(exc)
     except Exception as exc:
+        _save_ai_action_error("content_plan_full", exc)
         updated["ai_error"] = f"Не удалось сгенерировать контент-план: {exc}"
     return updated
 
@@ -2565,7 +2644,8 @@ def _refine_with_ai(action: str, title: str, text: str, kind: str) -> dict[str, 
         gateway = AIGateway()
         if not gateway.is_configured():
             raise AIGatewayError("ProxyAPI не настроен.")
-        response = gateway.complete_json(
+        response = _complete_json_with_retry(
+            gateway,
             system_prompt=(
                 "Ты редактор AI Chief Content Officer для Personal Brand OS. "
                 "Доработай только переданный фрагмент. Не добавляй новые факты. "
@@ -2583,6 +2663,7 @@ def _refine_with_ai(action: str, title: str, text: str, kind: str) -> dict[str, 
                 "- 'Сделать мягче' снижает категоричность и делает тон спокойнее.\n"
                 "Верни JSON: {\"title\":\"...\", \"text\":\"...\"}."
             ),
+            action="daily_brief_refine",
         )
         refined_title = str(response.get("title") or title).strip() or title
         refined_text = str(response.get("text") or text).strip() or text
@@ -2595,9 +2676,11 @@ def _refine_with_ai(action: str, title: str, text: str, kind: str) -> dict[str, 
             "error": "",
         }
     except AIGatewayError as exc:
-        error_text = str(exc)
+        _save_ai_action_error("daily_brief_refine", exc)
+        error_text = AI_TIMEOUT_MESSAGE
     except Exception as exc:
-        error_text = f"Не удалось обновить текст: {exc}"
+        _save_ai_action_error("daily_brief_refine", exc)
+        error_text = AI_TIMEOUT_MESSAGE
     return {
         "action": action,
         "status": "error",
@@ -2645,6 +2728,7 @@ def _apply_feedback_with_ai(title: str, text: str, feedback: str) -> dict[str, o
             "error": "",
         }
     except Exception as exc:
+        _save_ai_action_error("draft_feedback", exc)
         return {
             "action": "Комментарий AI",
             "status": "error",
@@ -2653,6 +2737,61 @@ def _apply_feedback_with_ai(title: str, text: str, feedback: str) -> dict[str, o
             "text": text,
             "error": str(exc),
         }
+
+
+def _complete_json_with_retry(
+    gateway: AIGateway,
+    system_prompt: str,
+    user_prompt: str,
+    action: str,
+) -> dict[str, object]:
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            return gateway.complete_json(system_prompt=system_prompt, user_prompt=user_prompt)
+        except AIGatewayError as exc:
+            last_error = exc
+            if attempt == 1:
+                break
+            if not _looks_like_timeout(exc):
+                break
+        except (TimeoutError, socket.timeout) as exc:
+            last_error = exc
+            if attempt == 1:
+                break
+    if last_error:
+        _save_ai_action_error(action, last_error)
+        if isinstance(last_error, AIGatewayError):
+            raise last_error
+        raise AIGatewayError(str(last_error)) from last_error
+    raise AIGatewayError("AI request failed.")
+
+
+def _looks_like_timeout(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in ("timeout", "timed out", "превыш", "time-out"))
+
+
+def _save_ai_action_error(action: str, exc: Exception) -> None:
+    AI_ACTION_DIAGNOSTICS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        raw = json.loads(AI_ACTION_DIAGNOSTICS_PATH.read_text(encoding="utf-8"))
+        items = raw if isinstance(raw, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        items = []
+    items.insert(
+        0,
+        {
+            "action": action,
+            "error": str(exc),
+            "type": exc.__class__.__name__,
+            "created_at": date.today().isoformat(),
+        },
+    )
+    AI_ACTION_DIAGNOSTICS_PATH.write_text(
+        json.dumps(items[:20], ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _item_key(text: str) -> str:
@@ -3480,6 +3619,84 @@ def _styles() -> str:
     .plan-edit-list {
       display: grid;
       gap: 14px;
+    }
+    .view-switch {
+      display: inline-flex;
+      gap: 6px;
+      margin: 28px 0 0;
+      padding: 4px;
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+      background: rgba(255, 254, 250, .72);
+    }
+    .view-switch a {
+      color: var(--muted);
+      text-decoration: none;
+      border-radius: 999px;
+      padding: 8px 13px;
+      font-size: 13px;
+      font-weight: 680;
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+    }
+    .view-switch a.active {
+      color: white;
+      background: var(--accent);
+    }
+    .calendar-block {
+      margin-top: 26px;
+    }
+    .calendar-weekdays, .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .calendar-weekdays {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+    .calendar-weekdays span {
+      padding: 0 8px;
+    }
+    .calendar-day {
+      min-height: 118px;
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      padding: 10px;
+      background: rgba(255, 254, 250, .72);
+      min-width: 0;
+    }
+    .calendar-day.muted {
+      background: transparent;
+      border-style: dashed;
+    }
+    .calendar-date {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+    }
+    .calendar-publication {
+      display: grid;
+      gap: 2px;
+      margin-top: 6px;
+      padding: 8px;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .calendar-publication span {
+      color: var(--accent);
+      font-weight: 760;
     }
     .edit-row {
       display: grid;

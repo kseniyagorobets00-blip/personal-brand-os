@@ -25,6 +25,7 @@ from .writing_dna import WritingDNARepository
 DEFAULT_AI_DIR = ROOT / "data" / "ai"
 DEFAULT_AI_RESULT_PATH = DEFAULT_AI_DIR / "daily_brief_ai.json"
 DEFAULT_AI_STATUS_PATH = DEFAULT_AI_DIR / "status.json"
+DEFAULT_AI_ACTION_ERRORS_PATH = DEFAULT_AI_DIR / "action_errors.json"
 _PIPELINE_LOCK = threading.Lock()
 THINKING_ENGINE_PROMPT_RULE = (
     "Use the Thinking Engine result before writing. Do not jump directly from context to draft generation. "
@@ -241,7 +242,21 @@ def ai_diagnostics(status_path: Path = DEFAULT_AI_STATUS_PATH) -> dict[str, obje
         "proxy_configured": config.is_configured,
         "model": config.model,
         "last_error": status.error,
+        "last_action_error": _last_action_error(),
     }
+
+
+def _last_action_error(path: Path = DEFAULT_AI_ACTION_ERRORS_PATH) -> str:
+    if not path.exists():
+        return ""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(raw, list) or not raw:
+        return ""
+    first = raw[0] if isinstance(raw[0], dict) else {}
+    return str(first.get("error", ""))
 
 
 def _system_prompt() -> str:

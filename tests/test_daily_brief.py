@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 from datetime import date
 
+from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.daily_brief import DailyBriefService, SeedRepository, weekday_name_for_date
 from post_agent.export import export_daily_brief
@@ -160,6 +161,28 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(result["title"], "AI-заголовок")
         self.assertEqual(result["text"], "AI-версия текста")
 
+    def test_refinement_retries_timeout_and_keeps_current_draft(self) -> None:
+        class TimeoutGateway:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def is_configured(self) -> bool:
+                return True
+
+            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
+                self.calls += 1
+                raise AIGatewayError("timed out")
+
+        gateway = TimeoutGateway()
+        with patch("post_agent.web.AIGateway", return_value=gateway):
+            result = _refine_with_ai("Сделать сильнее", "Старый заголовок", "Старый текст", "draft")
+
+        self.assertEqual(gateway.calls, 2)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["title"], "Старый заголовок")
+        self.assertEqual(result["text"], "Старый текст")
+        self.assertEqual(result["error"], "AI не успел ответить. Попробуйте еще раз.")
+
     def test_daily_brief_explains_plan_fit(self) -> None:
         brief = DailyBriefService().build_today()
 
@@ -222,12 +245,35 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Контент-план", html)
         self.assertIn("Сохранить план", html)
         self.assertIn("Утвердить план", html)
-        self.assertIn("Попросить AI сформировать новый план", html)
+        self.assertIn("Создать новый план", html)
         self.assertIn("Сгенерировать тему/содержание", html)
         self.assertIn("Добавить публикацию", html)
         self.assertIn("Краткое содержание", html)
         self.assertIn("Цель", html)
         self.assertIn("Дата", html)
+
+    def test_content_plan_calendar_view_groups_same_day_publications(self) -> None:
+        html = render_content_plan_page(
+            {
+                "week": "25-30 июня",
+                "focus": "CX через Operations",
+                "month_focus": "Operations, CX, AI",
+                "content_pillars": ["Operations", "Customer Experience"],
+                "platform_targets": ["LinkedIn", "Telegram"],
+                "today_recommendation": "Подготовить пост",
+                "planned_publications": [
+                    {"date": "26.06.2026", "platform": "LinkedIn", "topic": "Первая тема", "status": "planned", "goal": "", "summary": "", "note": ""},
+                    {"date": "26.06.2026", "platform": "Telegram", "topic": "Вторая тема", "status": "drafted", "goal": "", "summary": "", "note": ""},
+                ],
+            },
+            view="calendar",
+        )
+
+        self.assertIn("Календарь", html)
+        self.assertIn("#publication-0", html)
+        self.assertIn("#publication-1", html)
+        self.assertIn("Первая тема", html)
+        self.assertIn("Вторая тема", html)
 
     def test_author_profile_form_can_be_saved_as_json(self) -> None:
         raw = _author_profile_form_to_raw(
