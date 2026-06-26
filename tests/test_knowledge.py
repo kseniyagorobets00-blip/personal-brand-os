@@ -64,6 +64,12 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("Service Design note", document_html)
         self.assertIn("Удалить документ", document_html)
 
+    def test_knowledge_ui_renders_upload_error(self) -> None:
+        html = render_knowledge([], cases=[], upload_error="Не удалось загрузить документ.")
+
+        self.assertIn("Не удалось загрузить документ.", html)
+        self.assertIn("error-note", html)
+
     def test_search_finds_documents_by_title_and_content_with_reason(self) -> None:
         with TemporaryDirectory() as directory:
             base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")

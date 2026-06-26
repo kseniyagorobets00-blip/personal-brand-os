@@ -107,6 +107,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         if path == "/knowledge":
             query_params = parse_qs(urlparse(self.path).query)
             uploaded = query_params.get("uploaded", ["0"])[0] == "1"
+            upload_error = query_params.get("upload_error", [""])[0]
             deleted = query_params.get("deleted", ["0"])[0] == "1"
             case_saved = query_params.get("case_saved", ["0"])[0] == "1"
             case_deleted = query_params.get("case_deleted", ["0"])[0] == "1"
@@ -118,6 +119,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                     self.knowledge_base.list_documents(),
                     cases=self.knowledge_base.list_cases(),
                     uploaded=uploaded,
+                    upload_error=upload_error,
                     deleted=deleted,
                     case_saved=case_saved,
                     case_deleted=case_deleted,
@@ -353,11 +355,21 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/knowledge/upload":
-            filename, content = self._read_multipart_file()
-            if filename and content is not None:
-                self.knowledge_base.add_document(filename, content)
+            upload_error = ""
+            try:
+                filename, content = self._read_multipart_file()
+                if filename and content is not None:
+                    self.knowledge_base.add_document(filename, content)
+                else:
+                    upload_error = "Файл не выбран."
+            except ValueError:
+                upload_error = "Не удалось загрузить документ. Поддерживаются PDF, DOCX, Markdown и TXT."
+            except Exception as exc:
+                _save_ai_action_error("knowledge_upload", exc)
+                upload_error = "Не удалось обработать документ. Попробуйте другой файл."
             self.send_response(303)
-            self.send_header("Location", "/knowledge?uploaded=1")
+            location = "/knowledge?uploaded=1" if not upload_error else f"/knowledge?upload_error={quote(upload_error)}"
+            self.send_header("Location", location)
             self.end_headers()
             return
         if path.startswith("/knowledge/delete/"):
@@ -1647,6 +1659,7 @@ def render_knowledge(
     documents: list[object],
     cases: list[object] | None = None,
     uploaded: bool = False,
+    upload_error: str = "",
     deleted: bool = False,
     case_saved: bool = False,
     case_deleted: bool = False,
@@ -1656,13 +1669,18 @@ def render_knowledge(
     notices = []
     if uploaded:
         notices.append("Документ добавлен в память.")
+    if upload_error:
+        notices.append(upload_error)
     if deleted:
         notices.append("Документ удален из памяти.")
     if case_saved:
         notices.append("Кейс сохранен.")
     if case_deleted:
         notices.append("Кейс удален.")
-    notice_html = "".join(f"<div class=\"notice\">{escape(item)}</div>" for item in notices)
+    notice_html = "".join(
+        f"<div class=\"notice{' error-note' if item == upload_error and upload_error else ''}\">{escape(item)}</div>"
+        for item in notices
+    )
     cases = cases if cases is not None else DailyBriefRequestHandler.knowledge_base.list_cases()
     cases_html = "".join(_case_card(case) for case in cases) if cases else "<div class=\"empty\">Кейсов пока нет. Добавьте первый рабочий пример.</div>"
     docs_html = (
