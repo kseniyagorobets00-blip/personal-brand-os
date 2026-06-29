@@ -24,6 +24,9 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertEqual(document.extension, ".txt")
         self.assertIn("operational discipline", document.excerpt)
         self.assertGreater(document.word_count, 0)
+        self.assertEqual(document.document_metadata["document_type"], "note")
+        self.assertTrue(document.chunk_metadata)
+        self.assertIn("summary", document.document_metadata)
 
     def test_markdown_document_uploads_and_can_be_deleted(self) -> None:
         with TemporaryDirectory() as directory:
@@ -221,7 +224,12 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("Принципы", library_html)
         self.assertIn("Истории", library_html)
         self.assertIn("note", library_html)
+        self.assertIn("AI-анализ", library_html)
+        self.assertIn("Chunks", library_html)
+        self.assertIn("Тип:", library_html)
         self.assertIn("Service Design note", document_html)
+        self.assertIn("Markdown", document_html)
+        self.assertIn("document_type", document_html)
         self.assertIn("Удалить документ", document_html)
 
     def test_knowledge_ui_renders_upload_error(self) -> None:
@@ -244,6 +252,27 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertEqual(title_results[0].document.title, "MAYRVEDA-case")
         self.assertIn("названию", title_results[0].reason)
         self.assertIn("содержимому", content_results[0].reason)
+
+    def test_document_metadata_and_chunks_are_indexed_for_search(self) -> None:
+        with TemporaryDirectory() as directory:
+            base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
+            document = base.add_document(
+                "portfolio.md",
+                (
+                    "# Portfolio\n\n"
+                    "## Case MAYRVEDA\n\n"
+                    "### Problem\n\nGuest handoffs were unstable.\n\n"
+                    "### Actions\n\n- SOP redesign\n- Service blueprint\n\n"
+                    "### Business effect\n\nOperational Excellence improved."
+                ).encode("utf-8"),
+            )
+
+            results = base.search("service blueprint")
+
+        self.assertEqual(document.document_metadata["document_type"], "portfolio")
+        self.assertTrue(any(chunk.get("type") == "case" for chunk in document.chunk_metadata))
+        self.assertIn("chunks", document.analysis)
+        self.assertEqual(results[0].document.id, document.id)
 
     def test_recommendations_explain_why_document_is_used(self) -> None:
         with TemporaryDirectory() as directory:

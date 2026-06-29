@@ -59,12 +59,16 @@ class KnowledgeGraph:
 
         for document in documents:
             document_id = add_node(getattr(document, "title", ""), "document")
+            metadata = getattr(document, "document_metadata", {}) or {}
+            chunk_metadata = getattr(document, "chunk_metadata", ()) or ()
             text = " ".join(
                 (
                     getattr(document, "title", ""),
                     getattr(document, "excerpt", ""),
                     getattr(document, "content_text", ""),
                     " ".join(getattr(document, "semantic_chunks", ())),
+                    " ".join(str(value) for value in metadata.values()) if isinstance(metadata, dict) else "",
+                    " ".join(str(chunk.get("summary", "")) for chunk in chunk_metadata if isinstance(chunk, dict)),
                 )
             )
             for theme in _themes(text):

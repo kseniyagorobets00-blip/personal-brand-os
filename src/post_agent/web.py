@@ -2092,6 +2092,8 @@ def render_knowledge(
 
 
 def render_knowledge_document(document: object) -> str:
+    metadata = _document_metadata(document)
+    chunks = _document_chunks(document)
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -2115,7 +2117,23 @@ def render_knowledge_document(document: object) -> str:
         <span>{escape(document.extension)}</span>
         <span>{document.word_count} слов</span>
       </div>
-      <pre>{escape(document.excerpt)}</pre>
+      <div class="doc-actions">
+        <a class="open-link" href="#markdown">Подробнее</a>
+        <a class="open-link" href="#ai-analysis">AI-анализ</a>
+        <a class="open-link" href="#chunks">Chunks</a>
+      </div>
+      <section id="markdown">
+        <h2>Markdown</h2>
+        <pre>{escape(getattr(document, "content_text", document.excerpt))}</pre>
+      </section>
+      <section id="ai-analysis">
+        <h2>AI-анализ</h2>
+        {_metadata_panel(metadata)}
+      </section>
+      <section id="chunks">
+        <h2>Chunks</h2>
+        {_chunks_panel(chunks)}
+      </section>
       <form method="post" action="/knowledge/delete/{escape(document.id)}">
         <button class="danger" type="submit">Удалить документ</button>
       </form>
@@ -2126,15 +2144,34 @@ def render_knowledge_document(document: object) -> str:
 
 
 def _knowledge_card(document: object) -> str:
+    metadata = _document_metadata(document)
+    document_type = str(metadata.get("document_type", "document"))
+    summary = str(metadata.get("summary") or getattr(document, "excerpt", ""))
+    topics = _meta_list(metadata, "topics")
+    competencies = _meta_list(metadata, "competencies") or _meta_list(metadata, "skills")
+    projects = _meta_list(metadata, "projects")
+    companies = _meta_list(metadata, "companies")
+    language = str(metadata.get("language", ""))
     return f"""
     <article class="knowledge-card">
       <div>
         <h3><a href="/knowledge/{escape(document.id)}">{escape(document.title)}</a></h3>
-        <p>{escape(document.excerpt)}</p>
+        <p><b>Тип:</b> {escape(document_type)}</p>
+        <p><b>Краткое описание:</b> {escape(summary)}</p>
+        {_meta_row("Темы", topics)}
+        {_meta_row("Компетенции", competencies)}
+        {_meta_row("Проекты", projects)}
+        {_meta_row("Компании", companies)}
+        <p><b>Язык:</b> {escape(language or "—")}</p>
         <div class="doc-meta">
           <span>{escape(document.extension)}</span>
           <span>{document.word_count} слов</span>
           <span>{escape(document.uploaded_at)}</span>
+        </div>
+        <div class="doc-actions">
+          <a class="open-link" href="/knowledge/{escape(document.id)}#markdown">Подробнее</a>
+          <a class="open-link" href="/knowledge/{escape(document.id)}#ai-analysis">AI-анализ</a>
+          <a class="open-link" href="/knowledge/{escape(document.id)}#chunks">Chunks</a>
         </div>
       </div>
       <form method="post" action="/knowledge/delete/{escape(document.id)}">
@@ -2142,6 +2179,90 @@ def _knowledge_card(document: object) -> str:
       </form>
     </article>
     """
+
+
+def _document_metadata(document: object) -> dict[str, object]:
+    metadata = getattr(document, "document_metadata", {}) or {}
+    if isinstance(metadata, dict) and metadata:
+        return metadata
+    analysis = getattr(document, "analysis", {}) or {}
+    if isinstance(analysis, dict) and isinstance(analysis.get("document_metadata"), dict):
+        return analysis["document_metadata"]
+    return {}
+
+
+def _document_chunks(document: object) -> list[dict[str, object]]:
+    chunks = getattr(document, "chunk_metadata", ()) or ()
+    if chunks:
+        return [chunk for chunk in chunks if isinstance(chunk, dict)]
+    analysis = getattr(document, "analysis", {}) or {}
+    if isinstance(analysis, dict) and isinstance(analysis.get("chunks"), list):
+        return [chunk for chunk in analysis["chunks"] if isinstance(chunk, dict)]
+    return []
+
+
+def _meta_list(metadata: dict[str, object], key: str) -> list[str]:
+    value = metadata.get(key, [])
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _meta_row(label: str, values: list[str]) -> str:
+    text = " • ".join(values) if values else "—"
+    return f"<p><b>{escape(label)}:</b> {escape(text)}</p>"
+
+
+def _metadata_panel(metadata: dict[str, object]) -> str:
+    if not metadata:
+        return '<div class="empty">AI-анализ пока не сохранен.</div>'
+    rows = []
+    for key in (
+        "document_type",
+        "summary",
+        "topics",
+        "competencies",
+        "skills",
+        "companies",
+        "projects",
+        "industries",
+        "entities",
+        "keywords",
+        "language",
+    ):
+        if key not in metadata:
+            continue
+        value = metadata.get(key)
+        if isinstance(value, list):
+            rendered = " • ".join(str(item) for item in value if str(item).strip())
+        else:
+            rendered = str(value)
+        rows.append(f"<p><b>{escape(key)}:</b> {escape(rendered)}</p>")
+    return "\n".join(rows) or '<div class="empty">AI-анализ пока не сохранен.</div>'
+
+
+def _chunks_panel(chunks: list[dict[str, object]]) -> str:
+    if not chunks:
+        return '<div class="empty">Semantic chunks пока не сохранены.</div>'
+    cards = []
+    for chunk in chunks:
+        keywords = chunk.get("keywords", [])
+        keyword_text = " • ".join(str(item) for item in keywords if str(item).strip()) if isinstance(keywords, list) else ""
+        content = str(chunk.get("content", "")).strip()
+        cards.append(
+            f"""
+            <article class="knowledge-card">
+              <div>
+                <h3>{escape(str(chunk.get("title", "Chunk")))}</h3>
+                <p><b>type:</b> {escape(str(chunk.get("type", "")))}</p>
+                <p>{escape(str(chunk.get("summary", "")))}</p>
+                <p><b>keywords:</b> {escape(keyword_text or "—")}</p>
+                {f'<pre>{escape(content)}</pre>' if content else ''}
+              </div>
+            </article>
+            """
+        )
+    return '<div class="knowledge-list">' + "".join(cards) + "</div>"
 
 
 def _memory_category(section_key: str, title: str, text: str, active: str) -> str:
@@ -4362,6 +4483,12 @@ def _styles() -> str:
       border-radius: 999px;
       padding: 4px 8px;
       background: var(--paper-soft);
+    }
+    .doc-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0 16px;
     }
     .document-view pre {
       max-height: 520px;

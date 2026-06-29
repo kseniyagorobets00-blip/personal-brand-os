@@ -177,14 +177,19 @@ class AuthorBrain:
                 )
         for document in self.documents:
             chunks = tuple(getattr(document, "semantic_chunks", ()))
-            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), getattr(document, "content_text", ""), " ".join(chunks)))
+            metadata = getattr(document, "document_metadata", {}) or {}
+            chunk_metadata = tuple(getattr(document, "chunk_metadata", ()))
+            metadata_text = " ".join(str(value) for value in metadata.values()) if isinstance(metadata, dict) else ""
+            chunk_text = " ".join(str(chunk.get("summary", "")) for chunk in chunk_metadata if isinstance(chunk, dict))
+            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), metadata_text, chunk_text, " ".join(chunks)))
             if _looks_like_case(text) and _matches(query, text):
                 candidates.append(
                     {
                         "type": "knowledge_case_note",
                         "title": getattr(document, "title", ""),
                         "excerpt": getattr(document, "excerpt", ""),
-                        "chunks": list(chunks[:3]),
+                        "metadata": metadata,
+                        "chunks": list(chunk_metadata[:3]) or list(chunks[:3]),
                         "usage_rule": "Можно использовать только факты из excerpt/content. Не придумывать детали кейса.",
                     }
                 )
@@ -194,9 +199,13 @@ class AuthorBrain:
         observations = []
         for document in self.documents:
             chunks = tuple(getattr(document, "semantic_chunks", ()))
-            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), " ".join(chunks)))
+            metadata = getattr(document, "document_metadata", {}) or {}
+            chunk_metadata = tuple(getattr(document, "chunk_metadata", ()))
+            metadata_text = " ".join(str(value) for value in metadata.values()) if isinstance(metadata, dict) else ""
+            chunk_text = " ".join(str(chunk.get("summary", "")) for chunk in chunk_metadata if isinstance(chunk, dict))
+            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), metadata_text, chunk_text, " ".join(chunks)))
             if _matches(query, text):
-                observations.append({"title": getattr(document, "title", ""), "excerpt": getattr(document, "excerpt", ""), "chunks": "\n\n".join(chunks[:3])})
+                observations.append({"title": getattr(document, "title", ""), "excerpt": getattr(document, "excerpt", ""), "metadata": str(metadata), "chunks": "\n\n".join(chunks[:3])})
         return observations[:4]
 
     def _idea_patterns(self, query: str) -> list[dict[str, str]]:

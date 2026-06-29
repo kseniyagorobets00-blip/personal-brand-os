@@ -34,6 +34,8 @@ class KnowledgeDocument:
     word_count: int
     uploaded_at: str
     semantic_chunks: tuple[str, ...] = ()
+    document_metadata: dict[str, object] | None = None
+    chunk_metadata: tuple[dict[str, object], ...] = ()
     analysis: dict[str, object] | None = None
 
 
@@ -105,11 +107,19 @@ class KnowledgeBase:
         stored_path = self.document_dir / stored_name
         stored_path.write_bytes(content)
 
-        text = extract_text(stored_path, extension)
-        semantic_chunks = build_semantic_chunks(text)
-        analysis_text = _analysis_text(text, semantic_chunks)
+        text = normalize_document_text(extract_text(stored_path, extension), extension)
+        chunk_metadata = build_semantic_chunk_metadata(text)
+        semantic_chunks = tuple(str(chunk.get("content", "")) for chunk in chunk_metadata if str(chunk.get("content", "")).strip())
+        document_metadata = analyze_document_structure(Path(filename).stem.strip() or safe_name, text, chunk_metadata)
+        analysis_text = _analysis_text(text, semantic_chunks, document_metadata=document_metadata, chunk_metadata=chunk_metadata)
         analysis = analyze_memory_text(Path(filename).stem.strip() or safe_name, analysis_text)
-        analysis["semantic_chunks"] = list(semantic_chunks[:12])
+        analysis.update(
+            {
+                "document_metadata": document_metadata,
+                "semantic_chunks": list(semantic_chunks[:12]),
+                "chunks": list(chunk_metadata[:12]),
+            }
+        )
         document = KnowledgeDocument(
             id=document_id,
             title=Path(filename).stem.strip() or safe_name,
@@ -121,6 +131,8 @@ class KnowledgeBase:
             word_count=len(re.findall(r"\w+", text, flags=re.UNICODE)),
             uploaded_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             semantic_chunks=semantic_chunks,
+            document_metadata=document_metadata,
+            chunk_metadata=chunk_metadata,
             analysis=analysis,
         )
         items = self._read_index()
@@ -245,6 +257,8 @@ class KnowledgeBase:
             word_count=int(item.get("word_count", 0)),
             uploaded_at=str(item.get("uploaded_at", "")),
             semantic_chunks=tuple(str(chunk) for chunk in item.get("semantic_chunks", ()) if str(chunk).strip()) if isinstance(item.get("semantic_chunks", ()), list) else (),
+            document_metadata=item.get("document_metadata", {}) if isinstance(item.get("document_metadata", {}), dict) else {},
+            chunk_metadata=tuple(chunk for chunk in item.get("chunk_metadata", ()) if isinstance(chunk, dict)) if isinstance(item.get("chunk_metadata", ()), list) else (),
             analysis=item.get("analysis", {}) if isinstance(item.get("analysis", {}), dict) else {},
         )
 
@@ -293,7 +307,14 @@ class KnowledgeBase:
         results: list[KnowledgeSearchResult] = []
         for document in self.list_documents():
             title_tokens = _tokens(document.title)
-            body_tokens = _tokens(_analysis_text(document.content_text or document.excerpt, document.semantic_chunks))
+            body_tokens = _tokens(
+                _analysis_text(
+                    document.content_text or document.excerpt,
+                    document.semantic_chunks,
+                    document_metadata=document.document_metadata,
+                    chunk_metadata=document.chunk_metadata,
+                )
+            )
             title_matches = sorted(tokens.intersection(title_tokens))
             body_matches = sorted(tokens.intersection(body_tokens))
             if not title_matches and not body_matches:
@@ -394,6 +415,88 @@ def extract_docx_text(path: Path) -> str:
     return unescape(text)
 
 
+def normalize_document_text(text: str, extension: str) -> str:
+    if extension == ".pdf":
+        return _finalize_pdf_text(text)
+    if extension == ".md":
+        return _normalize_markdown_text(text)
+    return _plain_text_to_markdown(text)
+
+
+def analyze_document_structure(title: str, text: str, chunks: tuple[dict[str, object], ...]) -> dict[str, object]:
+    combined = _analysis_text(text, tuple(str(chunk.get("content", "")) for chunk in chunks), chunk_metadata=chunks)
+    companies = _known_entities(combined, ("MAYRVEDA", "Grand Marine Garden", "Mriya", "Красная Поляна", "Еврострой"))
+    projects = _project_names(text, companies)
+    topics = _known_entities(
+        combined,
+        (
+            "Operations",
+            "Customer Experience",
+            "Service Design",
+            "Hospitality",
+            "Luxury Hospitality",
+            "Guest Experience",
+            "SOP",
+            "Operational Excellence",
+            "AI",
+            "Project Management",
+        ),
+    )
+    skills = _known_entities(
+        combined,
+        (
+            "SOP",
+            "service blueprint",
+            "journey map",
+            "audit",
+            "analytics",
+            "training",
+            "process design",
+            "CX audit",
+            "регламент",
+            "аудит",
+            "обучение",
+            "диагностика",
+        ),
+    )
+    industries = _known_entities(combined, ("Hospitality", "Hotels", "Real Estate", "Development", "Service", "гостеприимство", "девелопмент", "сервис"))
+    keywords = _keywords(combined, limit=18)
+    return {
+        "title": title,
+        "document_type": _document_type(title, combined),
+        "summary": _document_summary(text, chunks),
+        "skills": skills,
+        "competencies": sorted(set([*skills, *topics])),
+        "topics": topics,
+        "companies": companies,
+        "projects": projects,
+        "industries": industries,
+        "entities": sorted(set([*companies, *projects, *topics])),
+        "keywords": keywords,
+        "language": _document_language(combined),
+        "chunks": [_chunk_public_metadata(chunk) for chunk in chunks],
+    }
+
+
+def build_semantic_chunk_metadata(text: str) -> tuple[dict[str, object], ...]:
+    chunks = build_semantic_chunks(text)
+    result: list[dict[str, object]] = []
+    for index, chunk in enumerate(chunks, start=1):
+        title = _chunk_title(chunk, index)
+        keywords = _keywords(chunk, limit=8)
+        result.append(
+            {
+                "title": title,
+                "type": _chunk_type(title, chunk),
+                "summary": _chunk_summary(chunk),
+                "keywords": keywords,
+                "embedding": _keyword_embedding(keywords),
+                "content": chunk,
+            }
+        )
+    return tuple(result)
+
+
 def build_semantic_chunks(text: str) -> tuple[str, ...]:
     blocks = re.split(r"\n(?=#{1,3}\s+)", text.strip())
     chunks: list[str] = []
@@ -418,9 +521,29 @@ def build_semantic_chunks(text: str) -> tuple[str, ...]:
     return tuple(chunks)
 
 
-def _analysis_text(text: str, semantic_chunks: tuple[str, ...] | list[str]) -> str:
+def _analysis_text(
+    text: str,
+    semantic_chunks: tuple[str, ...] | list[str],
+    document_metadata: dict[str, object] | None = None,
+    chunk_metadata: tuple[dict[str, object], ...] | list[dict[str, object]] = (),
+) -> str:
     chunks = "\n\n".join(str(chunk).strip() for chunk in semantic_chunks if str(chunk).strip())
-    return f"{text.strip()}\n\n{chunks}".strip()
+    metadata_text = ""
+    if document_metadata:
+        metadata_text = json.dumps(document_metadata, ensure_ascii=False)
+    chunk_text = "\n\n".join(
+        " ".join(
+            (
+                str(chunk.get("title", "")),
+                str(chunk.get("type", "")),
+                str(chunk.get("summary", "")),
+                " ".join(str(item) for item in chunk.get("keywords", []) if str(item).strip()) if isinstance(chunk.get("keywords", []), list) else "",
+            )
+        )
+        for chunk in chunk_metadata
+        if isinstance(chunk, dict)
+    )
+    return f"{metadata_text}\n\n{chunk_text}\n\n{chunks}\n\n{text.strip()}".strip()
 
 
 def extract_pdf_text(path: Path) -> str:
@@ -793,6 +916,170 @@ def _looks_like_truncated_pdf_fragment(text: str) -> bool:
     if len(letters) > 3:
         return False
     return bool(letters) and text.isalpha() and not text.isupper()
+
+
+def _normalize_markdown_text(text: str) -> str:
+    lines = [line.rstrip() for line in text.replace("\x00", "").splitlines()]
+    result: list[str] = []
+    previous_blank = False
+    for line in lines:
+        stripped = _repair_pdf_spacing(line.strip())
+        if not stripped:
+            if not previous_blank:
+                result.append("")
+            previous_blank = True
+            continue
+        result.append(stripped)
+        previous_blank = False
+    return "\n".join(result).strip()
+
+
+def _plain_text_to_markdown(text: str) -> str:
+    clean = _normalize_markdown_text(text)
+    if not clean:
+        return ""
+    lines = []
+    for line in clean.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            lines.append("")
+        elif _pdf_heading_level(stripped):
+            lines.append("#" * _pdf_heading_level(stripped) + " " + stripped.lstrip("# ").strip())
+        elif _looks_like_list_item(stripped):
+            lines.append(_normalize_list_item(stripped))
+        else:
+            lines.append(stripped)
+    return _normalize_markdown_text("\n".join(lines))
+
+
+def _chunk_public_metadata(chunk: dict[str, object]) -> dict[str, object]:
+    return {
+        "title": chunk.get("title", ""),
+        "type": chunk.get("type", ""),
+        "summary": chunk.get("summary", ""),
+        "keywords": chunk.get("keywords", []),
+        "embedding": chunk.get("embedding", []),
+    }
+
+
+def _chunk_title(chunk: str, index: int) -> str:
+    for line in chunk.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("# ").strip()
+    first = " ".join(chunk.split())[:80].strip()
+    return first or f"Chunk {index}"
+
+
+def _chunk_type(title: str, chunk: str) -> str:
+    lowered = f"{title}\n{chunk}".lower()
+    if _is_case_heading(title) or "### проблема" in lowered or "### problem" in lowered:
+        return "case"
+    if any(word in lowered for word in ("контакты", "contacts", "email", "@")):
+        return "contacts"
+    if any(word in lowered for word in ("ключевые результаты", "key results", "результат")):
+        return "results"
+    if any(word in lowered for word in ("экспертиза", "expertise", "skills")):
+        return "expertise"
+    if any(word in lowered for word in ("профиль", "profile", "опыт", "experience")):
+        return "profile"
+    if any(word in lowered for word in ("подход", "approach", "направления", "directions")):
+        return "approach"
+    return "section"
+
+
+def _chunk_summary(chunk: str) -> str:
+    compact = " ".join(line.strip("#- ").strip() for line in chunk.splitlines() if line.strip())
+    sentences = re.split(r"(?<=[.!?])\s+", compact)
+    summary = " ".join(sentence for sentence in sentences[:2] if sentence).strip()
+    return summary[:420]
+
+
+def _document_summary(text: str, chunks: tuple[dict[str, object], ...]) -> str:
+    summaries = [str(chunk.get("summary", "")).strip() for chunk in chunks if str(chunk.get("summary", "")).strip()]
+    if summaries:
+        return " ".join(summaries[:3])[:700]
+    return _chunk_summary(text)
+
+
+def _document_type(title: str, text: str) -> str:
+    lowered = f"{title}\n{text}".lower()
+    checks = (
+        ("portfolio", ("портфолио", "portfolio", "кейc", "кейс")),
+        ("resume", ("резюме", "cv", "curriculum vitae")),
+        ("sop", ("sop", "standard operating procedure", "регламент")),
+        ("instruction", ("инструкция", "manual", "guide", "how to")),
+        ("research", ("исследование", "research", "methodology")),
+        ("article", ("статья", "article")),
+        ("book", ("книга", "book", "chapter")),
+        ("note", ("заметка", "note")),
+    )
+    for document_type, markers in checks:
+        if any(marker in lowered for marker in markers):
+            return document_type
+    return "document"
+
+
+def _document_language(text: str) -> str:
+    cyrillic = len(re.findall(r"[А-Яа-яЁё]", text))
+    latin = len(re.findall(r"[A-Za-z]", text))
+    if cyrillic and latin and min(cyrillic, latin) / max(cyrillic, latin) > 0.2:
+        return "RU/EN"
+    if cyrillic >= latin:
+        return "RU"
+    return "EN"
+
+
+def _known_entities(text: str, terms: tuple[str, ...]) -> list[str]:
+    lowered = text.lower()
+    return [term for term in terms if term.lower() in lowered]
+
+
+def _project_names(text: str, companies: list[str]) -> list[str]:
+    projects = set(companies)
+    for match in re.findall(r"^#{2,3}\s+(?:Кейс|Case)\s*\d+\.?\s+(.+)$", text, flags=re.MULTILINE):
+        project = match.strip()
+        if project:
+            projects.add(project[:120])
+    return sorted(projects)
+
+
+def _keywords(text: str, limit: int = 12) -> list[str]:
+    stop_words = {
+        "and",
+        "the",
+        "for",
+        "with",
+        "this",
+        "that",
+        "или",
+        "как",
+        "что",
+        "это",
+        "для",
+        "при",
+        "над",
+        "под",
+        "кейс",
+    }
+    counts: dict[str, int] = {}
+    for word in re.findall(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9+-]{2,}", text):
+        key = word.strip("-+").lower()
+        if len(key) < 3 or key in stop_words:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+    return [word for word, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]]
+
+
+def _keyword_embedding(keywords: list[str]) -> list[float]:
+    if not keywords:
+        return []
+    vector = [0.0, 0.0, 0.0, 0.0]
+    for keyword in keywords:
+        bucket = sum(ord(char) for char in keyword) % len(vector)
+        vector[bucket] += 1.0
+    total = sum(vector) or 1.0
+    return [round(value / total, 4) for value in vector]
 
 
 def _looks_like_pdf_service_line(line: str) -> bool:
