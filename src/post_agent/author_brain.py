@@ -176,13 +176,15 @@ class AuthorBrain:
                     }
                 )
         for document in self.documents:
-            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), getattr(document, "content_text", "")))
+            chunks = tuple(getattr(document, "semantic_chunks", ()))
+            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), getattr(document, "content_text", ""), " ".join(chunks)))
             if _looks_like_case(text) and _matches(query, text):
                 candidates.append(
                     {
                         "type": "knowledge_case_note",
                         "title": getattr(document, "title", ""),
                         "excerpt": getattr(document, "excerpt", ""),
+                        "chunks": list(chunks[:3]),
                         "usage_rule": "Можно использовать только факты из excerpt/content. Не придумывать детали кейса.",
                     }
                 )
@@ -191,9 +193,10 @@ class AuthorBrain:
     def _knowledge_observations(self, query: str) -> list[dict[str, str]]:
         observations = []
         for document in self.documents:
-            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", "")))
+            chunks = tuple(getattr(document, "semantic_chunks", ()))
+            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), " ".join(chunks)))
             if _matches(query, text):
-                observations.append({"title": getattr(document, "title", ""), "excerpt": getattr(document, "excerpt", "")})
+                observations.append({"title": getattr(document, "title", ""), "excerpt": getattr(document, "excerpt", ""), "chunks": "\n\n".join(chunks[:3])})
         return observations[:4]
 
     def _idea_patterns(self, query: str) -> list[dict[str, str]]:

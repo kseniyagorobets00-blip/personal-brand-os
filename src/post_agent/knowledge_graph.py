@@ -59,7 +59,14 @@ class KnowledgeGraph:
 
         for document in documents:
             document_id = add_node(getattr(document, "title", ""), "document")
-            text = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", ""), getattr(document, "content_text", "")))
+            text = " ".join(
+                (
+                    getattr(document, "title", ""),
+                    getattr(document, "excerpt", ""),
+                    getattr(document, "content_text", ""),
+                    " ".join(getattr(document, "semantic_chunks", ())),
+                )
+            )
             for theme in _themes(text):
                 link(document_id, add_node(theme, "theme"), "mentions")
             for company in _companies(text):

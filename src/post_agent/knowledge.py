@@ -33,6 +33,7 @@ class KnowledgeDocument:
     content_text: str
     word_count: int
     uploaded_at: str
+    semantic_chunks: tuple[str, ...] = ()
     analysis: dict[str, object] | None = None
 
 
@@ -105,7 +106,10 @@ class KnowledgeBase:
         stored_path.write_bytes(content)
 
         text = extract_text(stored_path, extension)
-        analysis = analyze_memory_text(Path(filename).stem.strip() or safe_name, text)
+        semantic_chunks = build_semantic_chunks(text)
+        analysis_text = _analysis_text(text, semantic_chunks)
+        analysis = analyze_memory_text(Path(filename).stem.strip() or safe_name, analysis_text)
+        analysis["semantic_chunks"] = list(semantic_chunks[:12])
         document = KnowledgeDocument(
             id=document_id,
             title=Path(filename).stem.strip() or safe_name,
@@ -116,6 +120,7 @@ class KnowledgeBase:
             content_text=text,
             word_count=len(re.findall(r"\w+", text, flags=re.UNICODE)),
             uploaded_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            semantic_chunks=semantic_chunks,
             analysis=analysis,
         )
         items = self._read_index()
@@ -239,6 +244,7 @@ class KnowledgeBase:
             content_text=str(item.get("content_text", item.get("excerpt", ""))),
             word_count=int(item.get("word_count", 0)),
             uploaded_at=str(item.get("uploaded_at", "")),
+            semantic_chunks=tuple(str(chunk) for chunk in item.get("semantic_chunks", ()) if str(chunk).strip()) if isinstance(item.get("semantic_chunks", ()), list) else (),
             analysis=item.get("analysis", {}) if isinstance(item.get("analysis", {}), dict) else {},
         )
 
@@ -287,7 +293,7 @@ class KnowledgeBase:
         results: list[KnowledgeSearchResult] = []
         for document in self.list_documents():
             title_tokens = _tokens(document.title)
-            body_tokens = _tokens(document.content_text or document.excerpt)
+            body_tokens = _tokens(_analysis_text(document.content_text or document.excerpt, document.semantic_chunks))
             title_matches = sorted(tokens.intersection(title_tokens))
             body_matches = sorted(tokens.intersection(body_tokens))
             if not title_matches and not body_matches:
@@ -386,6 +392,35 @@ def extract_docx_text(path: Path) -> str:
     text = re.sub(r"</w:p>", "\n", text)
     text = re.sub(r"<[^>]+>", "", text)
     return unescape(text)
+
+
+def build_semantic_chunks(text: str) -> tuple[str, ...]:
+    blocks = re.split(r"\n(?=#{1,3}\s+)", text.strip())
+    chunks: list[str] = []
+    current = ""
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        if _is_case_heading(block) and current:
+            chunks.append(current.strip())
+            current = block
+            continue
+        if current and len((current + "\n\n" + block).split()) > 260:
+            chunks.append(current.strip())
+            current = block
+        else:
+            current = block if not current else current + "\n\n" + block
+    if current:
+        chunks.append(current.strip())
+    if not chunks and text.strip():
+        chunks = [text.strip()]
+    return tuple(chunks)
+
+
+def _analysis_text(text: str, semantic_chunks: tuple[str, ...] | list[str]) -> str:
+    chunks = "\n\n".join(str(chunk).strip() for chunk in semantic_chunks if str(chunk).strip())
+    return f"{text.strip()}\n\n{chunks}".strip()
 
 
 def extract_pdf_text(path: Path) -> str:
@@ -620,11 +655,11 @@ def _join_pdf_line(previous: str, current: str) -> str:
 
 
 def _should_keep_pdf_line_break(previous: str, current: str) -> bool:
-    if _looks_like_document_heading(previous) or _looks_like_document_heading(current):
+    if _pdf_heading_level(previous) or _pdf_heading_level(current):
         return True
     if previous.endswith((".", "!", "?", ":", ";")):
         return True
-    if re.match(r"^[-*•]\s+", current):
+    if _looks_like_list_item(current):
         return True
     if re.match(r"^\d+[\.)]\s+", current):
         return True
@@ -633,31 +668,124 @@ def _should_keep_pdf_line_break(previous: str, current: str) -> bool:
 
 def _format_pdf_text_as_markdown(paragraphs: list[str]) -> str:
     formatted: list[str] = []
-    for index, paragraph in enumerate(paragraphs):
-        if _looks_like_document_heading(paragraph):
-            prefix = "# " if index == 0 else "## "
-            formatted.append(prefix + paragraph.lstrip("# ").strip())
+    last_was_heading = False
+    for index, paragraph in enumerate(_merge_pdf_body_lines(paragraphs)):
+        level = _pdf_heading_level(paragraph, is_first=index == 0)
+        if level:
+            heading = paragraph.lstrip("# ").strip()
+            formatted.append("#" * level + " " + heading)
+            last_was_heading = True
+        elif _looks_like_list_item(paragraph):
+            formatted.append(_normalize_list_item(paragraph))
+            last_was_heading = False
         else:
+            if last_was_heading and formatted and formatted[-1].startswith("# "):
+                last_was_heading = False
             formatted.append(paragraph)
+            last_was_heading = False
     return "\n\n".join(formatted).strip()
+
+
+def _merge_pdf_body_lines(paragraphs: list[str]) -> list[str]:
+    merged: list[str] = []
+    for paragraph in paragraphs:
+        if not merged:
+            merged.append(paragraph)
+            continue
+        previous = merged[-1]
+        if _pdf_heading_level(previous) or _pdf_heading_level(paragraph) or _looks_like_list_item(previous) or _looks_like_list_item(paragraph):
+            merged.append(paragraph)
+            continue
+        if previous.endswith((".", "!", "?", ":", ";")):
+            merged.append(paragraph)
+            continue
+        merged[-1] = _join_pdf_line(previous, paragraph)
+    return merged
+
+
+def _pdf_heading_level(text: str, is_first: bool = False) -> int:
+    stripped = text.strip()
+    if not stripped:
+        return 0
+    lowered = stripped.lower().strip("# ")
+    if _is_case_heading(stripped):
+        return 2
+    if is_first and re.search(r"\bportfolio\b|портфолио", lowered):
+        return 1
+    if lowered in {"portfolio", "портфолио"}:
+        return 1
+    if _matches_pdf_heading(
+        lowered,
+        (
+            "profile",
+            "профиль",
+            "ключевые результаты",
+            "key results",
+            "подход к работе",
+            "work approach",
+            "направления работы",
+            "work directions",
+            "контакты",
+            "contacts",
+        ),
+    ):
+        return 2
+    if _matches_pdf_heading(
+        lowered,
+        (
+            "опыт",
+            "experience",
+            "экспертиза",
+            "expertise",
+            "проблема",
+            "problem",
+            "действия",
+            "actions",
+            "результат",
+            "result",
+            "бизнес-эффект",
+            "business effect",
+        ),
+    ):
+        return 3
+    if not _looks_like_document_heading(stripped):
+        return 0
+    return 2
+
+
+def _matches_pdf_heading(text: str, variants: tuple[str, ...]) -> bool:
+    return any(text == variant or text.startswith(f"{variant}:") for variant in variants)
+
+
+def _is_case_heading(text: str) -> bool:
+    stripped = text.strip().lstrip("# ").lower()
+    return bool(re.match(r"^(case|кейс)\s*\d+", stripped))
 
 
 def _looks_like_document_heading(text: str) -> bool:
     stripped = text.strip()
-    if not stripped or len(stripped) > 90:
+    if not stripped or len(stripped) > 70:
         return False
     if stripped.endswith((".", ",", ";")):
+        return False
+    if _looks_like_list_item(stripped):
         return False
     words = re.findall(r"[A-Za-zА-Яа-яЁё0-9+&.-]+", stripped)
     if not words or len(words) > 8:
         return False
     if stripped.startswith("#"):
         return True
-    if len(words) <= 3 and any(char.isalpha() for char in stripped):
-        return True
     uppercase_words = [word for word in words if any(char.isalpha() for char in word) and word.upper() == word]
     titlecase_words = [word for word in words if word[:1].isupper()]
-    return len(uppercase_words) >= max(1, len(words) - 1) or len(titlecase_words) == len(words)
+    return len(uppercase_words) >= max(1, len(words) - 1) or (len(words) <= 5 and len(titlecase_words) == len(words))
+
+
+def _looks_like_list_item(text: str) -> bool:
+    return bool(re.match(r"^([-*•]|[0-9]+[\.)])\s+", text.strip()))
+
+
+def _normalize_list_item(text: str) -> str:
+    return re.sub(r"^([*•]|[0-9]+[\.)])\s+", "- ", text.strip())
 
 
 def _looks_like_truncated_pdf_fragment(text: str) -> bool:

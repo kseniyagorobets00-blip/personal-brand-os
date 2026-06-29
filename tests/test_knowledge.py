@@ -136,6 +136,76 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("## Projects", text)
         self.assertIn("Operations leader across teams", text)
 
+    def test_pdf_portfolio_keeps_sections_lists_cases_and_chunks(self) -> None:
+        raw_text = (
+            "--- Page 1 ---\n"
+            "Портфолио\n\n"
+            "Профиль\n"
+            "Опыт\n"
+            "Customer Experience consultant\n\n"
+            "Экспертиза\n"
+            "- Service Design\n"
+            "- Operations\n\n"
+            "Ключевые результаты\n"
+            "- Reduced handoff errors\n"
+            "- Improved guest response time\n\n"
+            "Кейс 1. Оптимизация работы службы приема и размещения\n"
+            "Проблема\n"
+            "Команда теряла заявки между сменами.\n"
+            "Действия\n"
+            "- Описала SOP\n"
+            "- Настроила контроль передачи смены\n"
+            "Результат\n"
+            "- Ошибок стало меньше\n"
+            "Бизнес-эффект\n"
+            "Сервис стал стабильнее.\n\n"
+            "Кейс 2. Service recovery\n"
+            "Проблема\n"
+            "Гости долго ждали ответа.\n"
+            "Результат\n"
+            "- Response time improved\n\n"
+            "Подход к работе\n"
+            "Диагностика, структура, внедрение.\n"
+            "Направления работы\n"
+            "- CX audit\n"
+            "- SOP design\n"
+            "Контакты\n"
+            "email@example.com"
+        )
+        with TemporaryDirectory() as directory:
+            base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
+            with (
+                patch("post_agent.knowledge.extract_pdf_text_with_pymupdf", return_value=raw_text),
+                patch("post_agent.knowledge.extract_pdf_text_with_pdfplumber", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_with_pypdf", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_from_streams", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_with_ocr", return_value=""),
+            ):
+                document = base.add_document("Портфолио.pdf", b"%PDF-1.7 placeholder")
+
+            memory_item = base.memory_inbox.list_items()[0]
+
+        self.assertIn("# Портфолио", document.content_text)
+        self.assertIn("## Профиль", document.content_text)
+        self.assertIn("### Опыт", document.content_text)
+        self.assertIn("## Ключевые результаты", document.content_text)
+        self.assertIn("- Reduced handoff errors", document.content_text)
+        self.assertIn("## Кейс 1. Оптимизация работы службы приема и размещения", document.content_text)
+        self.assertIn("### Проблема", document.content_text)
+        self.assertIn("### Действия", document.content_text)
+        self.assertIn("### Результат", document.content_text)
+        self.assertIn("### Бизнес-эффект", document.content_text)
+        self.assertIn("## Кейс 2. Service recovery", document.content_text)
+        self.assertIn("## Подход к работе", document.content_text)
+        self.assertIn("## Направления работы", document.content_text)
+        self.assertIn("## Контакты", document.content_text)
+        self.assertNotIn("--- Page", document.content_text)
+        self.assertGreaterEqual(len(document.semantic_chunks), 3)
+        self.assertTrue(any("Кейс 1" in chunk for chunk in document.semantic_chunks))
+        self.assertTrue(any("Кейс 2" in chunk for chunk in document.semantic_chunks))
+        self.assertIn("semantic_chunks", document.analysis)
+        self.assertIn("semantic_chunks", memory_item.extracted)
+
     def test_knowledge_ui_renders_library_and_document(self) -> None:
         with TemporaryDirectory() as directory:
             base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
