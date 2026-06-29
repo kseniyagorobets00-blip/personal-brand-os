@@ -389,16 +389,17 @@ def extract_docx_text(path: Path) -> str:
 
 
 def extract_pdf_text(path: Path) -> str:
-    text = extract_pdf_text_with_pymupdf(path)
-    if text.strip():
-        return text
-    text = extract_pdf_text_with_pdfplumber(path)
-    if text.strip():
-        return text
-    text = extract_pdf_text_with_pypdf(path)
-    if text.strip():
-        return text
-    return extract_pdf_text_from_streams(path)
+    extractors = (
+        extract_pdf_text_with_pymupdf,
+        extract_pdf_text_with_pdfplumber,
+        extract_pdf_text_with_pypdf,
+        extract_pdf_text_from_streams,
+    )
+    for extractor in extractors:
+        text = _clean_extracted_pdf_text(extractor(path))
+        if _is_readable_pdf_text(text):
+            return text
+    return _clean_extracted_pdf_text(extract_pdf_text_with_ocr(path))
 
 
 def extract_pdf_text_with_pymupdf(path: Path) -> str:
@@ -461,6 +462,33 @@ def extract_pdf_text_with_pypdf(path: Path) -> str:
         return ""
 
 
+def extract_pdf_text_with_ocr(path: Path) -> str:
+    try:
+        import fitz
+        import pytesseract
+        from PIL import Image
+    except Exception:
+        return ""
+    try:
+        document = fitz.open(str(path))
+    except Exception:
+        return ""
+    pages: list[str] = []
+    try:
+        for page_number, page in enumerate(document, start=1):
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            image = Image.frombytes("RGB", [pixmap.width, pixmap.height], pixmap.samples)
+            text = pytesseract.image_to_string(image, lang="eng+rus")
+            text = _normalize_pdf_block(text)
+            if text:
+                pages.append(f"--- Page {page_number} ---\n{text}")
+    except Exception:
+        return ""
+    finally:
+        document.close()
+    return "\n\n".join(pages).strip()
+
+
 def extract_pdf_text_from_streams(path: Path) -> str:
     data = path.read_bytes()
     try:
@@ -483,7 +511,7 @@ def extract_pdf_text_from_streams(path: Path) -> str:
     candidates: list[str] = []
     for chunk in chunks:
         candidates.extend(_pdf_text_candidates(chunk))
-    return " ".join(candidates).strip()
+    return _normalize_pdf_block("\n".join(candidates))
 
 
 def _pdf_text_candidates(raw: str) -> list[str]:
@@ -531,6 +559,75 @@ def _normalize_pdf_block(text: str) -> str:
         compact_lines.append(stripped)
         previous_blank = False
     return "\n".join(compact_lines).strip()
+
+
+def _clean_extracted_pdf_text(text: str) -> str:
+    text = text.replace("\x00", "").replace("\ufffd", "")
+    lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _looks_like_pdf_service_line(stripped):
+            continue
+        lines.append(line)
+    return _normalize_pdf_block("\n".join(lines))
+
+
+def _looks_like_pdf_service_line(line: str) -> bool:
+    if not line:
+        return False
+    lowered = line.lower()
+    service_tokens = (
+        "%pdf",
+        " obj",
+        "endobj",
+        "stream",
+        "endstream",
+        "xref",
+        "trailer",
+        "startxref",
+        "/filter",
+        "/flatedecode",
+        "/length",
+        "/type",
+        "/font",
+        "/xobject",
+        "/contents",
+        "/resources",
+    )
+    if any(token in lowered for token in service_tokens):
+        return True
+    if re.fullmatch(r"[<>{}\[\]/\\0-9A-Fa-f\s._:%-]{12,}", line):
+        return True
+    return False
+
+
+def _is_readable_pdf_text(text: str) -> bool:
+    compact = " ".join(text.split())
+    if len(compact) < 12:
+        return False
+
+    chars = [char for char in compact if not char.isspace()]
+    if not chars:
+        return False
+
+    letters = sum(1 for char in chars if char.isalpha())
+    digits = sum(1 for char in chars if char.isdigit())
+    controls = sum(1 for char in chars if ord(char) < 32)
+    suspicious = sum(1 for char in chars if char in "{}[]<>@=\\|~^")
+    words = re.findall(r"[A-Za-zА-Яа-яЁё]{2,}", compact, flags=re.UNICODE)
+    pdf_markers = len(re.findall(r"\b(?:obj|endobj|stream|endstream|xref|trailer|FlateDecode|BT|ET|Tf|Tj|TJ)\b", compact))
+
+    if controls:
+        return False
+    if pdf_markers >= 2:
+        return False
+    if letters / len(chars) < 0.45:
+        return False
+    if suspicious / len(chars) > 0.08:
+        return False
+    if len(words) < 2 and letters + digits < 24:
+        return False
+    return True
 
 
 def _tokens(text: str) -> set[str]:

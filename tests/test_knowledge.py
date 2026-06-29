@@ -2,9 +2,10 @@ import unittest
 import zlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 from zipfile import ZipFile
 
-from post_agent.knowledge import KnowledgeBase
+from post_agent.knowledge import KnowledgeBase, extract_pdf_text
 from post_agent.web import render_knowledge, render_knowledge_document
 
 
@@ -64,6 +65,43 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("CV Gorobets", document.content_text)
         self.assertGreater(document.word_count, 0)
         self.assertNotIn("Текстовое содержание не найдено", document.excerpt)
+
+    def test_pdf_binary_garbage_falls_back_to_readable_extractor(self) -> None:
+        with TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "portfolio.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7 binary placeholder")
+
+            with (
+                patch("post_agent.knowledge.extract_pdf_text_with_pymupdf", return_value="A5=80\n@>BD\n1 0 obj\nstream\n/FlateDecode"),
+                patch("post_agent.knowledge.extract_pdf_text_with_pdfplumber", return_value="Portfolio\n\nCustomer Experience Operations\nMAYRVEDA case"),
+                patch("post_agent.knowledge.extract_pdf_text_with_pypdf", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_from_streams", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_with_ocr", return_value=""),
+            ):
+                text = extract_pdf_text(pdf_path)
+
+        self.assertIn("Portfolio", text)
+        self.assertIn("Customer Experience Operations", text)
+        self.assertNotIn("@>BD", text)
+        self.assertNotIn("FlateDecode", text)
+
+    def test_pdf_stream_garbage_uses_ocr_instead_of_indexing_objects(self) -> None:
+        with TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "cv.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7 binary placeholder")
+
+            with (
+                patch("post_agent.knowledge.extract_pdf_text_with_pymupdf", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_with_pdfplumber", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_with_pypdf", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_from_streams", return_value="Page 1\nA5=80\n@>BD\n12 0 obj\nendstream"),
+                patch("post_agent.knowledge.extract_pdf_text_with_ocr", return_value="CV\n\nCustomer Experience leader\nOperations portfolio"),
+            ):
+                text = extract_pdf_text(pdf_path)
+
+        self.assertIn("Customer Experience leader", text)
+        self.assertNotIn("A5=80", text)
+        self.assertNotIn("endstream", text)
 
     def test_knowledge_ui_renders_library_and_document(self) -> None:
         with TemporaryDirectory() as directory:
