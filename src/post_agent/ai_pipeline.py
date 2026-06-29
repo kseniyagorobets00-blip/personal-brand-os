@@ -10,7 +10,7 @@ from typing import Any
 import re
 
 from .ai_gateway import AIGateway, AIGatewayError, DEFAULT_ENV_PATH, load_ai_config
-from .author_brain import FORBIDDEN_OPENINGS, AuthorBrain
+from .author_brain import FORBIDDEN_OPENINGS, AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository
 from .daily_brief import ROOT, SeedRepository
 from .idea_vault import IdeaVault
@@ -60,6 +60,7 @@ class AIPipeline:
         knowledge_graph: KnowledgeGraph | None = None,
         learning_center: LearningCenter | None = None,
         thinking_engine: ThinkingEngine | None = None,
+        author_brain_repository: AuthorBrainRepository | None = None,
         result_path: Path = DEFAULT_AI_RESULT_PATH,
         status_path: Path = DEFAULT_AI_STATUS_PATH,
     ) -> None:
@@ -73,6 +74,7 @@ class AIPipeline:
         self.knowledge_graph = knowledge_graph or KnowledgeGraph()
         self.learning_center = learning_center or LearningCenter()
         self.thinking_engine = thinking_engine or ThinkingEngine()
+        self.author_brain_repository = author_brain_repository or AuthorBrainRepository()
         self.result_path = result_path
         self.status_path = status_path
         self.cache = AICache(result_path=result_path, status_path=status_path)
@@ -125,13 +127,16 @@ class AIPipeline:
             memory_items=self.memory_inbox.list_items(),
         )
         query = " ".join(str(publication.get(key, "")) for key in ("platform", "topic", "summary", "goal")) if publication else ""
-        author_brain = AuthorBrain(
+        author_brain_builder = AuthorBrain(
             author_profile=self.author_profile_repository.load_raw(),
             writing_dna=self.writing_dna_repository.load_raw(),
             documents=documents,
             cases=cases,
             ideas=ideas,
-        ).build(publication)
+            lessons=self.learning_center.list_lessons("accepted"),
+        )
+        author_brain = author_brain_builder.build(publication)
+        self.author_brain_repository.refresh(author_brain_builder)
         context = {
             "content_plan": content_plan,
             "target_publication": publication,

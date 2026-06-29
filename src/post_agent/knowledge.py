@@ -118,6 +118,7 @@ class KnowledgeBase:
                 "document_metadata": document_metadata,
                 "semantic_chunks": list(semantic_chunks[:12]),
                 "chunks": list(chunk_metadata[:12]),
+                "author_brain_signals": analyze_author_brain_signals(text, document_metadata, chunk_metadata),
             }
         )
         document = KnowledgeDocument(
@@ -475,6 +476,29 @@ def analyze_document_structure(title: str, text: str, chunks: tuple[dict[str, ob
         "keywords": keywords,
         "language": _document_language(combined),
         "chunks": [_chunk_public_metadata(chunk) for chunk in chunks],
+    }
+
+
+def analyze_author_brain_signals(
+    text: str,
+    document_metadata: dict[str, object],
+    chunks: tuple[dict[str, object], ...],
+) -> dict[str, object]:
+    combined = _analysis_text(text, tuple(str(chunk.get("content", "")) for chunk in chunks), document_metadata=document_metadata, chunk_metadata=chunks)
+    topics = document_metadata.get("topics", []) if isinstance(document_metadata.get("topics", []), list) else []
+    keywords = document_metadata.get("keywords", []) if isinstance(document_metadata.get("keywords", []), list) else []
+    case_like = _looks_like_case(combined) or any(str(chunk.get("type", "")) == "case" for chunk in chunks)
+    return {
+        "themes": list(dict.fromkeys([str(item) for item in [*topics, *keywords] if str(item).strip()]))[:12],
+        "key_idea_candidates": _sentences_with_any(combined, ("важно", "вывод", "кажется", "important", "conclusion", "means"))[:5],
+        "case_candidate": {
+            "is_case": case_like,
+            "company": _known_entities(combined, ("MAYRVEDA", "Grand Marine Garden", "Mriya", "Красная Поляна", "Еврострой"))[:1],
+            "problem": _first_sentence_with_any(combined, ("problem", "проблем", "хаос", "gap")),
+            "result": _first_sentence_with_any(combined, ("result", "результ", "эффект", "%")),
+        },
+        "content_angles": _document_angles(combined),
+        "platform_fit": _document_platform_fit(combined, case_like),
     }
 
 
@@ -1160,3 +1184,46 @@ def _tokens(text: str) -> set[str]:
         "следствие",
     }
     return {word for word in words if len(word) > 2 and word not in stop_words}
+
+
+def _sentences_with_any(text: str, markers: tuple[str, ...]) -> list[str]:
+    return [
+        sentence
+        for sentence in re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
+        if any(marker.lower() in sentence.lower() for marker in markers)
+    ]
+
+
+def _first_sentence_with_any(text: str, markers: tuple[str, ...]) -> str:
+    sentences = _sentences_with_any(text, markers)
+    return sentences[0][:240] if sentences else ""
+
+
+def _document_angles(text: str) -> list[str]:
+    lowered = text.lower()
+    angles = []
+    if _looks_like_case(text):
+        angles.append("case")
+    if any(marker in lowered for marker in ("analytics", "bi", "data", "metric", "аналит")):
+        angles.append("analytics")
+    if any(marker in lowered for marker in ("framework", "sop", "standard", "process", "регламент")):
+        angles.append("framework")
+    if any(marker in lowered for marker in ("mistake", "myth", "ошиб", "хаос")):
+        angles.append("provocation")
+    angles.append("personal observation")
+    return list(dict.fromkeys(angles))
+
+
+def _document_platform_fit(text: str, case_like: bool) -> list[str]:
+    lowered = text.lower()
+    platforms = ["Telegram", "Сетка"]
+    if case_like or any(marker in lowered for marker in ("business effect", "result", "%", "executive")):
+        platforms.insert(0, "LinkedIn")
+    if case_like or any(marker in lowered for marker in ("framework", "sop", "разбор", "analysis")):
+        platforms.append("VC")
+    return list(dict.fromkeys(platforms))
+
+
+def _looks_like_case(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in ("case", "кейс", "mayrveda", "mriya", "grand marine", "красная поляна", "еврострой"))

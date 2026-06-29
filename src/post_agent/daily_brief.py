@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 from .author_brain import AuthorBrain
 from .author_profile import AuthorProfile, AuthorProfileRepository
 from .knowledge import KnowledgeBase, KnowledgeSearchResult
+from .learning import LearningCenter
 from .writing_dna import WritingDNARepository
 
 
@@ -153,11 +154,13 @@ class DailyBriefService:
         author_profile_repository: AuthorProfileRepository | None = None,
         knowledge_base: KnowledgeBase | None = None,
         writing_dna_repository: WritingDNARepository | None = None,
+        learning_center: LearningCenter | None = None,
     ) -> None:
         self.repository = repository or SeedRepository()
         self.author_profile_repository = author_profile_repository or AuthorProfileRepository()
         self.knowledge_base = knowledge_base or KnowledgeBase()
         self.writing_dna_repository = writing_dna_repository or WritingDNARepository()
+        self.learning_center = learning_center or LearningCenter()
 
     def build_today(self) -> DailyBrief:
         seed = self.repository.load()
@@ -170,6 +173,7 @@ class DailyBriefService:
             documents=self.knowledge_base.list_documents(),
             cases=self.knowledge_base.list_cases(),
             ideas=[],
+            lessons=self.learning_center.list_lessons("accepted"),
         )
         sources = tuple(seed.get("sources", ()))
         seed_ideas = tuple(seed.get("ideas", ()))

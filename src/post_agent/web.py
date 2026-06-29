@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from .ai_gateway import AIGateway, AIGatewayError
 from .ai_pipeline import AIPipeline, ai_diagnostics, load_ai_result, load_ai_status
-from .author_brain import AuthorBrain
+from .author_brain import AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository, list_to_text, text_to_list
 from .daily_brief import (
     DEFAULT_CONTENT_PLAN_PATH,
@@ -60,6 +60,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
     learning_center = LearningCenter()
     knowledge_base = KnowledgeBase()
     idea_vault = IdeaVault()
+    author_brain_repository = AuthorBrainRepository()
     trend_radar = TrendRadar(learning_center=learning_center)
     ai_pipeline = AIPipeline(
         knowledge_base=knowledge_base,
@@ -79,6 +80,16 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         if path == "/author-profile":
             saved = parse_qs(urlparse(self.path).query).get("saved", ["0"])[0] == "1"
             self._send_html(render_author_profile(self.author_profile_repository.load_raw(), saved=saved))
+            return
+        if path == "/author-brain":
+            query = parse_qs(urlparse(self.path).query)
+            self._send_html(
+                render_author_brain(
+                    self.author_brain_repository.load_profile(),
+                    self.author_brain_repository.load_status(),
+                    refreshed=query.get("refreshed", ["0"])[0] == "1",
+                )
+            )
             return
         if path == "/writing-dna":
             saved = parse_qs(urlparse(self.path).query).get("saved", ["0"])[0] == "1"
@@ -258,6 +269,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/daily-brief/ai-refresh":
+            self._refresh_author_brain_background()
             started = self.ai_pipeline.start_background()
             if not started:
                 pass
@@ -267,6 +279,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/trend-radar/refresh":
             self.knowledge_base.ensure_seed_documents()
+            author_brain = self._current_author_brain().build()
             plan = _load_content_plan_raw()
             pillars = plan.get("content_pillars", [])
             pillar_query = " ".join(str(item) for item in pillars) if isinstance(pillars, list) else str(pillars)
@@ -275,6 +288,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 documents=self.knowledge_base.list_documents(),
                 cases=self.knowledge_base.list_cases(),
                 ideas=self.idea_vault.list_ideas(),
+                author_brain=author_brain,
                 graph_links=self.knowledge_graph.related_to(pillar_query),
             )
             self.send_response(303)
@@ -369,6 +383,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 filename, content = self._read_multipart_file()
                 if filename and content is not None:
                     self.knowledge_base.add_document(filename, content)
+                    self._refresh_author_brain_background()
                 else:
                     upload_error = "Файл не выбран."
             except ValueError:
@@ -379,6 +394,12 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.send_response(303)
             location = "/knowledge?section=documents&uploaded=1&analysis=done" if not upload_error else f"/knowledge?section=documents&analysis=error&upload_error={quote(upload_error)}"
             self.send_header("Location", location)
+            self.end_headers()
+            return
+        if path == "/author-brain/refresh":
+            self._refresh_author_brain_background()
+            self.send_response(303)
+            self.send_header("Location", "/author-brain?refreshed=1")
             self.end_headers()
             return
         if path.startswith("/knowledge/delete/"):
@@ -419,6 +440,20 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         self.send_error(404, "Not Found")
+
+    def _current_author_brain(self) -> AuthorBrain:
+        return AuthorBrain(
+            author_profile=self.author_profile_repository.load_raw(),
+            writing_dna=self.writing_dna_repository.load_raw(),
+            documents=self.knowledge_base.list_documents(),
+            cases=self.knowledge_base.list_cases(),
+            ideas=self.idea_vault.list_ideas(),
+            lessons=self.learning_center.list_lessons("accepted"),
+        )
+
+    def _refresh_author_brain_background(self) -> bool:
+        self.knowledge_base.ensure_seed_documents()
+        return self.author_brain_repository.start_background_refresh(self._current_author_brain())
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -468,6 +503,7 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         ("Память", "/knowledge", "knowledge"),
         ("Идеи", "/ideas", "ideas"),
         ("Профиль автора", "/author-profile", "profile"),
+        ("Author Brain", "/author-brain", "brain"),
         ("ДНК письма", "/writing-dna", "dna"),
         ("Обучение", "/learning", "learning"),
     )
@@ -634,6 +670,195 @@ def render_author_profile(profile: dict[str, object], saved: bool = False) -> st
   </main>
 </body>
 </html>"""
+
+
+def render_author_brain(profile: dict[str, object], status: object, refreshed: bool = False) -> str:
+    notice = "<div class=\"notice\">Author Brain refresh started. The last saved profile stays available while it updates.</div>" if refreshed else ""
+    status_state = escape(str(getattr(status, "state", "")))
+    status_message = escape(str(getattr(status, "message", "")))
+    status_updated = escape(str(getattr(status, "updated_at", "")))
+    status_error = escape(str(getattr(status, "error", "")))
+    source_counts = profile.get("source_counts", {})
+    if not isinstance(source_counts, dict):
+        source_counts = {}
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Author Brain - Personal Brand OS</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">AI Author Brain 2.0</p>
+        <h1>Профиль автора</h1>
+      </div>
+      {_global_nav("brain", status_state)}
+    </header>
+    {notice}
+    <section class="ai-panel ai-{status_state}">
+      <div>
+        <strong>{status_message or "Author Brain profile is available."}</strong>
+        <p>Updated: {status_updated or escape(str(profile.get("updated_at", "")))}</p>
+        {_small_error(status_error)}
+      </div>
+      <form method="post" action="/author-brain/refresh">
+        <button type="submit">Обновить Author Brain</button>
+      </form>
+    </section>
+    <section class="hero-cards">
+      <div class="summary-card">
+        <span>Documents</span>
+        <strong>{escape(str(source_counts.get("documents", 0)))}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Cases</span>
+        <strong>{escape(str(source_counts.get("cases", 0)))}</strong>
+      </div>
+      <div class="summary-card">
+        <span>Ideas</span>
+        <strong>{escape(str(source_counts.get("ideas", 0)))}</strong>
+      </div>
+    </section>
+    <section class="grid two">
+      {_profile_list_section("Главные темы", profile.get("main_themes", []), _theme_item)}
+      {_profile_list_section("Ключевые идеи", profile.get("key_ideas", []), _idea_item)}
+    </section>
+    <section class="block">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">cases</p>
+          <h2>Кейсы автора</h2>
+        </div>
+      </div>
+      <div class="card-list">{_profile_items(profile.get("cases", []), _case_item)}</div>
+    </section>
+    <section class="grid two">
+      {_simple_list_section("Стиль мышления", profile.get("thinking_style", []))}
+      {_simple_list_section("Сильные стороны", profile.get("strengths", []))}
+    </section>
+    <section class="grid two">
+      {_platform_fit_section(profile.get("platform_fit", {}))}
+      {_anti_repetition_section(profile.get("anti_repetition", {}))}
+    </section>
+    <section class="block">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">updates</p>
+          <h2>Последние обновления</h2>
+        </div>
+      </div>
+      <div class="card-list">{_profile_items(profile.get("recent_updates", []), _update_item)}</div>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
+def _small_error(value: str) -> str:
+    return f"<p class=\"risk\">{value}</p>" if value else ""
+
+
+def _profile_list_section(title: str, items: object, renderer: object) -> str:
+    return f"""<section class="profile-section">
+      <p class="eyebrow">Author Brain</p>
+      <h2>{escape(title)}</h2>
+      <div class="card-list">{_profile_items(items, renderer)}</div>
+    </section>"""
+
+
+def _simple_list_section(title: str, items: object) -> str:
+    entries = [str(item) for item in items if str(item).strip()] if isinstance(items, list) else []
+    body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>Not enough data yet.</li>"
+    return f"""<section class="profile-section">
+      <p class="eyebrow">Author Brain</p>
+      <h2>{escape(title)}</h2>
+      <ul class="ai-list">{body}</ul>
+    </section>"""
+
+
+def _profile_items(items: object, renderer: object) -> str:
+    if not isinstance(items, list) or not items:
+        return "<div class=\"empty\">Not enough data yet.</div>"
+    return "".join(renderer(item) for item in items if isinstance(item, dict))
+
+
+def _theme_item(item: dict[str, object]) -> str:
+    evidence = item.get("evidence", [])
+    tags = "".join(f"<span>{escape(str(tag))}</span>" for tag in evidence if str(tag).strip()) if isinstance(evidence, list) else ""
+    risk = f"<p class=\"risk\">{escape(str(item.get('risk', '')))}</p>" if item.get("risk") else ""
+    return f"""<article class="card">
+      <div class="card-head"><h3>{escape(str(item.get("name", "")))}</h3><strong>{escape(str(item.get("score", "")))}</strong></div>
+      <div class="tags">{tags}</div>
+      {risk}
+    </article>"""
+
+
+def _idea_item(item: dict[str, object]) -> str:
+    return f"""<article class="card">
+      <h3>{escape(str(item.get("idea", "")))}</h3>
+      <p>{escape(str(item.get("belief", "")))}</p>
+      <div class="tags"><span>evidence {escape(str(item.get("evidence_count", 0)))}</span><span>{escape(str(item.get("repeat_risk", "")))}</span></div>
+    </article>"""
+
+
+def _case_item(item: dict[str, object]) -> str:
+    themes = item.get("themes", [])
+    platforms = item.get("platform_fit", [])
+    tags = []
+    if isinstance(themes, list):
+        tags.extend(str(theme) for theme in themes)
+    if isinstance(platforms, list):
+        tags.extend(str(platform) for platform in platforms)
+    tags_html = "".join(f"<span>{escape(tag)}</span>" for tag in tags if tag)
+    return f"""<article class="card">
+      <div class="card-head"><h3>{escape(str(item.get("project") or item.get("company", "")))}</h3><strong>{escape(str(item.get("company", "")))}</strong></div>
+      <p>{escape(str(item.get("problem", "")))}</p>
+      <p>{escape(str(item.get("actions", "")))}</p>
+      <p>{escape(str(item.get("result", "")))}</p>
+      <div class="action">{escape(str(item.get("business_effect", "")))}</div>
+      <div class="tags">{tags_html}</div>
+    </article>"""
+
+
+def _platform_fit_section(value: object) -> str:
+    items = value if isinstance(value, dict) else {}
+    rows = "".join(f"<li><strong>{escape(str(key))}</strong><span>{escape(str(item))}</span></li>" for key, item in items.items())
+    return f"""<section class="profile-section">
+      <p class="eyebrow">platform fit</p>
+      <h2>Площадки</h2>
+      <ul class="ai-list">{rows}</ul>
+    </section>"""
+
+
+def _anti_repetition_section(value: object) -> str:
+    raw = value if isinstance(value, dict) else {}
+    rules = raw.get("rules", [])
+    cases = raw.get("case_rotation", [])
+    themes = raw.get("overused_theme_candidates", [])
+    entries = []
+    for item in rules if isinstance(rules, list) else []:
+        entries.append(str(item))
+    for item in cases if isinstance(cases, list) else []:
+        entries.append(f"Rotate case: {item}")
+    for item in themes if isinstance(themes, list) else []:
+        entries.append(f"Watch repetition: {item}")
+    body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>No repetition risks yet.</li>"
+    return f"""<section class="profile-section">
+      <p class="eyebrow">anti-repetition</p>
+      <h2>Anti-repetition</h2>
+      <ul class="ai-list">{body}</ul>
+    </section>"""
+
+
+def _update_item(item: dict[str, object]) -> str:
+    return f"""<article class="card">
+      <div class="card-head"><h3>{escape(str(item.get("title", "")))}</h3><strong>{escape(str(item.get("type", "")))}</strong></div>
+      <p>{escape(str(item.get("updated_at", "")))}</p>
+    </article>"""
 
 
 def render_writing_dna(dna: dict[str, object], saved: bool = False) -> str:
@@ -1581,6 +1806,7 @@ def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[st
         documents=knowledge_base.list_documents()[:8],
         cases=knowledge_base.list_cases()[:8],
         ideas=DailyBriefRequestHandler.idea_vault.list_ideas()[:12],
+        lessons=DailyBriefRequestHandler.learning_center.list_lessons("accepted"),
     ).build(target or {})
     trend_cache = DailyBriefRequestHandler.trend_radar.get_cached()
     trend_topics = trend_cache.get("topics", [])

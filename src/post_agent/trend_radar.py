@@ -79,11 +79,14 @@ class TrendRadar:
         documents: list[object],
         cases: list[object],
         ideas: list[object],
+        author_brain: dict[str, object] | None = None,
         graph_links: list[dict[str, str]] | None = None,
     ) -> dict[str, object]:
         sources = self._load_sources()
         topics = [
             self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [])
+            if author_brain is None
+            else self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [], author_brain)
             for source in sources
         ]
         filtered = sorted(topics, key=lambda item: (item.reach_score * 0.55 + item.brand_fit_score * 0.45), reverse=True)[:8]
@@ -148,6 +151,7 @@ class TrendRadar:
         cases: list[object],
         ideas: list[object],
         graph_links: list[dict[str, str]],
+        author_brain: dict[str, object] | None = None,
     ) -> TrendTopic:
         title = str(source.get("title", ""))
         description = str(source.get("description", ""))
@@ -158,8 +162,9 @@ class TrendRadar:
         case_matches = _matching_cases(content_text, cases)
         idea_bonus = _idea_bonus(content_text, ideas)
         graph_bonus = min(0.6, len(graph_links) * 0.1)
+        brain_bonus = _author_brain_bonus(content_text, author_brain or {})
         reach = min(10.0, float(source.get("reach_base", 6.5)) + _controversy_bonus(source) + idea_bonus)
-        brand = min(10.0, float(source.get("brand_base", 6.5)) + plan_bonus + len(knowledge_matches) * 0.25 + len(case_matches) * 0.45 + graph_bonus)
+        brand = min(10.0, float(source.get("brand_base", 6.5)) + plan_bonus + len(knowledge_matches) * 0.25 + len(case_matches) * 0.45 + graph_bonus + brain_bonus)
         return TrendTopic(
             id=str(source.get("id") or _slug(title)),
             title=title,
@@ -170,7 +175,7 @@ class TrendRadar:
             relevance_forecast=str(source.get("relevance_forecast", "1-2 недели")),
             reach_score=round(reach, 1),
             brand_fit_score=round(brand, 1),
-            ai_reason=_reason(title, plan_bonus, knowledge_matches, case_matches),
+            ai_reason=_reason(title, plan_bonus, knowledge_matches, case_matches, brain_bonus),
             matching_cases=tuple(case_matches),
             knowledge_materials=tuple(knowledge_matches),
             best_formats=tuple(_formats(source, content_plan)),
@@ -303,10 +308,38 @@ def _formats(source: dict[str, object], content_plan: dict[str, object]) -> list
     return platforms[:3] or ["LinkedIn", "Telegram", "VC"]
 
 
-def _reason(title: str, plan_bonus: float, documents: list[str], cases: list[str]) -> str:
+def _author_brain_bonus(text: str, author_brain: dict[str, object]) -> float:
+    profile = author_brain.get("profile", author_brain)
+    if not isinstance(profile, dict):
+        return 0.0
+    tokens = _tokens(text)
+    bonus = 0.0
+    themes = profile.get("main_themes", [])
+    if isinstance(themes, list):
+        for theme in themes:
+            if not isinstance(theme, dict):
+                continue
+            evidence = theme.get("evidence", [])
+            evidence_text = " ".join(str(item) for item in evidence) if isinstance(evidence, list) else ""
+            if tokens.intersection(_tokens(str(theme.get("name", "")) + " " + evidence_text)):
+                bonus += 0.18
+    cases = profile.get("cases", [])
+    if isinstance(cases, list):
+        for case in cases:
+            if not isinstance(case, dict):
+                continue
+            case_text = " ".join(str(case.get(key, "")) for key in ("company", "project", "problem", "actions", "result"))
+            if tokens.intersection(_tokens(case_text)):
+                bonus += 0.22
+    return min(1.2, bonus)
+
+
+def _reason(title: str, plan_bonus: float, documents: list[str], cases: list[str], brain_bonus: float = 0.0) -> str:
     parts = [f"Тема «{title}» прошла фильтр Thinking Engine."]
     if plan_bonus > 0:
         parts.append("Она связана с текущим контент-планом.")
+    if brain_bonus > 0:
+        parts.append("Author Brain подтвердил связь с темами, кейсами и позицией автора.")
     if documents:
         parts.append("Есть материалы в Knowledge, которые можно использовать.")
     if cases:
