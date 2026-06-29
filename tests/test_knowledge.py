@@ -1,4 +1,5 @@
 import unittest
+import zlib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import ZipFile
@@ -45,6 +46,24 @@ class KnowledgeBaseTests(unittest.TestCase):
             document = base.add_document("case.docx", docx_path.read_bytes())
 
         self.assertIn("MAYRVEDA service case", document.excerpt)
+
+    def test_pdf_text_stream_is_extracted_and_indexed(self) -> None:
+        pdf_stream = zlib.compress(b"BT /F1 12 Tf 72 720 Td (CV Gorobets Customer Experience Operations) Tj ET")
+        pdf_bytes = (
+            b"%PDF-1.4\n"
+            b"1 0 obj << /Length "
+            + str(len(pdf_stream)).encode("ascii")
+            + b" /Filter /FlateDecode >>\nstream\n"
+            + pdf_stream
+            + b"\nendstream\nendobj\n%%EOF"
+        )
+        with TemporaryDirectory() as directory:
+            base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
+            document = base.add_document("cv.pdf", pdf_bytes)
+
+        self.assertIn("CV Gorobets", document.content_text)
+        self.assertGreater(document.word_count, 0)
+        self.assertNotIn("Текстовое содержание не найдено", document.excerpt)
 
     def test_knowledge_ui_renders_library_and_document(self) -> None:
         with TemporaryDirectory() as directory:

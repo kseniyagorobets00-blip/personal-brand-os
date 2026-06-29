@@ -460,21 +460,23 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         return None, None
 
 
-def _global_nav(active: str = "") -> str:
+def _global_nav(active: str = "", extra: str = "") -> str:
     links = (
-        ("Daily Brief", "/daily-brief", "daily"),
+        ("Дневной бриф", "/daily-brief", "daily"),
         ("Контент-план", "/content-plan", "content"),
-        ("Trend Radar", "/trend-radar", "trends"),
+        ("Радар трендов", "/trend-radar", "trends"),
         ("Память", "/knowledge", "knowledge"),
         ("Идеи", "/ideas", "ideas"),
-        ("Author Profile", "/author-profile", "profile"),
-        ("Writing DNA", "/writing-dna", "dna"),
-        ("Learning Center", "/learning", "learning"),
+        ("Профиль автора", "/author-profile", "profile"),
+        ("ДНК письма", "/writing-dna", "dna"),
+        ("Обучение", "/learning", "learning"),
     )
     items = "".join(
         f"<a class=\"{'active' if key == active else ''}\" href=\"{escape(href)}\">{escape(label)}</a>"
         for label, href, key in links
     )
+    if extra:
+        items += f"<span>{escape(extra)}</span>"
     return f"<div class=\"meta global-nav\">{items}</div>"
 
 
@@ -510,7 +512,7 @@ def render_daily_brief(brief: DailyBrief) -> str:
         <p class="eyebrow">AI Chief Content Officer</p>
         <h1>Daily Brief</h1>
       </div>
-      {_global_nav("daily")}
+      {_global_nav("daily", brief.brief_date.strftime("%d.%m.%Y"))}
     </header>
 
     {_ai_status_block(ai_status, ai_result)}
@@ -1253,6 +1255,9 @@ def _compact_content_plan_block(plan: ContentPlan) -> str:
 def _group_publications_by_date(plan: ContentPlan) -> list[tuple[str, list[object]]]:
     groups: dict[str, list[object]] = {}
     for item in sorted(plan.planned_publications, key=_publication_sort_key):
+        parsed = parse_plan_date(str(getattr(item, "date", "")))
+        if parsed and parsed < today_moscow():
+            continue
         key = item.date or item.day or item.topic
         groups.setdefault(key, []).append(item)
     return list(groups.items())
@@ -1455,12 +1460,26 @@ def _calendar_publication(index: int, item: dict[str, object]) -> str:
     platform = str(item.get("platform", ""))
     topic = str(item.get("topic", ""))
     status = _status_ru(str(item.get("status", "")))
+    goal = str(item.get("goal", ""))
+    summary = str(item.get("summary", "") or item.get("note", ""))
+    short_topic = _short_text(topic or "Без темы", 44)
     return f"""
-    <a class="calendar-publication" href="#publication-{index}">
-      <span>{escape(platform)} · {escape(status)}</span>
-      <b>{escape(topic or "Без темы")}</b>
-    </a>
+    <details class="calendar-publication">
+      <summary>
+        <span>{escape(platform)} · {escape(status)}</span>
+        <b>{escape(short_topic)}</b>
+      </summary>
+      <p>{escape(summary or goal or topic)}</p>
+      <a href="#publication-{index}">Редактировать</a>
+    </details>
     """
+
+
+def _short_text(text: str, limit: int) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "…"
 
 
 def _load_content_plan_raw() -> dict[str, object]:
@@ -4202,9 +4221,33 @@ def _styles() -> str:
       word-break: normal;
       hyphens: auto;
     }
+    .calendar-publication summary {
+      display: grid;
+      gap: 3px;
+      cursor: pointer;
+      list-style: none;
+    }
+    .calendar-publication summary::-webkit-details-marker {
+      display: none;
+    }
     .calendar-publication span {
       color: var(--accent);
       font-weight: 760;
+    }
+    .calendar-publication b {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .calendar-publication p {
+      margin: 8px 0 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .calendar-publication a {
+      color: var(--accent);
+      font-weight: 680;
+      text-decoration: none;
     }
     .edit-row {
       display: grid;

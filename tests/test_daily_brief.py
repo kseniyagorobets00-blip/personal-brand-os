@@ -3,13 +3,13 @@ import json
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from unittest.mock import patch
-from datetime import date
+from datetime import date, timedelta
 
 from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
-from post_agent.daily_brief import DailyBriefService, SeedRepository, weekday_name_for_date
+from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, today_moscow, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, render_author_profile, render_content_plan_page, render_daily_brief, render_writing_dna
+from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, render_author_profile, render_content_plan_page, render_daily_brief, render_writing_dna
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -41,9 +41,16 @@ class DailyBriefTests(unittest.TestCase):
         self.assertNotIn("Краткая структура:", draft_text)
 
     def test_daily_brief_html_renders_user_visible_blocks(self) -> None:
-        html = render_daily_brief(DailyBriefService().build_today())
+        brief = DailyBriefService().build_today()
+        html = render_daily_brief(brief)
 
         self.assertIn("Daily Brief", html)
+        self.assertIn("Дневной бриф", html)
+        self.assertIn("Радар трендов", html)
+        self.assertIn("Профиль автора", html)
+        self.assertIn("ДНК письма", html)
+        self.assertIn("Обучение", html)
+        self.assertIn(brief.brief_date.strftime("%d.%m.%Y"), html)
         self.assertIn("Публикация дня", html)
         self.assertIn("Цель публикации", html)
         self.assertIn("Почему именно сегодня", html)
@@ -68,7 +75,7 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn('name="text"', html)
         self.assertIn('name="kind"', html)
         self.assertIn("Обновляем...", html)
-        self.assertIn("Author Profile", html)
+        self.assertIn("Профиль автора", html)
         self.assertIn("Полезные материалы", html)
         self.assertIn("Открыть", html)
         self.assertIn("Использовать", html)
@@ -296,6 +303,30 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("#publication-1", html)
         self.assertIn("Первая тема", html)
         self.assertIn("Вторая тема", html)
+
+        self.assertIn('<details class="calendar-publication">', html)
+
+    def test_compact_content_plan_hides_past_publications(self) -> None:
+        today = today_moscow()
+        past = (today - timedelta(days=1)).isoformat()
+        future = (today + timedelta(days=1)).isoformat()
+        plan = ContentPlan(
+            week="test",
+            focus="test",
+            month_focus="test",
+            content_pillars=(),
+            platform_targets=(),
+            today_recommendation="",
+            planned_publications=(
+                PlannedPublication(date=past, day="", platform="LinkedIn", topic="Past topic", pillar="", status="planned", note=""),
+                PlannedPublication(date=future, day="", platform="Telegram", topic="Future topic", pillar="", status="planned", note=""),
+            ),
+        )
+
+        html = _compact_content_plan_block(plan)
+
+        self.assertNotIn("Past topic", html)
+        self.assertIn("Future topic", html)
 
     def test_content_plan_generate_publication_updates_only_selected_item(self) -> None:
         class Gateway:

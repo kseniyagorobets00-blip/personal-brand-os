@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from html import unescape
 import json
 import re
+import zlib
 from pathlib import Path
 from uuid import uuid4
 from zipfile import ZipFile
@@ -388,13 +389,78 @@ def extract_docx_text(path: Path) -> str:
 
 
 def extract_pdf_text(path: Path) -> str:
+    text = extract_pdf_text_with_pypdf(path)
+    if text.strip():
+        return text
+    return extract_pdf_text_from_streams(path)
+
+
+def extract_pdf_text_with_pypdf(path: Path) -> str:
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        return ""
+    try:
+        reader = PdfReader(str(path))
+        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception:
+        return ""
+
+
+def extract_pdf_text_from_streams(path: Path) -> str:
     data = path.read_bytes()
     try:
         raw = data.decode("latin-1", errors="ignore")
     except Exception:
         return ""
-    candidates = re.findall(r"\(([^()]{3,})\)\s*Tj", raw)
-    return " ".join(unescape(item) for item in candidates)
+    chunks = [raw]
+    for match in re.finditer(rb"(<<.*?>>)\s*stream\r?\n(.*?)\r?\nendstream", data, flags=re.DOTALL):
+        header = match.group(1)
+        stream = match.group(2)
+        if b"FlateDecode" in header:
+            try:
+                stream = zlib.decompress(stream)
+            except zlib.error:
+                continue
+        try:
+            chunks.append(stream.decode("latin-1", errors="ignore"))
+        except Exception:
+            continue
+    candidates: list[str] = []
+    for chunk in chunks:
+        candidates.extend(_pdf_text_candidates(chunk))
+    return " ".join(candidates).strip()
+
+
+def _pdf_text_candidates(raw: str) -> list[str]:
+    texts: list[str] = []
+    texts.extend(_decode_pdf_literal(item) for item in re.findall(r"\(([^()]*)\)\s*Tj", raw))
+    for array in re.findall(r"\[(.*?)\]\s*TJ", raw, flags=re.DOTALL):
+        texts.append(" ".join(_decode_pdf_literal(item) for item in re.findall(r"\(([^()]*)\)", array)))
+        texts.extend(_decode_pdf_hex(item) for item in re.findall(r"<([0-9A-Fa-f]+)>", array))
+    texts.extend(_decode_pdf_hex(item) for item in re.findall(r"<([0-9A-Fa-f]{4,})>\s*Tj", raw))
+    return [item for item in texts if item.strip()]
+
+
+def _decode_pdf_literal(value: str) -> str:
+    value = value.replace(r"\(", "(").replace(r"\)", ")").replace(r"\\", "\\")
+    value = value.replace(r"\n", "\n").replace(r"\r", "\n").replace(r"\t", "\t")
+    return unescape(value)
+
+
+def _decode_pdf_hex(value: str) -> str:
+    try:
+        data = bytes.fromhex(value)
+    except ValueError:
+        return ""
+    for encoding in ("utf-16-be", "utf-8", "latin-1"):
+        try:
+            text = data.decode(encoding).strip("\ufeff\x00")
+        except UnicodeDecodeError:
+            continue
+        if text:
+            return text
+    return ""
 
 
 def _tokens(text: str) -> set[str]:
