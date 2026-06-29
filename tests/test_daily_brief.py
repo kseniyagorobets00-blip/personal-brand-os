@@ -85,9 +85,8 @@ class DailyBriefTests(unittest.TestCase):
 
     def test_daily_brief_uses_content_plan_as_publication_source(self) -> None:
         brief = DailyBriefService().build_today()
-        titles = {item.title for item in brief.topics}
 
-        self.assertIn("AI как зеркало операционной зрелости", titles)
+        self.assertTrue(brief.topics)
         self.assertTrue(all("из контент-плана" in item.tags for item in brief.topics))
 
     def test_daily_brief_shows_all_today_publications_from_content_plan(self) -> None:

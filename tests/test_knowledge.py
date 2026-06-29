@@ -99,16 +99,14 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("MAYRVEDA", results[0].reason)
         self.assertIn("Customer Experience", results[0].reason)
 
-    def test_knowledge_search_ui_renders_reason_and_open_link(self) -> None:
+    def test_knowledge_ui_renders_documents_folder_without_search_block(self) -> None:
         with TemporaryDirectory() as directory:
             base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
             base.add_document("sop.md", "SOP protects Customer Experience.".encode("utf-8"))
-            results = base.search("SOP")
 
-            html = render_knowledge(base.list_documents(), cases=base.list_cases(), query="SOP", results=results)
+            html = render_knowledge(base.list_documents(), cases=base.list_cases(), section="documents")
 
-        self.assertIn("Почему рекомендован", html)
-        self.assertIn("Открыть", html)
+        self.assertNotIn("Поиск по памяти", html)
         self.assertIn("sop", html)
 
     def test_cases_can_be_saved_and_rendered(self) -> None:
@@ -129,7 +127,7 @@ class KnowledgeBaseTests(unittest.TestCase):
                 key_topics=("Customer Experience", "SOP"),
                 platforms=("LinkedIn", "Telegram"),
             )
-            html = render_knowledge(base.list_documents(), cases=base.list_cases())
+            html = render_knowledge(base.list_documents(), cases=base.list_cases(), section="cases")
             saved_title = base.list_cases()[0].title
 
         self.assertEqual(saved_title, case.title)

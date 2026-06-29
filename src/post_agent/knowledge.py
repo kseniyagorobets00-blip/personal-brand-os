@@ -364,7 +364,7 @@ class KnowledgeBase:
     def _excerpt(self, text: str) -> str:
         compact = " ".join(text.split())
         if not compact:
-            return "Текст пока не извлечен. Документ сохранен и готов для будущей AI-индексации."
+            return "Документ сохранен и обработан. Текстовое содержание не найдено, но файл добавлен в память."
         return compact[:900]
 
 

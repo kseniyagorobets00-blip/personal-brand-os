@@ -5,6 +5,7 @@ from datetime import date, datetime
 import json
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .author_brain import AuthorBrain
 from .author_profile import AuthorProfile, AuthorProfileRepository
@@ -25,6 +26,11 @@ RU_WEEKDAYS = (
     "Суббота",
     "Воскресенье",
 )
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+
+
+def today_moscow() -> date:
+    return datetime.now(MOSCOW_TZ).date()
 
 
 def parse_plan_date(value: str) -> date | None:
@@ -173,7 +179,7 @@ class DailyBriefService:
         related_knowledge = self._related_knowledge(topics, ideas)
 
         return DailyBrief(
-            brief_date=date.today(),
+            brief_date=today_moscow(),
             executive_summary=self._executive_summary(topics, ideas, len(sources), content_plan),
             market_signals=self._signals_from_sources(sources),
             topics=topics,
@@ -245,18 +251,13 @@ class DailyBriefService:
         )
 
     def _selected_publications(self, content_plan: ContentPlan) -> tuple[PlannedPublication, ...]:
-        today = date.today()
+        today = today_moscow()
         todays = tuple(
             publication
             for publication in content_plan.planned_publications
             if self._publication_date(publication) == today
         )
-        selected = todays or tuple(
-            publication
-            for publication in content_plan.planned_publications
-            if publication.status not in {"skipped", "archived", "published"}
-        )
-        return tuple(sorted(selected, key=self._publication_priority, reverse=True))
+        return tuple(sorted(todays, key=self._publication_priority, reverse=True))
 
     def _topics_from_content_plan(
         self,

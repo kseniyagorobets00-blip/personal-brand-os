@@ -23,6 +23,7 @@ from .daily_brief import (
     Draft,
     RelatedKnowledge,
     parse_plan_date,
+    today_moscow,
     weekday_name_for_date,
 )
 from .idea_vault import IDEA_STATUSES, Idea, IdeaVault
@@ -43,6 +44,11 @@ REFINEMENT_ACTIONS = (
 UI_STATE_PATH = DEFAULT_CONTENT_PLAN_PATH.parents[1] / "ui_state.json"
 AI_ACTION_DIAGNOSTICS_PATH = DEFAULT_CONTENT_PLAN_PATH.parents[1] / "ai" / "action_errors.json"
 AI_TIMEOUT_MESSAGE = "AI не успел ответить. Попробуйте еще раз."
+
+
+CONTENT_PLATFORMS = ("LinkedIn", "Telegram", "VC", "Сетка")
+PUBLICATION_FORMATS = ("Кейс", "Аналитика", "Наблюдение", "Разговорный пост")
+PUBLICATION_STATUSES = ("idea", "planned", "drafted", "review", "approved", "published", "archived")
 
 
 class DailyBriefRequestHandler(BaseHTTPRequestHandler):
@@ -111,23 +117,23 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             query_params = parse_qs(urlparse(self.path).query)
             uploaded = query_params.get("uploaded", ["0"])[0] == "1"
             upload_error = query_params.get("upload_error", [""])[0]
+            analysis = query_params.get("analysis", [""])[0]
             deleted = query_params.get("deleted", ["0"])[0] == "1"
             case_saved = query_params.get("case_saved", ["0"])[0] == "1"
             case_deleted = query_params.get("case_deleted", ["0"])[0] == "1"
-            query = query_params.get("q", [""])[0]
+            section = query_params.get("section", ["documents"])[0]
             self.knowledge_base.ensure_seed_documents()
-            results = self.knowledge_base.search(query) if query else []
             self._send_html(
                 render_knowledge(
                     self.knowledge_base.list_documents(),
                     cases=self.knowledge_base.list_cases(),
                     uploaded=uploaded,
+                    analysis=analysis,
                     upload_error=upload_error,
                     deleted=deleted,
                     case_saved=case_saved,
                     case_deleted=case_deleted,
-                    query=query,
-                    results=results,
+                    section=section,
                 )
             )
             return
@@ -347,14 +353,14 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 platforms=_csv_to_tuple(data.get("platforms", [""])[0]),
             )
             self.send_response(303)
-            self.send_header("Location", "/knowledge?case_saved=1")
+            self.send_header("Location", "/knowledge?section=cases&case_saved=1")
             self.end_headers()
             return
         if path.startswith("/knowledge/cases/delete/"):
             case_id = path.rsplit("/", 1)[-1]
             self.knowledge_base.delete_case(case_id)
             self.send_response(303)
-            self.send_header("Location", "/knowledge?case_deleted=1")
+            self.send_header("Location", "/knowledge?section=cases&case_deleted=1")
             self.end_headers()
             return
         if path == "/knowledge/upload":
@@ -371,7 +377,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 _save_ai_action_error("knowledge_upload", exc)
                 upload_error = "Не удалось обработать документ. Попробуйте другой файл."
             self.send_response(303)
-            location = "/knowledge?uploaded=1" if not upload_error else f"/knowledge?upload_error={quote(upload_error)}"
+            location = "/knowledge?section=documents&uploaded=1&analysis=done" if not upload_error else f"/knowledge?section=documents&analysis=error&upload_error={quote(upload_error)}"
             self.send_header("Location", location)
             self.end_headers()
             return
@@ -379,7 +385,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             document_id = path.rsplit("/", 1)[-1]
             self.knowledge_base.delete_document(document_id)
             self.send_response(303)
-            self.send_header("Location", "/knowledge?deleted=1")
+            self.send_header("Location", "/knowledge?section=documents&deleted=1")
             self.end_headers()
             return
         if path == "/ideas/add":
@@ -454,6 +460,24 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         return None, None
 
 
+def _global_nav(active: str = "") -> str:
+    links = (
+        ("Daily Brief", "/daily-brief", "daily"),
+        ("Контент-план", "/content-plan", "content"),
+        ("Trend Radar", "/trend-radar", "trends"),
+        ("Память", "/knowledge", "knowledge"),
+        ("Идеи", "/ideas", "ideas"),
+        ("Author Profile", "/author-profile", "profile"),
+        ("Writing DNA", "/writing-dna", "dna"),
+        ("Learning Center", "/learning", "learning"),
+    )
+    items = "".join(
+        f"<a class=\"{'active' if key == active else ''}\" href=\"{escape(href)}\">{escape(label)}</a>"
+        for label, href, key in links
+    )
+    return f"<div class=\"meta global-nav\">{items}</div>"
+
+
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
     server = ThreadingHTTPServer((host, port), DailyBriefRequestHandler)
     try:
@@ -486,16 +510,7 @@ def render_daily_brief(brief: DailyBrief) -> str:
         <p class="eyebrow">AI Chief Content Officer</p>
         <h1>Daily Brief</h1>
       </div>
-      <div class="meta">
-        <a href="/content-plan">Контент-план</a>
-        <a href="/knowledge">Память</a>
-        <a href="/ideas">Идеи</a>
-        <a href="/trend-radar">Trend Radar</a>
-        <a href="/author-profile">Author Profile</a>
-        <a href="/writing-dna">Writing DNA</a>
-        <a href="/learning">Learning Center</a>
-        <span>{escape(brief.brief_date.strftime("%d.%m.%Y"))}</span>
-      </div>
+      {_global_nav("daily")}
     </header>
 
     {_ai_status_block(ai_status, ai_result)}
@@ -552,11 +567,7 @@ def render_author_profile(profile: dict[str, object], saved: bool = False) -> st
         <p class="eyebrow">стиль автора</p>
         <h1>Author Profile</h1>
       </div>
-      <div class="meta">
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/knowledge">Память</a>
-        <a href="/ideas">Идеи</a>
-      </div>
+      {_global_nav("profile")}
     </header>
     {saved_notice}
     <form class="profile-form" method="post" action="/author-profile">
@@ -640,11 +651,7 @@ def render_writing_dna(dna: dict[str, object], saved: bool = False) -> str:
         <p class="eyebrow">как автор думает и пишет</p>
         <h1>Writing DNA</h1>
       </div>
-      <div class="meta">
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/author-profile">Author Profile</a>
-        <a href="/knowledge">Память</a>
-      </div>
+      {_global_nav("dna")}
     </header>
     {saved_notice}
     <form class="profile-form" method="post" action="/writing-dna">
@@ -716,11 +723,7 @@ def render_learning_center(
         <p class="eyebrow">Memory Learning</p>
         <h1>Learning Center</h1>
       </div>
-      <div class="meta">
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/knowledge">Память</a>
-        <a href="/writing-dna">Writing DNA</a>
-      </div>
+      {_global_nav("learning")}
     </header>
     {saved_notice}
     <section class="block">
@@ -774,12 +777,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
         <p class="eyebrow">редактор идей</p>
         <h1>Trend Radar</h1>
       </div>
-      <div class="meta">
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/content-plan">Контент-план</a>
-        <a href="/ideas">Идеи</a>
-        <a href="/learning">Центр обучения</a>
-      </div>
+      {_global_nav("trends")}
     </header>
     {saved_notice}
     <section class="today-card">
@@ -1319,11 +1317,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <p class="eyebrow">план публикаций</p>
         <h1>Контент-план</h1>
       </div>
-      <div class="meta">
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/knowledge">Память</a>
-        <a href="/ideas">Идеи</a>
-      </div>
+      {_global_nav("content")}
     </header>
     {notice}
     <div class="view-switch">
@@ -1359,9 +1353,10 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <article class="plan-item edit-row">
           <h3>Добавить публикацию</h3>
           {_date_input("new_pub_date", "Дата", week_start)}
-          {_input("new_pub_platform", "Площадка", "")}
+          {_select("new_pub_platform", "Площадка", "", CONTENT_PLATFORMS)}
           {_input("new_pub_topic", "Тема", "")}
           {_input("new_pub_goal", "Цель", "")}
+          {_select("new_pub_format", "Формат публикации", "Наблюдение", PUBLICATION_FORMATS)}
           {_textarea("new_pub_summary", "Краткое содержание", "")}
           {_status_select("new_pub_status", "Статус", "planned")}
           <button class="ghost" name="plan_action" value="add_publication" type="submit">Добавить публикацию</button>
@@ -1393,10 +1388,10 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     <article class="plan-item edit-row" id="publication-{index}">
       {_date_input(f"pub_{index}_date", "Дата", str(item.get("date", "")))}
       <label>День недели<span>{escape(day or "Будет определен по дате")}</span></label>
-      {_input(f"pub_{index}_platform", "Площадка", item.get("platform", ""))}
+      {_select(f"pub_{index}_platform", "Площадка", str(item.get("platform", "")), CONTENT_PLATFORMS)}
       {_input(f"pub_{index}_topic", "Тема", item.get("topic", ""))}
       {_input(f"pub_{index}_goal", "Цель", item.get("goal", ""))}
-      {_input(f"pub_{index}_pillar", "Направление", item.get("pillar", ""))}
+      {_select(f"pub_{index}_format", "Формат публикации", _publication_format(item), PUBLICATION_FORMATS)}
       {_status_select(f"pub_{index}_status", "Статус", str(item.get("status", "")))}
       {_textarea(f"pub_{index}_summary", "Краткое содержание", item.get("summary", item.get("note", "")))}
       {_textarea(f"pub_{index}_note", "Заметка", item.get("note", ""))}
@@ -1419,7 +1414,7 @@ def _content_plan_calendar(publications: object) -> str:
         if isinstance(item, dict)
     ]
     dates = [item for item in dates if item is not None]
-    base = dates[0] if dates else date.today()
+    base = dates[0] if dates else today_moscow()
     first_weekday, days_in_month = monthrange(base.year, base.month)
     by_day: dict[int, list[tuple[int, dict[str, object]]]] = {}
     for index, item in enumerate(items):
@@ -1512,7 +1507,7 @@ def _content_plan_period(plan: dict[str, object]) -> tuple[str, str]:
     if not end and dates:
         end = max(dates).isoformat()
     if not start:
-        today = date.today()
+        today = today_moscow()
         start = (today - timedelta(days=today.weekday())).isoformat()
     if not end:
         parsed_start = parse_plan_date(start)
@@ -1623,21 +1618,23 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         if delete_index == index:
             continue
         topic = value(f"pub_{index}_topic")
-        platform = value(f"pub_{index}_platform")
+        platform = _normalize_platform(value(f"pub_{index}_platform"))
         publication_date = _normalize_plan_date_value(value(f"pub_{index}_date"))
         if not (topic or platform or publication_date):
             continue
-        status = value(f"pub_{index}_status")
+        status = _normalize_publication_status(value(f"pub_{index}_status"))
         if action == "approve":
             status = "approved"
+        publication_format = _normalize_publication_format(value(f"pub_{index}_format") or value(f"pub_{index}_pillar"))
         publications.append(
             {
                 "date": publication_date,
                 "day": weekday_name_for_date(publication_date),
-                "platform": value(f"pub_{index}_platform"),
+                "platform": platform,
                 "topic": topic,
                 "goal": value(f"pub_{index}_goal"),
-                "pillar": value(f"pub_{index}_pillar"),
+                "format": publication_format,
+                "pillar": publication_format,
                 "status": status,
                 "summary": value(f"pub_{index}_summary"),
                 "note": value(f"pub_{index}_note"),
@@ -1648,11 +1645,12 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         new_publication = {
             "date": new_pub_date,
             "day": weekday_name_for_date(new_pub_date),
-            "platform": value("new_pub_platform"),
+            "platform": _normalize_platform(value("new_pub_platform")),
             "topic": value("new_pub_topic") or "Новая публикация",
             "goal": value("new_pub_goal"),
-            "pillar": "",
-            "status": value("new_pub_status") or "planned",
+            "format": _normalize_publication_format(value("new_pub_format")),
+            "pillar": _normalize_publication_format(value("new_pub_format")),
+            "status": _normalize_publication_status(value("new_pub_status") or "planned"),
             "summary": value("new_pub_summary"),
             "note": "",
         }
@@ -1710,16 +1708,17 @@ def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
         return
     formats = topic.get("best_formats", [])
     platform = str(formats[0]) if isinstance(formats, list) and formats else "LinkedIn"
-    today = date.today().strftime("%d.%m.%Y")
+    today = today_moscow().strftime("%d.%m.%Y")
     publications.append(
         {
             "date": today,
             "day": weekday_name_for_date(today),
-            "platform": platform,
+            "platform": _normalize_platform(platform),
             "topic": title,
             "goal": "Проверить тренд как потенциально сильную публикацию дня.",
-            "pillar": "Trend Radar",
-            "status": "suggested",
+            "format": "Наблюдение",
+            "pillar": "Наблюдение",
+            "status": "idea",
             "summary": str(topic.get("description", "")),
             "note": str(topic.get("ai_reason", "")),
         }
@@ -1738,6 +1737,9 @@ def _action_index(action: str, prefix: str) -> int | None:
 def _generate_content_plan_publication_with_ai(plan: dict[str, object], publication: dict[str, str]) -> dict[str, str]:
     updated = dict(publication)
     try:
+        platform = _normalize_platform(str(publication.get("platform", "")))
+        publication_format = _normalize_publication_format(str(publication.get("format") or publication.get("pillar") or ""))
+        language = _language_for_platform(platform)
         context = _content_plan_ai_context(publication)
         previous = _publication_signature(publication)
         response: dict[str, object] = {}
@@ -1755,15 +1757,18 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                     "3. Из фокуса недели нужно придумать новую публикацию.\n\n"
                     "Сохрани только эти поля публикации:\n"
                     f"- date: {publication.get('date', '')}\n"
-                    f"- platform: {publication.get('platform', '')}\n"
+                    f"- platform: {platform}\n"
                     f"- goal: {publication.get('goal', '')}\n"
-                    f"- pillar: {publication.get('pillar', '')}\n\n"
+                    f"- format: {publication_format}\n"
+                    f"- language: {language}\n\n"
+                    f"Инструкция по формату: {_publication_format_instruction(publication_format)}\n\n"
                     "Заново придумай: topic, angle, main_thought, summary, note. "
                     "Тема должна быть заметно другой, не рерайтом старой.\n\n"
                     f"Предыдущий вариант, который нельзя повторять: {previous}\n"
                     f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
                     f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
-                    "Верни JSON с полями: topic, angle, main_thought, goal, summary, status, note."
+                    "Верни JSON с полями: topic, angle, main_thought, goal, summary, status, note. "
+                    "Не меняй date, platform и format."
                 ),
                 action="content_plan_publication",
             )
@@ -1778,7 +1783,9 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
             str(response.get("summary") or response.get("content") or response.get("description") or "").strip(),
         ]
         updated["summary"] = "\n".join(part for part in summary_parts if part) or str(updated.get("summary", "")).strip()
-        updated["status"] = str(response.get("status") or "suggested").strip()
+        updated["format"] = publication_format
+        updated["pillar"] = publication_format
+        updated["status"] = "drafted"
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
         updated["day"] = weekday_name_for_date(str(updated.get("date", "")))
@@ -1832,7 +1839,10 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
                     f"Контекст автора, Knowledge, Trend Radar и Lessons: {json.dumps(context, ensure_ascii=False)}\n\n"
                     "Верни JSON с полями week, week_start, week_end, focus, month_focus, content_pillars, "
                     "platform_targets, today_recommendation, planned_publications. "
-                    "У каждой публикации: date, platform, topic, goal, pillar, summary, status, note. "
+                    "У каждой публикации: date, platform, topic, goal, format, summary, status, note. "
+                    "platform только LinkedIn, Telegram, VC или Сетка. "
+                    "format только Кейс, Аналитика, Наблюдение или Разговорный пост. "
+                    "Для LinkedIn генерируй тему, цель, summary и note на английском языке. Для остальных площадок — на русском. "
                     "Не возвращай day: день недели вычисляется системой."
                 ),
                 action="content_plan_full",
@@ -1950,11 +1960,12 @@ def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:
     return {
         "date": publication_date,
         "day": weekday_name_for_date(publication_date),
-        "platform": str(item.get("platform", "")).strip(),
+        "platform": _normalize_platform(str(item.get("platform", "")).strip()),
         "topic": str(item.get("topic", "")).strip() or "Тема для публикации",
         "goal": str(item.get("goal", "")).strip(),
-        "pillar": str(item.get("pillar", "")).strip(),
-        "status": str(item.get("status", "suggested")).strip() or "suggested",
+        "format": _normalize_publication_format(str(item.get("format") or item.get("pillar") or "")),
+        "pillar": _normalize_publication_format(str(item.get("format") or item.get("pillar") or "")),
+        "status": _normalize_publication_status(str(item.get("status", "planned")).strip() or "planned"),
         "summary": str(item.get("summary", "")).strip(),
         "note": str(item.get("note", "")).strip(),
     }
@@ -1974,16 +1985,20 @@ def render_knowledge(
     documents: list[object],
     cases: list[object] | None = None,
     uploaded: bool = False,
+    analysis: str = "",
     upload_error: str = "",
     deleted: bool = False,
     case_saved: bool = False,
     case_deleted: bool = False,
-    query: str = "",
-    results: list[KnowledgeSearchResult] | None = None,
+    section: str = "documents",
 ) -> str:
     notices = []
     if uploaded:
         notices.append("Документ добавлен в память.")
+    if analysis == "done":
+        notices.append("Анализ завершен.")
+    if analysis == "error":
+        notices.append("Ошибка анализа.")
     if upload_error:
         notices.append(upload_error)
     if deleted:
@@ -2004,14 +2019,8 @@ def render_knowledge(
         else "<div class=\"empty\">Пока нет документов. Загрузите PDF, DOCX, Markdown или TXT.</div>"
     )
     supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
-    search_results = results or []
-    search_html = ""
-    if query:
-        search_html = (
-            "".join(_knowledge_search_card(result) for result in search_results)
-            if search_results
-            else "<div class=\"empty\">Ничего не найдено. Попробуйте другой запрос.</div>"
-        )
+    section = _knowledge_section(section)
+    section_html = _knowledge_section_content(section, documents, docs_html, cases_html)
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -2027,68 +2036,27 @@ def render_knowledge(
         <p class="eyebrow">долгосрочная память</p>
         <h1>Память</h1>
       </div>
-      <div class="meta">
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/content-plan">Контент-план</a>
-        <a href="/ideas">Идеи</a>
-      </div>
+      {_global_nav("knowledge")}
     </header>
     {notice_html}
     <section class="memory-categories">
-      {_memory_category("Документы", "PDF, DOCX, Markdown и TXT для будущего AI-поиска.")}
-      {_memory_category("Кейсы", "Реальные рабочие ситуации, которые можно использовать в контенте.")}
-      {_memory_category("Идеи", "Мысли и заготовки, сохраненные для будущего контента.")}
-      {_memory_category("Наблюдения", "Рабочие закономерности и выводы из практики.")}
-      {_memory_category("Принципы", "Авторские правила, фреймворки и убеждения.")}
-      {_memory_category("Истории", "Жизненные примеры и ситуации для будущих текстов.")}
+      {_memory_category("documents", "Документы", "PDF, DOCX, Markdown и TXT.", section)}
+      {_memory_category("cases", "Кейсы", "Рабочие ситуации для будущего контента.", section)}
+      {_memory_category("ideas", "Идеи", "Мысли и заготовки из обработанных материалов.", section)}
+      {_memory_category("observations", "Наблюдения", "Закономерности и выводы из практики.", section)}
+      {_memory_category("principles", "Принципы", "Авторские правила и убеждения.", section)}
+      {_memory_category("stories", "Истории", "Жизненные примеры и ситуации.", section)}
     </section>
     <section class="knowledge-upload">
       <h2>Загрузить документ</h2>
       <p>Поддерживаются: {escape(supported)}. Документ сохранится локально и попадет в базовый индекс.</p>
-      <form method="post" action="/knowledge/upload" enctype="multipart/form-data">
+      <form method="post" action="/knowledge/upload" enctype="multipart/form-data" onsubmit="const s=this.querySelector('[data-upload-status]'); if (s) s.textContent='Анализируется...';">
         <input type="file" name="document" accept=".pdf,.docx,.md,.txt" required>
         <button type="submit">Добавить в память</button>
+        <span class="state-note" data-upload-status></span>
       </form>
     </section>
-    <section class="knowledge-upload">
-      <h2>Поиск по памяти</h2>
-      <p>Поиск идет по названию и содержимому документов. Каждый результат объясняет, почему он найден.</p>
-      <form method="get" action="/knowledge">
-        <input name="q" value="{escape(query)}" placeholder="Например: Customer Experience, SOP, MAYRVEDA">
-        <button type="submit">Найти</button>
-      </form>
-      <div class="knowledge-list">{search_html}</div>
-    </section>
-    <section class="knowledge-upload">
-      <h2>Добавить кейс</h2>
-      <form method="post" action="/knowledge/cases/add">
-        <input name="title" placeholder="Название кейса" required>
-        <input name="company" placeholder="Компания / проект">
-        <textarea name="what_happened" rows="3" placeholder="Что произошло" required></textarea>
-        <textarea name="reason" rows="3" placeholder="Причина"></textarea>
-        <textarea name="solution" rows="3" placeholder="Решение"></textarea>
-        <textarea name="result" rows="3" placeholder="Результат"></textarea>
-        <select name="public_usage">
-          <option>Можно использовать публично</option>
-          <option>Только обезличенно</option>
-          <option>Нельзя использовать публично</option>
-        </select>
-        <input name="key_topics" placeholder="Ключевые темы: Customer Experience, SOP">
-        <input name="platforms" placeholder="Площадки: LinkedIn, Telegram">
-        <button type="submit">Сохранить кейс</button>
-      </form>
-      <div class="knowledge-list">{cases_html}</div>
-    </section>
-    <section class="block">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">документы</p>
-          <h2>Документы</h2>
-        </div>
-        <span>{len(documents)} в библиотеке</span>
-      </div>
-      <div class="knowledge-list">{docs_html}</div>
-    </section>
+    {section_html}
   </main>
 </body>
 </html>"""
@@ -2110,11 +2078,7 @@ def render_knowledge_document(document: object) -> str:
         <p class="eyebrow">документ</p>
         <h1>{escape(document.title)}</h1>
       </div>
-      <div class="meta">
-        <a href="/knowledge">Память</a>
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/ideas">Идеи</a>
-      </div>
+      {_global_nav("knowledge")}
     </header>
     <section class="document-view">
       <div class="doc-meta">
@@ -2151,11 +2115,121 @@ def _knowledge_card(document: object) -> str:
     """
 
 
-def _memory_category(title: str, text: str) -> str:
+def _memory_category(section_key: str, title: str, text: str, active: str) -> str:
+    active_class = " active" if section_key == active else ""
     return f"""
-    <article class="memory-category">
+    <a class="memory-category{active_class}" href="/knowledge?section={escape(section_key)}">
       <h3>{escape(title)}</h3>
       <p>{escape(text)}</p>
+    </a>
+    """
+
+
+def _knowledge_section(value: str) -> str:
+    return value if value in {"documents", "cases", "ideas", "observations", "principles", "stories"} else "documents"
+
+
+def _knowledge_section_content(section: str, documents: list[object], docs_html: str, cases_html: str) -> str:
+    labels = {
+        "documents": "Документы",
+        "cases": "Кейсы",
+        "ideas": "Идеи",
+        "observations": "Наблюдения",
+        "principles": "Принципы",
+        "stories": "Истории",
+    }
+    if section == "documents":
+        body = docs_html
+        count = len(documents)
+    elif section == "cases":
+        body = _case_form() + f"<div class=\"knowledge-list\">{cases_html}</div>"
+        count = len(DailyBriefRequestHandler.knowledge_base.list_cases())
+    else:
+        items = _memory_items_from_documents(documents, section)
+        body = (
+            "".join(_memory_item_card(item) for item in items)
+            if items
+            else "<div class=\"empty\">В этом разделе пока нет извлеченных материалов. Загрузите документ или добавьте кейс.</div>"
+        )
+        count = len(items)
+    title = labels.get(section, "Документы")
+    return f"""
+    <section class="block">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">память</p>
+          <h2>{escape(title)}</h2>
+        </div>
+        <span>{count} записей</span>
+      </div>
+      <div class="knowledge-list">{body}</div>
+    </section>
+    """
+
+
+def _case_form() -> str:
+    return """
+    <section class="knowledge-upload embedded-form">
+      <h2>Добавить кейс</h2>
+      <form method="post" action="/knowledge/cases/add">
+        <input name="title" placeholder="Название кейса" required>
+        <input name="company" placeholder="Компания / проект">
+        <textarea name="what_happened" rows="3" placeholder="Что произошло" required></textarea>
+        <textarea name="reason" rows="3" placeholder="Причина"></textarea>
+        <textarea name="solution" rows="3" placeholder="Решение"></textarea>
+        <textarea name="result" rows="3" placeholder="Результат"></textarea>
+        <select name="public_usage">
+          <option>Можно использовать публично</option>
+          <option>Только обезличенно</option>
+          <option>Нельзя использовать публично</option>
+        </select>
+        <input name="key_topics" placeholder="Ключевые темы: Customer Experience, SOP">
+        <input name="platforms" placeholder="Площадки: LinkedIn, Telegram">
+        <button type="submit">Сохранить кейс</button>
+      </form>
+    </section>
+    """
+
+
+def _memory_items_from_documents(documents: list[object], section: str) -> list[dict[str, str]]:
+    key_map = {
+        "ideas": ("ideas", "conclusions"),
+        "observations": ("conclusions", "results"),
+        "principles": ("favorite_phrases", "themes"),
+        "stories": ("quotes", "cases"),
+    }
+    result: list[dict[str, str]] = []
+    for document in documents:
+        analysis = getattr(document, "analysis", {}) or {}
+        if not isinstance(analysis, dict):
+            continue
+        for key in key_map.get(section, ()):
+            values = analysis.get(key, [])
+            if isinstance(values, list):
+                for value in values[:8]:
+                    if isinstance(value, dict):
+                        text = str(value.get("context") or value.get("title") or value)
+                    else:
+                        text = str(value)
+                    if text.strip():
+                        result.append(
+                            {
+                                "title": getattr(document, "title", ""),
+                                "text": text.strip(),
+                                "source": getattr(document, "id", ""),
+                            }
+                        )
+    return result[:40]
+
+
+def _memory_item_card(item: dict[str, str]) -> str:
+    return f"""
+    <article class="knowledge-card">
+      <div>
+        <h3>{escape(item.get("title", "Материал памяти"))}</h3>
+        <p>{escape(item.get("text", ""))}</p>
+      </div>
+      <a class="open-link" href="/knowledge/{escape(item.get("source", ""))}">Открыть</a>
     </article>
     """
 
@@ -2279,11 +2353,7 @@ def render_idea_vault(
         <p class="eyebrow">хранилище идей</p>
         <h1>Идеи</h1>
       </div>
-      <div class="meta">
-        <a href="/daily-brief">Daily Brief</a>
-        <a href="/knowledge">Память</a>
-        <a href="/author-profile">Author Profile</a>
-      </div>
+      {_global_nav("ideas")}
     </header>
     {notice_html}
     <section class="knowledge-upload">
@@ -2332,10 +2402,7 @@ def render_idea_detail(idea: Idea) -> str:
         <p class="eyebrow">идея</p>
         <h1>{escape(idea.title)}</h1>
       </div>
-      <div class="meta">
-        <a href="/ideas">Идеи</a>
-        <a href="/daily-brief">Daily Brief</a>
-      </div>
+      {_global_nav("ideas")}
     </header>
     <section class="document-view">
       <div class="doc-meta">
@@ -2466,6 +2533,25 @@ def _status_ru(status: str) -> str:
         "needs_ai_plan": "запросить AI-план",
         "ready_for_review": "готово к просмотру",
     }
+    statuses.update(
+        {
+            "New": "Новая",
+            "In Progress": "В работе",
+            "Drafted": "Черновик",
+            "Published": "Опубликовано",
+            "Archived": "Архив",
+            "idea": "Идея",
+            "planned": "Запланировано",
+            "suggested": "Идея",
+            "drafted": "Черновик",
+            "review": "На проверке",
+            "approved": "Утверждено",
+            "published": "Опубликовано",
+            "archived": "Архив",
+            "needs_ai_plan": "Идея",
+            "ready_for_review": "На проверке",
+        }
+    )
     return statuses.get(status, status)
 
 
@@ -2589,6 +2675,64 @@ def _date_input(name: str, label: str, value: object) -> str:
     """
 
 
+def _normalize_platform(value: str) -> str:
+    value = value.strip()
+    return value if value in CONTENT_PLATFORMS else (value or "LinkedIn")
+
+
+def _normalize_publication_format(value: str) -> str:
+    value = value.strip()
+    return value if value in PUBLICATION_FORMATS else "Наблюдение"
+
+
+def _publication_format(item: object) -> str:
+    if not isinstance(item, dict):
+        return "Наблюдение"
+    return _normalize_publication_format(str(item.get("format") or item.get("pillar") or ""))
+
+
+def _normalize_publication_status(status: str) -> str:
+    mapping = {
+        "suggested": "idea",
+        "needs_ai_plan": "idea",
+        "ready_for_review": "review",
+        "Published": "published",
+        "Archived": "archived",
+        "Drafted": "drafted",
+        "New": "idea",
+        "In Progress": "planned",
+    }
+    normalized = mapping.get(status, status)
+    return normalized if normalized in PUBLICATION_STATUSES else "planned"
+
+
+def _language_for_platform(platform: str) -> str:
+    return "English" if _normalize_platform(platform) == "LinkedIn" else "Russian"
+
+
+def _publication_format_instruction(publication_format: str) -> str:
+    instructions = {
+        "Кейс": "строить публикацию вокруг конкретной рабочей ситуации, причины, решения и вывода; не выдумывать реальные компании и цифры.",
+        "Аналитика": "дать ясный разбор причины, последствий и практического вывода без учебникового тона.",
+        "Наблюдение": "начать с живого наблюдения или закономерности из практики, затем показать ход мысли.",
+        "Разговорный пост": "писать естественно, ближе к личному профессиональному размышлению, без канцелярита.",
+    }
+    return instructions.get(_normalize_publication_format(publication_format), instructions["Наблюдение"])
+
+
+def _select(name: str, label: str, selected: str, options: tuple[str, ...] | list[str]) -> str:
+    option_html = "".join(
+        f"<option value=\"{escape(option)}\" {'selected' if option == selected else ''}>{escape(_status_ru(option) if name.endswith('_status') else option)}</option>"
+        for option in options
+    )
+    return f"""
+    <label>
+      <span>{escape(label)}</span>
+      <select name="{escape(name)}">{option_html}</select>
+    </label>
+    """
+
+
 def _textarea(name: str, label: str, value: object) -> str:
     return f"""
     <label>
@@ -2599,17 +2743,7 @@ def _textarea(name: str, label: str, value: object) -> str:
 
 
 def _status_select(name: str, label: str, selected: str) -> str:
-    statuses = ("planned", "suggested", "drafted", "approved", "needs_ai_plan", "ready_for_review")
-    options = "".join(
-        f"<option value=\"{escape(status)}\" {'selected' if status == selected else ''}>{escape(_status_ru(status))}</option>"
-        for status in statuses
-    )
-    return f"""
-    <label>
-      <span>{escape(label)}</span>
-      <select name="{escape(name)}">{options}</select>
-    </label>
-    """
+    return _select(name, label, _normalize_publication_status(selected), PUBLICATION_STATUSES)
 
 
 def _section(title: str, items: tuple[BriefItem, ...], kind: str) -> str:
@@ -3297,6 +3431,14 @@ def _styles() -> str:
       background: rgba(255,255,255,.45);
       font-weight: 680;
     }
+    .global-nav {
+      max-width: 760px;
+    }
+    .meta a.active {
+      color: white;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
     .open-link {
       display: inline-flex;
       height: fit-content;
@@ -3952,6 +4094,14 @@ def _styles() -> str:
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 16px;
+      color: var(--ink);
+      text-decoration: none;
+      min-height: 118px;
+      display: block;
+    }
+    .memory-category.active {
+      background: var(--accent-soft);
+      border-color: rgba(49, 95, 86, .42);
     }
     .memory-category p {
       color: var(--muted);
@@ -4048,7 +4198,9 @@ def _styles() -> str:
       color: var(--ink);
       text-decoration: none;
       font-size: 12px;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
+      word-break: normal;
+      hyphens: auto;
     }
     .calendar-publication span {
       color: var(--accent);
@@ -4156,6 +4308,7 @@ def _styles() -> str:
       min-height: 44px;
     }
     select {
+      width: 100%;
       border: 1px solid var(--line);
       border-radius: 999px;
       background: var(--paper-soft);
@@ -4174,6 +4327,9 @@ def _styles() -> str:
       .shell { width: min(100% - 40px, 960px); }
       .period-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .hero-cards, .memory-categories, .today-details, .week-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .calendar-weekdays { display: none; }
+      .calendar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .calendar-day.muted { display: none; }
       .today-card { grid-template-columns: 1fr; }
       .draft-grid, .approval-grid, .plan-list, .form-grid, .edit-row, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .plan-meta-grid { grid-template-columns: 1fr; }
@@ -4186,6 +4342,11 @@ def _styles() -> str:
       .meta { justify-content: flex-start; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
       .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: 1fr; }
+      .calendar-weekdays { display: none; }
+      .calendar-grid { grid-template-columns: 1fr; }
+      .calendar-day { min-height: auto; }
+      .calendar-day.muted { display: none; }
+      .calendar-publication { font-size: 13px; }
       .period-picker { grid-template-columns: 1fr; }
       .period-picker input { min-width: 0; }
       .summary { padding-top: 28px; }
