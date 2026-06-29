@@ -389,10 +389,59 @@ def extract_docx_text(path: Path) -> str:
 
 
 def extract_pdf_text(path: Path) -> str:
+    text = extract_pdf_text_with_pymupdf(path)
+    if text.strip():
+        return text
+    text = extract_pdf_text_with_pdfplumber(path)
+    if text.strip():
+        return text
     text = extract_pdf_text_with_pypdf(path)
     if text.strip():
         return text
     return extract_pdf_text_from_streams(path)
+
+
+def extract_pdf_text_with_pymupdf(path: Path) -> str:
+    try:
+        import fitz
+    except Exception:
+        return ""
+    try:
+        document = fitz.open(str(path))
+    except Exception:
+        return ""
+    pages: list[str] = []
+    try:
+        for page_number, page in enumerate(document, start=1):
+            blocks = page.get_text("blocks", sort=True)
+            page_lines: list[str] = []
+            for block in blocks:
+                text = str(block[4] if len(block) > 4 else "").strip()
+                if text:
+                    page_lines.append(_normalize_pdf_block(text))
+            if page_lines:
+                pages.append(f"--- Page {page_number} ---\n" + "\n\n".join(page_lines))
+    finally:
+        document.close()
+    return "\n\n".join(pages).strip()
+
+
+def extract_pdf_text_with_pdfplumber(path: Path) -> str:
+    try:
+        import pdfplumber
+    except Exception:
+        return ""
+    pages: list[str] = []
+    try:
+        with pdfplumber.open(str(path)) as document:
+            for page_number, page in enumerate(document.pages, start=1):
+                text = page.extract_text(x_tolerance=1, y_tolerance=3, layout=True) or ""
+                text = _normalize_pdf_block(text)
+                if text:
+                    pages.append(f"--- Page {page_number} ---\n{text}")
+    except Exception:
+        return ""
+    return "\n\n".join(pages).strip()
 
 
 def extract_pdf_text_with_pypdf(path: Path) -> str:
@@ -402,7 +451,12 @@ def extract_pdf_text_with_pypdf(path: Path) -> str:
         return ""
     try:
         reader = PdfReader(str(path))
-        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        pages = []
+        for page_number, page in enumerate(reader.pages, start=1):
+            text = _normalize_pdf_block(page.extract_text() or "")
+            if text:
+                pages.append(f"--- Page {page_number} ---\n{text}")
+        return "\n\n".join(pages).strip()
     except Exception:
         return ""
 
@@ -461,6 +515,22 @@ def _decode_pdf_hex(value: str) -> str:
         if text:
             return text
     return ""
+
+
+def _normalize_pdf_block(text: str) -> str:
+    lines = [line.rstrip() for line in text.replace("\x00", "").splitlines()]
+    compact_lines: list[str] = []
+    previous_blank = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if not previous_blank:
+                compact_lines.append("")
+            previous_blank = True
+            continue
+        compact_lines.append(stripped)
+        previous_blank = False
+    return "\n".join(compact_lines).strip()
 
 
 def _tokens(text: str) -> set[str]:

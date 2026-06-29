@@ -48,7 +48,7 @@ AI_TIMEOUT_MESSAGE = "AI не успел ответить. Попробуйте 
 
 CONTENT_PLATFORMS = ("LinkedIn", "Telegram", "VC", "Сетка")
 PUBLICATION_FORMATS = ("Кейс", "Аналитика", "Наблюдение", "Разговорный пост")
-PUBLICATION_STATUSES = ("idea", "planned", "drafted", "review", "approved", "published", "archived")
+PUBLICATION_STATUSES = ("idea", "planned", "in_progress", "published")
 
 
 class DailyBriefRequestHandler(BaseHTTPRequestHandler):
@@ -1363,7 +1363,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
           {_input("new_pub_goal", "Цель", "")}
           {_select("new_pub_format", "Формат публикации", "Наблюдение", PUBLICATION_FORMATS)}
           {_textarea("new_pub_summary", "Краткое содержание", "")}
-          {_status_select("new_pub_status", "Статус", "planned")}
+          <input type="hidden" name="new_pub_status" value="planned">
           <button class="ghost" name="plan_action" value="add_publication" type="submit">Добавить публикацию</button>
         </article>
         <input type="hidden" name="new_pub_index" value="{new_index}">
@@ -1389,6 +1389,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         error = f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(item.get('ai_error')))}</div>"
     updated = f"<div class=\"state-note\">Обновлено: {escape(str(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
+    status = _normalize_publication_status(str(item.get("status", "")))
     return f"""
     <article class="plan-item edit-row" id="publication-{index}">
       {_date_input(f"pub_{index}_date", "Дата", str(item.get("date", "")))}
@@ -1397,13 +1398,15 @@ def _content_plan_edit_row(item: object, index: int) -> str:
       {_input(f"pub_{index}_topic", "Тема", item.get("topic", ""))}
       {_input(f"pub_{index}_goal", "Цель", item.get("goal", ""))}
       {_select(f"pub_{index}_format", "Формат публикации", _publication_format(item), PUBLICATION_FORMATS)}
-      {_status_select(f"pub_{index}_status", "Статус", str(item.get("status", "")))}
+      <input type="hidden" name="pub_{index}_status" value="{escape(status)}">
+      {_status_badge(status)}
       {_textarea(f"pub_{index}_summary", "Краткое содержание", item.get("summary", item.get("note", "")))}
       {_textarea(f"pub_{index}_note", "Заметка", item.get("note", ""))}
       {updated}
       {error}
       <div class="form-actions">
         <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/содержание</button>
+        <button class="ghost" name="plan_action" value="next_pub_{index}" type="submit">Следующий этап</button>
         <button class="ghost" name="plan_action" value="change_pub_{index}" type="submit">Изменить</button>
         <button class="ghost" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
       </div>
@@ -1624,6 +1627,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         parsed_start = parse_plan_date(week_start)
         week_end = (parsed_start + timedelta(days=6)).isoformat() if parsed_start else week_start
     delete_index = _action_index(action, "delete_pub_")
+    next_index = _action_index(action, "next_pub_")
     publications = []
     indexes = sorted(
         {
@@ -1643,7 +1647,9 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             continue
         status = _normalize_publication_status(value(f"pub_{index}_status"))
         if action == "approve":
-            status = "approved"
+            status = "planned"
+        if next_index == index:
+            status = _next_publication_status(status)
         publication_format = _normalize_publication_format(value(f"pub_{index}_format") or value(f"pub_{index}_pillar"))
         publications.append(
             {
@@ -1669,7 +1675,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             "goal": value("new_pub_goal"),
             "format": _normalize_publication_format(value("new_pub_format")),
             "pillar": _normalize_publication_format(value("new_pub_format")),
-            "status": _normalize_publication_status(value("new_pub_status") or "planned"),
+            "status": "planned",
             "summary": value("new_pub_summary"),
             "note": "",
         }
@@ -1705,11 +1711,15 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             raw["last_action"] = "План утвержден."
         elif action == "add_publication":
             raw["last_action"] = "Публикация добавлена."
+        elif next_index is not None:
+            raw["last_action"] = f"Публикация #{next_index + 1} переведена на следующий этап."
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     anchor = ""
     target_index = _action_index(action, "generate_pub_")
     if target_index is None:
         target_index = _action_index(action, "change_pub_")
+    if target_index is None:
+        target_index = _action_index(action, "next_pub_")
     if target_index is not None:
         anchor = f"#publication-{target_index}"
     return f"/content-plan?saved=1&status=updated&view={view}{anchor}"
@@ -1804,7 +1814,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         updated["summary"] = "\n".join(part for part in summary_parts if part) or str(updated.get("summary", "")).strip()
         updated["format"] = publication_format
         updated["pillar"] = publication_format
-        updated["status"] = "drafted"
+        updated["status"] = "in_progress"
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
         updated["day"] = weekday_name_for_date(str(updated.get("date", "")))
@@ -2562,13 +2572,14 @@ def _status_ru(status: str) -> str:
             "idea": "Идея",
             "planned": "Запланировано",
             "suggested": "Идея",
-            "drafted": "Черновик",
-            "review": "На проверке",
-            "approved": "Утверждено",
+            "drafted": "В работе",
+            "in_progress": "В работе",
+            "review": "В работе",
+            "approved": "В работе",
             "published": "Опубликовано",
             "archived": "Архив",
             "needs_ai_plan": "Идея",
-            "ready_for_review": "На проверке",
+            "ready_for_review": "В работе",
         }
     )
     return statuses.get(status, status)
@@ -2714,15 +2725,37 @@ def _normalize_publication_status(status: str) -> str:
     mapping = {
         "suggested": "idea",
         "needs_ai_plan": "idea",
-        "ready_for_review": "review",
+        "ready_for_review": "in_progress",
+        "review": "in_progress",
+        "approved": "in_progress",
         "Published": "published",
-        "Archived": "archived",
-        "Drafted": "drafted",
+        "Archived": "published",
+        "archived": "published",
+        "Drafted": "in_progress",
+        "drafted": "in_progress",
         "New": "idea",
         "In Progress": "planned",
     }
     normalized = mapping.get(status, status)
     return normalized if normalized in PUBLICATION_STATUSES else "planned"
+
+
+def _next_publication_status(status: str) -> str:
+    order = ("idea", "planned", "in_progress", "published")
+    current = _normalize_publication_status(status)
+    index = order.index(current) if current in order else 0
+    return order[min(index + 1, len(order) - 1)]
+
+
+def _status_badge(status: str) -> str:
+    normalized = _normalize_publication_status(status)
+    icon = {
+        "idea": "●",
+        "planned": "●",
+        "in_progress": "●",
+        "published": "●",
+    }.get(normalized, "●")
+    return f'<div class="status-badge status-{escape(normalized)}">{icon} {escape(_status_ru(normalized))}</div>'
 
 
 def _language_for_platform(platform: str) -> str:
@@ -3917,6 +3950,31 @@ def _styles() -> str:
       padding: 4px 8px;
       text-transform: none;
       letter-spacing: 0;
+    }
+    .status-badge {
+      width: fit-content;
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+      padding: 7px 11px;
+      font-size: 13px;
+      font-weight: 760;
+      align-self: end;
+    }
+    .status-idea {
+      color: #8a6a10;
+      background: #fff7d8;
+    }
+    .status-planned {
+      color: #285c8f;
+      background: #eaf3ff;
+    }
+    .status-in_progress {
+      color: #9a5a12;
+      background: #fff0df;
+    }
+    .status-published {
+      color: #2d6b45;
+      background: #e8f6ed;
     }
     .today-reco {
       margin-top: 16px;

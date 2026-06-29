@@ -535,7 +535,7 @@ class DailyBriefService:
 
     def _topic_plan_bonus(self, topic: str, content_plan: ContentPlan) -> int:
         publication = self._planned_publication_for_topic(topic, content_plan)
-        if publication and publication.status in {"planned", "suggested", "drafted"}:
+        if publication and publication.status in {"planned", "suggested", "drafted", "in_progress", "idea"}:
             return 12
         if self._topic_matches_pillar(topic, content_plan):
             return 6
