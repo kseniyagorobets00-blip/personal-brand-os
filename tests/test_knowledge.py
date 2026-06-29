@@ -103,6 +103,39 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertNotIn("A5=80", text)
         self.assertNotIn("endstream", text)
 
+    def test_pdf_text_is_saved_as_clean_markdown(self) -> None:
+        with TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "portfolio.pdf"
+            pdf_path.write_bytes(b"%PDF-1.7 binary placeholder")
+
+            raw_text = (
+                "--- Page 1 ---\n"
+                "Ksenia GorobetsConsultant\n\n"
+                "Rea\n\n"
+                "Experience\n"
+                "Customer Experience\n"
+                "Operations leader across teams\n"
+                "--- Page 2 ---\n"
+                "Projects\n"
+                "MAYRVEDA service design."
+            )
+            with (
+                patch("post_agent.knowledge.extract_pdf_text_with_pymupdf", return_value=raw_text),
+                patch("post_agent.knowledge.extract_pdf_text_with_pdfplumber", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_with_pypdf", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_from_streams", return_value=""),
+                patch("post_agent.knowledge.extract_pdf_text_with_ocr", return_value=""),
+            ):
+                text = extract_pdf_text(pdf_path)
+
+        self.assertNotIn("--- Page", text)
+        self.assertNotIn("\nRea\n", text)
+        self.assertIn("# Ksenia Gorobets Consultant", text)
+        self.assertIn("## Experience", text)
+        self.assertIn("## Customer Experience", text)
+        self.assertIn("## Projects", text)
+        self.assertIn("Operations leader across teams", text)
+
     def test_knowledge_ui_renders_library_and_document(self) -> None:
         with TemporaryDirectory() as directory:
             base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")

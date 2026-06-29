@@ -398,8 +398,8 @@ def extract_pdf_text(path: Path) -> str:
     for extractor in extractors:
         text = _clean_extracted_pdf_text(extractor(path))
         if _is_readable_pdf_text(text):
-            return text
-    return _clean_extracted_pdf_text(extract_pdf_text_with_ocr(path))
+            return _finalize_pdf_text(text)
+    return _finalize_pdf_text(extract_pdf_text_with_ocr(path))
 
 
 def extract_pdf_text_with_pymupdf(path: Path) -> str:
@@ -572,10 +572,109 @@ def _clean_extracted_pdf_text(text: str) -> str:
     return _normalize_pdf_block("\n".join(lines))
 
 
+def _finalize_pdf_text(text: str) -> str:
+    clean = _clean_extracted_pdf_text(text)
+    if not clean:
+        return ""
+    repaired_lines = _repair_pdf_line_flow(clean.splitlines())
+    return _format_pdf_text_as_markdown(repaired_lines)
+
+
+def _repair_pdf_line_flow(lines: list[str]) -> list[str]:
+    paragraphs: list[str] = []
+    current = ""
+    for raw_line in lines:
+        line = _repair_pdf_spacing(raw_line.strip())
+        if not line or _looks_like_pdf_service_line(line) or _looks_like_truncated_pdf_fragment(line):
+            if current:
+                paragraphs.append(current.strip())
+                current = ""
+            continue
+        if not current:
+            current = line
+            continue
+        if _should_keep_pdf_line_break(current, line):
+            paragraphs.append(current.strip())
+            current = line
+            continue
+        current = _join_pdf_line(current, line)
+    if current:
+        paragraphs.append(current.strip())
+    return [paragraph for paragraph in paragraphs if paragraph]
+
+
+def _repair_pdf_spacing(text: str) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"([a-zа-яё])([A-ZА-ЯЁ])", r"\1 \2", text)
+    text = re.sub(r"([A-Za-zА-Яа-яЁё])(\d)", r"\1 \2", text)
+    text = re.sub(r"(\d)([A-Za-zА-Яа-яЁё])", r"\1 \2", text)
+    text = re.sub(r"([.!?;:])([A-Za-zА-Яа-яЁё])", r"\1 \2", text)
+    text = re.sub(r"([,])([A-Za-zА-Яа-яЁё])", r"\1 \2", text)
+    return text
+
+
+def _join_pdf_line(previous: str, current: str) -> str:
+    if previous.endswith("-"):
+        return previous[:-1] + current
+    return previous + " " + current
+
+
+def _should_keep_pdf_line_break(previous: str, current: str) -> bool:
+    if _looks_like_document_heading(previous) or _looks_like_document_heading(current):
+        return True
+    if previous.endswith((".", "!", "?", ":", ";")):
+        return True
+    if re.match(r"^[-*•]\s+", current):
+        return True
+    if re.match(r"^\d+[\.)]\s+", current):
+        return True
+    return False
+
+
+def _format_pdf_text_as_markdown(paragraphs: list[str]) -> str:
+    formatted: list[str] = []
+    for index, paragraph in enumerate(paragraphs):
+        if _looks_like_document_heading(paragraph):
+            prefix = "# " if index == 0 else "## "
+            formatted.append(prefix + paragraph.lstrip("# ").strip())
+        else:
+            formatted.append(paragraph)
+    return "\n\n".join(formatted).strip()
+
+
+def _looks_like_document_heading(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped or len(stripped) > 90:
+        return False
+    if stripped.endswith((".", ",", ";")):
+        return False
+    words = re.findall(r"[A-Za-zА-Яа-яЁё0-9+&.-]+", stripped)
+    if not words or len(words) > 8:
+        return False
+    if stripped.startswith("#"):
+        return True
+    if len(words) <= 3 and any(char.isalpha() for char in stripped):
+        return True
+    uppercase_words = [word for word in words if any(char.isalpha() for char in word) and word.upper() == word]
+    titlecase_words = [word for word in words if word[:1].isupper()]
+    return len(uppercase_words) >= max(1, len(words) - 1) or len(titlecase_words) == len(words)
+
+
+def _looks_like_truncated_pdf_fragment(text: str) -> bool:
+    letters = re.findall(r"[A-Za-zА-Яа-яЁё]", text)
+    if len(letters) > 3:
+        return False
+    return bool(letters) and text.isalpha() and not text.isupper()
+
+
 def _looks_like_pdf_service_line(line: str) -> bool:
     if not line:
         return False
     lowered = line.lower()
+    if re.fullmatch(r"-{2,}\s*page\s+\d+\s*-{2,}", lowered):
+        return True
+    if re.fullmatch(r"page\s+\d+(\s+of\s+\d+)?", lowered):
+        return True
     service_tokens = (
         "%pdf",
         " obj",
