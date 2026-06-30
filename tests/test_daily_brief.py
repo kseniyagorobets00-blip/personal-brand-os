@@ -258,7 +258,10 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Контент-план", html)
         self.assertIn("Сохранить план", html)
         self.assertIn("Утвердить план", html)
-        self.assertIn("Создать новый план", html)
+        self.assertIn("Редакционная стратегия", html)
+        self.assertIn("Сохранить стратегию", html)
+        self.assertIn("Создать план по стратегии", html)
+        self.assertIn("Рубрика", html)
         self.assertIn("Сгенерировать тему/содержание", html)
         self.assertIn("Добавить публикацию", html)
         self.assertIn("Краткое содержание", html)
@@ -478,25 +481,26 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Month focus", gateway.prompts[0])
         self.assertIn("Weekly focus", gateway.prompts[0])
 
-    def test_content_plan_generate_full_plan_replaces_week_plan(self) -> None:
+    def test_content_plan_generate_full_plan_uses_editorial_strategy(self) -> None:
         class Gateway:
             def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, object]:
                 return {
                     "content_plan": {
                         "focus": "Generated focus",
                         "planned_publications": [
-                            {"platform": "LinkedIn", "topic": "Generated Monday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
-                            {"platform": "Telegram", "topic": "Generated Tuesday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                            {"platform": "Telegram", "rubric": "Кейс", "format": "статья", "topic": "Generated Monday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                            {"platform": "VC", "rubric": "Миф", "format": "статья", "topic": "Generated Tuesday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
                         ],
                     },
                 }
 
         with TemporaryDirectory() as directory:
             plan_path = Path(directory) / "content_plan.json"
+            strategy_path = Path(directory) / "editorial_strategy.json"
             plan_path.write_text("{}", encoding="utf-8")
             form = {
                 "view": ["calendar"],
-                "plan_action": ["request_ai"],
+                "plan_action": ["strategy_plan"],
                 "week_start": ["2026-06-22"],
                 "week_end": ["2026-06-28"],
                 "focus": ["Old"],
@@ -504,9 +508,46 @@ class DailyBriefTests(unittest.TestCase):
                 "content_pillars": ["Operations"],
                 "platform_targets": ["LinkedIn"],
                 "today_recommendation": ["Today"],
+                "strategy_0_day": ["Понедельник"],
+                "strategy_0_active": ["on"],
+                "strategy_0_platform": ["LinkedIn"],
+                "strategy_0_rubric": ["Аналитика"],
+                "strategy_0_format": ["экспертный пост"],
+                "strategy_0_note": [""],
+                "strategy_1_day": ["Вторник"],
+                "strategy_1_active": ["on"],
+                "strategy_1_platform": ["Telegram"],
+                "strategy_1_rubric": ["Наблюдение"],
+                "strategy_1_format": ["короткий пост"],
+                "strategy_1_note": [""],
+                "strategy_2_day": ["Среда"],
+                "strategy_2_platform": ["VC"],
+                "strategy_2_rubric": ["Кейс"],
+                "strategy_2_format": ["статья"],
+                "strategy_2_note": [""],
+                "strategy_3_day": ["Четверг"],
+                "strategy_3_platform": ["LinkedIn"],
+                "strategy_3_rubric": ["Framework"],
+                "strategy_3_format": ["карусель/пост"],
+                "strategy_3_note": [""],
+                "strategy_4_day": ["Пятница"],
+                "strategy_4_platform": ["Telegram"],
+                "strategy_4_rubric": ["Разговорный пост"],
+                "strategy_4_format": ["короткий пост"],
+                "strategy_4_note": [""],
+                "strategy_5_day": ["Суббота"],
+                "strategy_5_platform": ["Сетка"],
+                "strategy_5_rubric": ["Наблюдение"],
+                "strategy_5_format": ["мини-пост"],
+                "strategy_5_note": [""],
+                "strategy_6_day": ["Воскресенье"],
+                "strategy_6_platform": ["Telegram"],
+                "strategy_6_rubric": ["Наблюдение"],
+                "strategy_6_format": ["мини-пост"],
+                "strategy_6_note": ["Выходной"],
             }
 
-            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch("post_agent.web.AIGateway", return_value=Gateway()):
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch("post_agent.web.EDITORIAL_STRATEGY_PATH", strategy_path), patch("post_agent.web.AIGateway", return_value=Gateway()):
                 location = _save_content_plan_form(form)
                 saved = json.loads(plan_path.read_text(encoding="utf-8"))
 
@@ -514,8 +555,14 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(saved["focus"], "Generated focus")
         self.assertEqual(saved["planned_publications"][0]["date"], "2026-06-22")
         self.assertEqual(saved["planned_publications"][1]["date"], "2026-06-23")
+        self.assertEqual(saved["planned_publications"][0]["platform"], "LinkedIn")
+        self.assertEqual(saved["planned_publications"][0]["pillar"], "Аналитика")
+        self.assertEqual(saved["planned_publications"][0]["format"], "экспертный пост")
+        self.assertEqual(saved["planned_publications"][1]["platform"], "Telegram")
+        self.assertEqual(saved["planned_publications"][1]["pillar"], "Наблюдение")
         self.assertEqual(saved["planned_publications"][0]["topic"], "Generated Monday")
-        self.assertEqual(saved["last_action"], "Создан новый план через AI.")
+        self.assertEqual(len(saved["planned_publications"]), 2)
+        self.assertEqual(saved["last_action"], "Создан план по редакционной стратегии.")
         self.assertTrue(saved["updated_at"])
 
     def test_author_profile_form_can_be_saved_as_json(self) -> None:

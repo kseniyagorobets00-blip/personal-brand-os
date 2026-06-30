@@ -525,9 +525,10 @@ class DailyBriefService:
     def _publication_reason(self, publication: PlannedPublication, content_plan: ContentPlan) -> str:
         date_part = f" на {publication.date}" if publication.date else ""
         goal_part = f" Цель: {publication.goal}" if publication.goal else ""
+        rubric_part = f", рубрика {publication.pillar}" if publication.pillar else ""
         return (
             f"Публикация выбрана из контент-плана{date_part}: {publication.platform}, "
-            f"статус {publication.status}. Она поддерживает фокус недели: {content_plan.focus}."
+            f"статус {publication.status}{rubric_part}. Она поддерживает фокус недели: {content_plan.focus}."
             f"{goal_part}"
         )
 

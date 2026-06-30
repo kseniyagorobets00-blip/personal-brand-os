@@ -47,8 +47,46 @@ AI_TIMEOUT_MESSAGE = "AI не успел ответить. Попробуйте 
 
 
 CONTENT_PLATFORMS = ("LinkedIn", "Telegram", "VC", "Сетка")
-PUBLICATION_FORMATS = ("Кейс", "Аналитика", "Наблюдение", "Разговорный пост")
+RUBRICS = (
+    "Аналитика",
+    "Кейс",
+    "Framework",
+    "Наблюдение",
+    "Разбор ошибки",
+    "Миф",
+    "Storytelling",
+    "Разговорный пост",
+    "Инструменты",
+    "Ответ на вопрос",
+)
+PUBLICATION_FORMATS = ("экспертный пост", "короткий пост", "статья", "карусель/пост", "мини-пост", "пост") + RUBRICS
 PUBLICATION_STATUSES = ("idea", "planned", "in_progress", "published")
+EDITORIAL_STRATEGY_PATH = DEFAULT_CONTENT_PLAN_PATH.parents[1] / "seeds" / "editorial_strategy.json"
+RUBRIC_LIBRARY = {
+    "Аналитика": ("проблема", "причина", "закономерность", "управленческий вывод"),
+    "Кейс": ("проблема", "действия", "результат", "бизнес-эффект", "урок"),
+    "Framework": ("модель", "3-5 элементов", "применение", "вывод"),
+    "Наблюдение": ("рабочая ситуация", "вывод", "вопрос к аудитории"),
+    "Разбор ошибки": ("ошибка", "почему возникает", "как исправить", "профилактика"),
+    "Миф": ("миф", "почему он живет", "что происходит на практике", "новая формулировка"),
+    "Storytelling": ("ситуация", "напряжение", "поворот", "смысл"),
+    "Разговорный пост": ("живой тон", "личная мысль", "без академического стиля"),
+    "Инструменты": ("задача", "инструмент", "как применять", "ограничение"),
+    "Ответ на вопрос": ("вопрос", "короткий ответ", "логика", "пример"),
+}
+DEFAULT_EDITORIAL_STRATEGY = {
+    "updated_at": "",
+    "rubric_library": RUBRIC_LIBRARY,
+    "weekly_template": [
+        {"day": "Понедельник", "platform": "LinkedIn", "rubric": "Аналитика", "format": "экспертный пост", "active": True, "note": ""},
+        {"day": "Вторник", "platform": "Telegram", "rubric": "Наблюдение", "format": "короткий пост", "active": True, "note": ""},
+        {"day": "Среда", "platform": "VC", "rubric": "Кейс", "format": "статья", "active": True, "note": ""},
+        {"day": "Четверг", "platform": "LinkedIn", "rubric": "Framework", "format": "карусель/пост", "active": True, "note": ""},
+        {"day": "Пятница", "platform": "Telegram", "rubric": "Разговорный пост", "format": "короткий пост", "active": True, "note": ""},
+        {"day": "Суббота", "platform": "Сетка", "rubric": "Наблюдение", "format": "мини-пост", "active": True, "note": ""},
+        {"day": "Воскресенье", "platform": "Telegram", "rubric": "Наблюдение", "format": "мини-пост", "active": False, "note": "Выходной"},
+    ],
+}
 
 
 class DailyBriefRequestHandler(BaseHTTPRequestHandler):
@@ -1768,6 +1806,8 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     rows = "".join(_content_plan_edit_row(item, index) for index, item in enumerate(publications))
     new_index = len(publications) if isinstance(publications, list) else 0
     week_start, week_end = _content_plan_period(plan)
+    strategy = _load_editorial_strategy()
+    strategy_block = _editorial_strategy_block(strategy)
     view = "calendar" if view == "calendar" else "list"
     calendar_block = _content_plan_calendar(publications) if view == "calendar" else ""
     return f"""<!doctype html>
@@ -1802,6 +1842,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     </form>
     <form class="profile-form" method="post" action="/content-plan" onsubmit="if (document.activeElement && document.activeElement.tagName === 'BUTTON') {{ document.activeElement.dataset.originalText = document.activeElement.textContent; document.activeElement.textContent = 'Генерируется...'; }}">
       <input type="hidden" name="view" value="{escape(view)}">
+      {strategy_block}
       <section class="profile-section">
         <p class="eyebrow">неделя</p>
         <div class="form-grid">
@@ -1824,7 +1865,8 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
           {_select("new_pub_platform", "Площадка", "", CONTENT_PLATFORMS)}
           {_input("new_pub_topic", "Тема", "")}
           {_input("new_pub_goal", "Цель", "")}
-          {_select("new_pub_format", "Формат публикации", "Наблюдение", PUBLICATION_FORMATS)}
+          {_select("new_pub_pillar", "Рубрика", "Наблюдение", RUBRICS)}
+          {_select("new_pub_format", "Формат публикации", "пост", PUBLICATION_FORMATS)}
           {_textarea("new_pub_summary", "Краткое содержание", "")}
           <input type="hidden" name="new_pub_status" value="planned">
           <button class="ghost" name="plan_action" value="add_publication" type="submit">Добавить публикацию</button>
@@ -1836,13 +1878,64 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <div class="form-actions">
           <button name="plan_action" value="save" type="submit">Сохранить план</button>
           <button name="plan_action" value="approve" type="submit">Утвердить план</button>
-          <button class="ghost" name="plan_action" value="request_ai" type="submit">Создать новый план</button>
+          <button class="ghost" name="plan_action" value="strategy_plan" type="submit">Создать план по стратегии</button>
         </div>
       </section>
     </form>
   </main>
 </body>
 </html>"""
+
+
+def _editorial_strategy_block(strategy: dict[str, object]) -> str:
+    rows = "".join(
+        _editorial_strategy_row(item, index)
+        for index, item in enumerate(_normalize_strategy_entries(strategy.get("weekly_template", [])))
+    )
+    updated = str(strategy.get("updated_at", "")).strip() or "Используется дефолтная стратегия"
+    rubric_rules = "".join(
+        f"<li><strong>{escape(rubric)}</strong>: {escape('; '.join(rules))}</li>"
+        for rubric, rules in RUBRIC_LIBRARY.items()
+    )
+    return f"""
+      <section class="profile-section" id="editorial-strategy">
+        <div class="section-title">
+          <div>
+            <p class="eyebrow">редакционная стратегия</p>
+            <h2>Редакционная стратегия</h2>
+          </div>
+          <span>Обновлено: {escape(updated)}</span>
+        </div>
+        <div class="strategy-grid">{rows}</div>
+        <details class="strategy-rules">
+          <summary>Правила рубрик</summary>
+          <ul>{rubric_rules}</ul>
+        </details>
+        <div class="form-actions">
+          <button class="ghost" name="plan_action" value="save_strategy" type="submit">Сохранить стратегию</button>
+          <button name="plan_action" value="strategy_plan" type="submit">Создать план по стратегии</button>
+        </div>
+      </section>
+    """
+
+
+def _editorial_strategy_row(item: dict[str, object], index: int) -> str:
+    active = "checked" if item.get("active") else ""
+    day = str(item.get("day", ""))
+    note = str(item.get("note", ""))
+    return f"""
+      <article class="plan-item edit-row strategy-row">
+        <input type="hidden" name="strategy_{index}_day" value="{escape(day)}">
+        <label class="check-field">
+          <input type="checkbox" name="strategy_{index}_active" {active}>
+          <span>{escape(day)}</span>
+        </label>
+        {_select(f"strategy_{index}_platform", "Площадка", _normalize_platform(str(item.get("platform", ""))), CONTENT_PLATFORMS)}
+        {_select(f"strategy_{index}_rubric", "Рубрика", _normalize_rubric(str(item.get("rubric", ""))), RUBRICS)}
+        {_select(f"strategy_{index}_format", "Формат публикации", _normalize_publication_format(str(item.get("format", ""))), PUBLICATION_FORMATS)}
+        {_input(f"strategy_{index}_note", "Заметка/ограничение", note)}
+      </article>
+    """
 
 
 def _content_plan_edit_row(item: object, index: int) -> str:
@@ -1860,6 +1953,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
       {_select(f"pub_{index}_platform", "Площадка", str(item.get("platform", "")), CONTENT_PLATFORMS)}
       {_input(f"pub_{index}_topic", "Тема", item.get("topic", ""))}
       {_input(f"pub_{index}_goal", "Цель", item.get("goal", ""))}
+      {_select(f"pub_{index}_pillar", "Рубрика", _publication_rubric(item), RUBRICS)}
       {_select(f"pub_{index}_format", "Формат публикации", _publication_format(item), PUBLICATION_FORMATS)}
       <input type="hidden" name="pub_{index}_status" value="{escape(status)}">
       {_status_badge(status)}
@@ -2036,6 +2130,130 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _load_editorial_strategy() -> dict[str, object]:
+    if not EDITORIAL_STRATEGY_PATH.exists():
+        return _default_editorial_strategy()
+    try:
+        raw = json.loads(EDITORIAL_STRATEGY_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return _default_editorial_strategy()
+    if not isinstance(raw, dict):
+        return _default_editorial_strategy()
+    strategy = _default_editorial_strategy()
+    strategy.update({key: value for key, value in raw.items() if key != "weekly_template"})
+    strategy["weekly_template"] = _normalize_strategy_entries(raw.get("weekly_template", []))
+    strategy["rubric_library"] = RUBRIC_LIBRARY
+    return strategy
+
+
+def _save_editorial_strategy(strategy: dict[str, object]) -> None:
+    EDITORIAL_STRATEGY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(strategy)
+    payload["rubric_library"] = RUBRIC_LIBRARY
+    payload["updated_at"] = _now_iso()
+    EDITORIAL_STRATEGY_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _default_editorial_strategy() -> dict[str, object]:
+    return json.loads(json.dumps(DEFAULT_EDITORIAL_STRATEGY, ensure_ascii=False))
+
+
+def _normalize_strategy_entries(entries: object) -> list[dict[str, object]]:
+    source = entries if isinstance(entries, list) else []
+    by_day = {
+        str(item.get("day", "")): item
+        for item in source
+        if isinstance(item, dict)
+    }
+    normalized = []
+    for default in DEFAULT_EDITORIAL_STRATEGY["weekly_template"]:
+        item = by_day.get(str(default["day"]), {})
+        active_value = item.get("active", default["active"]) if isinstance(item, dict) else default["active"]
+        normalized.append(
+            {
+                "day": str(default["day"]),
+                "platform": _normalize_platform(str(item.get("platform", default["platform"])) if isinstance(item, dict) else str(default["platform"])),
+                "rubric": _normalize_rubric(str(item.get("rubric", item.get("pillar", default["rubric"])) if isinstance(item, dict) else str(default["rubric"]))),
+                "format": _normalize_publication_format(str(item.get("format", default["format"])) if isinstance(item, dict) else str(default["format"])),
+                "active": active_value in (True, "true", "1", "on", "yes", "active"),
+                "note": str(item.get("note", default["note"])) if isinstance(item, dict) else str(default["note"]),
+            }
+        )
+    return normalized
+
+
+def _strategy_from_form(data: dict[str, list[str]]) -> dict[str, object]:
+    def value(name: str) -> str:
+        return data.get(name, [""])[0].strip()
+
+    entries = []
+    for index, default in enumerate(DEFAULT_EDITORIAL_STRATEGY["weekly_template"]):
+        day = value(f"strategy_{index}_day") or str(default["day"])
+        entries.append(
+            {
+                "day": day,
+                "platform": _normalize_platform(value(f"strategy_{index}_platform")),
+                "rubric": _normalize_rubric(value(f"strategy_{index}_rubric")),
+                "format": _normalize_publication_format(value(f"strategy_{index}_format")),
+                "active": value(f"strategy_{index}_active") == "on",
+                "note": value(f"strategy_{index}_note"),
+            }
+        )
+    return {
+        "updated_at": _now_iso(),
+        "rubric_library": RUBRIC_LIBRARY,
+        "weekly_template": _normalize_strategy_entries(entries),
+    }
+
+
+def _strategy_publications(strategy: dict[str, object], week_start: str, plan: dict[str, object]) -> list[dict[str, str]]:
+    parsed_start = parse_plan_date(week_start) or today_moscow()
+    publications = []
+    for index, entry in enumerate(_normalize_strategy_entries(strategy.get("weekly_template", []))):
+        if not entry.get("active"):
+            continue
+        publication_date = (parsed_start + timedelta(days=index)).isoformat()
+        rubric = _normalize_rubric(str(entry.get("rubric", "")))
+        publication_format = _normalize_publication_format(str(entry.get("format", "")))
+        publications.append(
+            {
+                "date": publication_date,
+                "day": weekday_name_for_date(publication_date),
+                "platform": _normalize_platform(str(entry.get("platform", ""))),
+                "topic": "",
+                "goal": "",
+                "format": publication_format,
+                "pillar": rubric,
+                "rubric": rubric,
+                "status": "planned",
+                "summary": "",
+                "note": str(entry.get("note", "")),
+                "month_focus": str(plan.get("month_focus", "")),
+                "week_focus": str(plan.get("focus", "")),
+                "strategy_locked": "true",
+                "strategy_note": str(entry.get("note", "")),
+            }
+        )
+    return publications
+
+
+def _merge_strategy_publication(base: dict[str, str], generated: dict[str, object]) -> dict[str, str]:
+    merged = dict(base)
+    merged["topic"] = str(generated.get("topic") or generated.get("title") or base.get("topic") or "Тема по стратегии").strip()
+    merged["goal"] = str(generated.get("goal") or generated.get("purpose") or base.get("goal", "")).strip()
+    summary_parts = [
+        str(generated.get("angle", "")).strip(),
+        str(generated.get("main_thought", "")).strip(),
+        str(generated.get("summary") or generated.get("content") or generated.get("description") or "").strip(),
+    ]
+    merged["summary"] = "\n".join(part for part in summary_parts if part) or str(base.get("summary", "")).strip()
+    generated_note = str(generated.get("note") or "").strip()
+    merged["note"] = generated_note or str(base.get("note", "")).strip()
+    merged["draft"] = str(generated.get("draft") or base.get("draft", "")).strip()
+    merged["status"] = _normalize_publication_status(str(generated.get("status", base.get("status", "planned"))))
+    return merged
+
+
 def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[str, object]:
     knowledge_base = DailyBriefRequestHandler.knowledge_base
     author_brain = AuthorBrain(
@@ -2076,6 +2294,8 @@ def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[st
             if isinstance(topic, dict)
         ] if isinstance(trend_topics, list) else [],
         "accepted_lessons": lessons_for_prompt(DailyBriefRequestHandler.learning_center.list_lessons("accepted")),
+        "editorial_strategy": _load_editorial_strategy(),
+        "rubric_library": RUBRIC_LIBRARY,
     }
 
 
@@ -2085,6 +2305,9 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
 
     action = value("plan_action")
     view = "calendar" if value("view") == "calendar" else "list"
+    strategy = _strategy_from_form(data) if any(key.startswith("strategy_") for key in data) else _load_editorial_strategy()
+    if action in {"save_strategy", "strategy_plan"}:
+        _save_editorial_strategy(strategy)
     week_start = _normalize_plan_date_value(value("week_start")) or _content_plan_period(_load_content_plan_raw())[0]
     week_end = _normalize_plan_date_value(value("week_end"))
     if not week_end:
@@ -2114,7 +2337,8 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             status = "planned"
         if next_index == index:
             status = _next_publication_status(status)
-        publication_format = _normalize_publication_format(value(f"pub_{index}_format") or value(f"pub_{index}_pillar"))
+        publication_rubric = _normalize_rubric(value(f"pub_{index}_pillar") or value(f"pub_{index}_format"))
+        publication_format = _normalize_publication_format(value(f"pub_{index}_format"))
         publications.append(
             {
                 "date": publication_date,
@@ -2123,7 +2347,8 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
                 "topic": topic,
                 "goal": value(f"pub_{index}_goal"),
                 "format": publication_format,
-                "pillar": publication_format,
+                "pillar": publication_rubric,
+                "rubric": publication_rubric,
                 "status": status,
                 "summary": value(f"pub_{index}_summary"),
                 "note": value(f"pub_{index}_note"),
@@ -2138,7 +2363,8 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             "topic": value("new_pub_topic") or "Новая публикация",
             "goal": value("new_pub_goal"),
             "format": _normalize_publication_format(value("new_pub_format")),
-            "pillar": _normalize_publication_format(value("new_pub_format")),
+            "pillar": _normalize_rubric(value("new_pub_pillar") or value("new_pub_format")),
+            "rubric": _normalize_rubric(value("new_pub_pillar") or value("new_pub_format")),
             "status": "planned",
             "summary": value("new_pub_summary"),
             "note": "",
@@ -2158,8 +2384,9 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         "updated_at": _now_iso(),
         "last_action": "Сохранено вручную.",
     }
-    if action == "request_ai":
-        raw = _generate_content_plan_with_ai(raw)
+    if action in {"request_ai", "strategy_plan"}:
+        raw["planned_publications"] = _strategy_publications(strategy, week_start, raw)
+        raw = _generate_content_plan_with_ai(raw, strategy)
     else:
         generate_index = _action_index(action, "generate_pub_")
         change_index = _action_index(action, "change_pub_")
@@ -2175,6 +2402,8 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             raw["last_action"] = "План утвержден."
         elif action == "add_publication":
             raw["last_action"] = "Публикация добавлена."
+        elif action == "save_strategy":
+            raw["last_action"] = "Редакционная стратегия сохранена."
         elif next_index is not None:
             raw["last_action"] = f"Публикация #{next_index + 1} переведена на следующий этап."
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -2232,6 +2461,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
     try:
         platform = _normalize_platform(str(publication.get("platform", "")))
         publication_format = _normalize_publication_format(str(publication.get("format") or publication.get("pillar") or ""))
+        rubric = _normalize_rubric(str(publication.get("rubric") or publication.get("pillar") or publication.get("format") or ""))
         language = _language_for_platform(platform)
         context = _content_plan_ai_context(publication)
         previous = _publication_signature(publication)
@@ -2252,16 +2482,17 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                     f"- date: {publication.get('date', '')}\n"
                     f"- platform: {platform}\n"
                     f"- goal: {publication.get('goal', '')}\n"
+                    f"- rubric: {rubric}\n"
                     f"- format: {publication_format}\n"
                     f"- language: {language}\n\n"
-                    f"Инструкция по формату: {_publication_format_instruction(publication_format)}\n\n"
+                    f"Правила рубрики: {_publication_format_instruction(rubric)}\n\n"
                     "Заново придумай: topic, angle, main_thought, summary, note. "
                     "Тема должна быть заметно другой, не рерайтом старой.\n\n"
                     f"Предыдущий вариант, который нельзя повторять: {previous}\n"
                     f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
                     f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
                     "Верни JSON с полями: topic, angle, main_thought, goal, summary, status, note. "
-                    "Не меняй date, platform и format."
+                    "Не меняй date, platform, rubric и format."
                 ),
                 action="content_plan_publication",
             )
@@ -2277,7 +2508,8 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         ]
         updated["summary"] = "\n".join(part for part in summary_parts if part) or str(updated.get("summary", "")).strip()
         updated["format"] = publication_format
-        updated["pillar"] = publication_format
+        updated["pillar"] = rubric
+        updated["rubric"] = rubric
         updated["status"] = "in_progress"
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
@@ -2295,48 +2527,58 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
     return updated
 
 
-def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]:
+def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, object] | None = None) -> dict[str, object]:
     updated = dict(plan)
     try:
+        strategy = strategy or _load_editorial_strategy()
         context = _content_plan_ai_context()
+        locked_publications = [
+            item
+            for item in plan.get("planned_publications", [])
+            if isinstance(item, dict)
+        ]
         previous_publications = [
             {
                 "topic": item.get("topic", ""),
                 "summary": item.get("summary", ""),
                 "platform": item.get("platform", ""),
+                "rubric": item.get("rubric", item.get("pillar", "")),
             }
-            for item in plan.get("planned_publications", [])
-            if isinstance(item, dict)
+            for item in locked_publications
         ]
         response: dict[str, object] = {}
         for attempt in range(2):
             raw_response = _complete_json_with_retry(
                 AIGateway(),
                 system_prompt=(
-                    "Ты AI Chief Content Officer. Создай новый недельный контент-план с нуля. "
-                    "Не используй предыдущий Content Plan как основу. Ответь строго JSON."
+                    "Ты AI Chief Content Officer. Заполни недельный контент-план строго по редакционной стратегии. "
+                    "Не меняй день, дату, площадку, рубрику и формат публикации. Ответь строго JSON."
                 ),
                 user_prompt=(
                     "Строгая иерархия:\n"
-                    f"1. Фокус месяца: {plan.get('month_focus', '')}\n"
-                    "2. Сначала сформируй новый фокус недели из фокуса месяца.\n"
-                    "3. Затем сформируй недельный контент-план.\n"
-                    "4. Затем сформируй публикации по дням, связанные с фокусом недели.\n\n"
+                    "1. Редакционная стратегия\n"
+                    "2. Недельный шаблон\n"
+                    f"3. Фокус месяца: {plan.get('month_focus', '')}\n"
+                    f"4. Фокус недели: {plan.get('focus', '')}\n"
+                    "5. Author Brain\n"
+                    "6. Trend Radar\n"
+                    "7. Контент-план\n\n"
                     f"Период: {plan.get('week_start', '')} - {plan.get('week_end', '')}\n"
-                    f"Площадки: {plan.get('platform_targets', [])}\n"
                     f"Опорные направления: {plan.get('content_pillars', [])}\n\n"
+                    "Жестко зафиксированный недельный шаблон. Его нельзя менять:\n"
+                    f"{json.dumps(locked_publications, ensure_ascii=False)}\n\n"
+                    "Можно генерировать только topic, angle, goal, main_thought, summary, note и draft. "
+                    "date, day, platform, rubric, pillar и format должны остаться как в шаблоне.\n\n"
                     "Предыдущие публикации запрещено использовать как основу; их нужно только избегать:\n"
                     f"{json.dumps(previous_publications, ensure_ascii=False)}\n\n"
                     "Каждый повторный запуск должен давать другой план: другие темы, идеи, углы и содержание.\n"
                     f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
+                    f"Редакционная стратегия и правила рубрик: {json.dumps(strategy, ensure_ascii=False)}\n"
                     f"Контекст автора, Knowledge, Trend Radar и Lessons: {json.dumps(context, ensure_ascii=False)}\n\n"
-                    "Верни JSON с полями week, week_start, week_end, focus, month_focus, content_pillars, "
-                    "platform_targets, today_recommendation, planned_publications. "
-                    "У каждой публикации: date, platform, topic, goal, format, summary, status, note. "
-                    "platform только LinkedIn, Telegram, VC или Сетка. "
-                    "format только Кейс, Аналитика, Наблюдение или Разговорный пост. "
+                    "Верни JSON с полями focus, today_recommendation, planned_publications. "
+                    "У каждой публикации верни только: topic, angle, goal, main_thought, summary, status, note, draft. "
                     "Для LinkedIn генерируй тему, цель, summary и note на английском языке. Для остальных площадок — на русском. "
-                    "Не возвращай day: день недели вычисляется системой."
+                    "Если идея похожа на предыдущую, предложи другой угол."
                 ),
                 action="content_plan_full",
             )
@@ -2355,14 +2597,14 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
                 updated[field] = [str(item) for item in value if str(item).strip()]
         publications = response.get("planned_publications") or response.get("publications") or response.get("plan")
         if isinstance(publications, list) and publications:
-            updated["planned_publications"] = _apply_week_dates_to_publications(
-                [
-                    _normalize_plan_publication(item)
-                    for item in publications
-                    if isinstance(item, dict)
-                ],
-                str(updated.get("week_start", "")),
-            )
+            merged = []
+            generated_items = [item for item in publications if isinstance(item, dict)]
+            for index, base in enumerate(locked_publications):
+                generated = generated_items[index] if index < len(generated_items) else {}
+                merged.append(_merge_strategy_publication(_normalize_plan_publication(base), generated))
+            updated["planned_publications"] = merged
+        else:
+            updated["planned_publications"] = [_normalize_plan_publication(item) for item in locked_publications]
         week_start, week_end = _content_plan_period(updated)
         updated["week_start"] = week_start
         updated["week_end"] = week_end
@@ -2372,7 +2614,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object]) -> dict[str, object]
                 publication["month_focus"] = str(updated.get("month_focus", ""))
                 publication["week_focus"] = str(updated.get("focus", ""))
         updated["updated_at"] = _now_iso()
-        updated["last_action"] = "Создан новый план через AI."
+        updated["last_action"] = "Создан план по редакционной стратегии."
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
         _save_ai_action_error("content_plan_full", exc)
@@ -2450,17 +2692,23 @@ def _similarity_tokens(text: str) -> list[str]:
 
 def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:
     publication_date = _normalize_plan_date_value(str(item.get("date", "")).strip())
+    rubric = _normalize_rubric(str(item.get("rubric") or item.get("pillar") or item.get("format") or ""))
+    publication_format = _normalize_publication_format(str(item.get("format") or ""))
     return {
         "date": publication_date,
         "day": weekday_name_for_date(publication_date),
         "platform": _normalize_platform(str(item.get("platform", "")).strip()),
         "topic": str(item.get("topic", "")).strip() or "Тема для публикации",
         "goal": str(item.get("goal", "")).strip(),
-        "format": _normalize_publication_format(str(item.get("format") or item.get("pillar") or "")),
-        "pillar": _normalize_publication_format(str(item.get("format") or item.get("pillar") or "")),
+        "format": publication_format,
+        "pillar": rubric,
+        "rubric": rubric,
         "status": _normalize_publication_status(str(item.get("status", "planned")).strip() or "planned"),
         "summary": str(item.get("summary", "")).strip(),
         "note": str(item.get("note", "")).strip(),
+        "draft": str(item.get("draft", "")).strip(),
+        "strategy_locked": str(item.get("strategy_locked", "")).strip(),
+        "strategy_note": str(item.get("strategy_note", "")).strip(),
     }
 
 
@@ -3297,13 +3545,24 @@ def _normalize_platform(value: str) -> str:
 
 def _normalize_publication_format(value: str) -> str:
     value = value.strip()
-    return value if value in PUBLICATION_FORMATS else "Наблюдение"
+    return value if value in PUBLICATION_FORMATS else "пост"
+
+
+def _normalize_rubric(value: str) -> str:
+    value = value.strip()
+    return value if value in RUBRICS else "Наблюдение"
 
 
 def _publication_format(item: object) -> str:
     if not isinstance(item, dict):
+        return "пост"
+    return _normalize_publication_format(str(item.get("format") or ""))
+
+
+def _publication_rubric(item: object) -> str:
+    if not isinstance(item, dict):
         return "Наблюдение"
-    return _normalize_publication_format(str(item.get("format") or item.get("pillar") or ""))
+    return _normalize_rubric(str(item.get("rubric") or item.get("pillar") or item.get("format") or ""))
 
 
 def _normalize_publication_status(status: str) -> str:
@@ -3348,13 +3607,9 @@ def _language_for_platform(platform: str) -> str:
 
 
 def _publication_format_instruction(publication_format: str) -> str:
-    instructions = {
-        "Кейс": "строить публикацию вокруг конкретной рабочей ситуации, причины, решения и вывода; не выдумывать реальные компании и цифры.",
-        "Аналитика": "дать ясный разбор причины, последствий и практического вывода без учебникового тона.",
-        "Наблюдение": "начать с живого наблюдения или закономерности из практики, затем показать ход мысли.",
-        "Разговорный пост": "писать естественно, ближе к личному профессиональному размышлению, без канцелярита.",
-    }
-    return instructions.get(_normalize_publication_format(publication_format), instructions["Наблюдение"])
+    rubric = _normalize_rubric(publication_format)
+    rules = RUBRIC_LIBRARY.get(rubric, RUBRIC_LIBRARY["Наблюдение"])
+    return f"{rubric}: " + "; ".join(rules)
 
 
 def _select(name: str, label: str, selected: str, options: tuple[str, ...] | list[str]) -> str:
@@ -4560,6 +4815,41 @@ def _styles() -> str:
     .status-published {
       color: #2d6b45;
       background: #e8f6ed;
+    }
+    .strategy-grid {
+      display: grid;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .strategy-row {
+      grid-template-columns: minmax(150px, .8fr) repeat(4, minmax(150px, 1fr));
+      align-items: end;
+    }
+    .check-field {
+      align-self: stretch;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--paper-soft);
+      font-weight: 700;
+    }
+    .check-field input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+    }
+    .strategy-rules {
+      margin-top: 16px;
+      color: var(--muted);
+    }
+    .strategy-rules ul {
+      margin: 12px 0 0;
+      padding-left: 20px;
+      display: grid;
+      gap: 7px;
     }
     .today-reco {
       margin-top: 16px;
