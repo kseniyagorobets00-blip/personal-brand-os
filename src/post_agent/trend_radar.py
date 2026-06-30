@@ -101,7 +101,8 @@ class TrendRadar:
         ai_context: dict[str, object] | None = None,
     ) -> dict[str, object]:
         source_status: list[str] = []
-        sources = self._collect_sources(source_status)
+        source_diagnostics: list[dict[str, object]] = []
+        sources = self._collect_sources(source_status, source_diagnostics)
         if ai_context:
             content_plan = _dict_from(ai_context.get("content_plan")) or content_plan
             author_brain = _dict_from(ai_context.get("author_brain")) or author_brain
@@ -119,6 +120,14 @@ class TrendRadar:
             "expires_at": (generated_at + timedelta(minutes=self.ttl_minutes)).isoformat(timespec="seconds"),
             "sources": sorted({source for topic in filtered for source in topic.sources}),
             "source_status": " ".join(source_status) if source_status else "Используется локальный анализ.",
+            "fetched_sources": sorted({str(item.get("name", "")) for item in source_diagnostics if int(item.get("fetched_count", 0) or 0) > 0}),
+            "source_diagnostics": _source_diagnostics_with_trend_counts(source_diagnostics, filtered),
+            "source_material_counts": {
+                str(item.get("name", "")): int(item.get("fetched_count", 0) or 0)
+                for item in source_diagnostics
+                if str(item.get("name", "")).strip()
+            },
+            "source_trend_counts": _source_trend_counts(filtered),
             "topics": [self._to_raw(topic) for topic in filtered],
         }
         self._write_cache(cache)
@@ -258,9 +267,11 @@ class TrendRadar:
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
 
-    def _collect_sources(self, source_status: list[str]) -> list[dict[str, object]]:
+    def _collect_sources(self, source_status: list[str], source_diagnostics: list[dict[str, object]]) -> list[dict[str, object]]:
         local_sources = self._load_sources()
-        external_sources = ExternalFeedSourceProvider().fetch(source_status)
+        external_sources = ExternalFeedSourceProvider().fetch(source_status, source_diagnostics)
+        if external_sources:
+            return _dedupe_sources(external_sources)
         if not external_sources:
             source_status.append("Внешние источники недоступны, используется локальный анализ.")
         return _dedupe_sources(external_sources + local_sources)
@@ -645,6 +656,24 @@ def _dedupe_sources(sources: list[dict[str, object]]) -> list[dict[str, object]]
     return result
 
 
+def _source_trend_counts(topics: list[TrendTopic]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for topic in topics:
+        for source in topic.sources:
+            counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def _source_diagnostics_with_trend_counts(diagnostics: list[dict[str, object]], topics: list[TrendTopic]) -> list[dict[str, object]]:
+    trend_counts = _source_trend_counts(topics)
+    result = []
+    for item in diagnostics:
+        updated = dict(item)
+        updated["trend_count"] = trend_counts.get(str(item.get("name", "")), 0)
+        result.append(updated)
+    return result
+
+
 class ExternalFeedSourceProvider:
     """Optional RSS/HTTP provider. It fails closed and lets the radar use local sources."""
 
@@ -658,11 +687,11 @@ class ExternalFeedSourceProvider:
         {"name": "Hugging Face Blog", "category": "AI", "url": "https://huggingface.co/blog/feed.xml"},
         {"name": "Harvard Business Review", "category": "Management", "url": "https://hbr.org/feed"},
         {"name": "MIT Sloan", "category": "Management", "url": "https://sloanreview.mit.edu/feed/"},
-        {"name": "McKinsey Insights", "category": "Management", "url": "https://www.mckinsey.com/featured-insights/rss"},
+        {"name": "McKinsey Insights", "category": "Management", "url": "https://www.mckinsey.com/insights/rss"},
         {"name": "Deloitte Insights", "category": "Management", "url": "https://www2.deloitte.com/us/en/insights/rss.xml"},
         {"name": "BCG", "category": "Management", "url": "https://www.bcg.com/publications/rss.aspx"},
         {"name": "Gartner", "category": "Management", "url": "", "stub": True},
-        {"name": "HospitalityNet", "category": "Hospitality", "url": "https://www.hospitalitynet.org/rss/1.xml"},
+        {"name": "HospitalityNet", "category": "Hospitality", "url": "https://www.hospitalitynet.org/rss/news.xml"},
         {"name": "Hotel Management", "category": "Hospitality", "url": "https://www.hotelmanagement.net/rss/xml"},
         {"name": "Hotel News Resource", "category": "Hospitality", "url": "https://www.hotelnewsresource.com/rss.xml"},
         {"name": "Skift", "category": "Hospitality", "url": "https://skift.com/feed/"},
@@ -679,16 +708,21 @@ class ExternalFeedSourceProvider:
         configured = tuple({"name": item.strip(), "category": "External", "url": item.strip()} for item in raw_feeds.split(",") if item.strip())
         self.feeds = feeds or configured or self.DEFAULT_FEEDS
         self.timeout_seconds = timeout_seconds
-        self.enabled = os.environ.get("TREND_RADAR_ENABLE_RSS", "").lower() in {"1", "true", "yes", "on"}
+        disabled = {"0", "false", "no", "off"}
+        self.enabled = os.environ.get("TREND_RADAR_ENABLE_RSS", "").strip().lower() not in disabled
 
-    def fetch(self, source_status: list[str]) -> list[dict[str, object]]:
+    def fetch(self, source_status: list[str], source_diagnostics: list[dict[str, object]] | None = None) -> list[dict[str, object]]:
+        source_diagnostics = source_diagnostics if source_diagnostics is not None else []
         if not self.enabled:
             source_status.append("Внешние RSS-источники подключаемы, но сейчас выключены; используется локальный анализ.")
+            source_diagnostics.append({"name": "External RSS", "status": "disabled", "fetched_count": 0, "error": "TREND_RADAR_ENABLE_RSS disables RSS."})
             return []
         items: list[dict[str, object]] = []
         for feed in self.feeds:
+            name = str(feed.get("name", ""))
             if feed.get("stub"):
-                source_status.append(f"{feed.get('name')}: provider-заглушка, RSS недоступен.")
+                source_status.append(f"{name}: provider-заглушка, RSS недоступен.")
+                source_diagnostics.append({"name": name, "status": "unavailable", "fetched_count": 0, "error": "provider stub"})
                 continue
             url = str(feed.get("url", "")).strip()
             if not url:
@@ -696,10 +730,25 @@ class ExternalFeedSourceProvider:
             try:
                 request = Request(url, headers={"User-Agent": "PersonalBrandOS-TrendRadar/3.0"})
                 with urlopen(request, timeout=self.timeout_seconds) as response:
-                    payload = response.read(500_000)
-                items.extend(_parse_feed_items(payload, feed))
+                    status_code = getattr(response, "status", 0)
+                    content_type = response.headers.get("content-type", "")
+                    payload = response.read()
+                parsed = _parse_feed_items(payload, feed)
+                items.extend(parsed)
+                source_diagnostics.append(
+                    {
+                        "name": name,
+                        "url": url,
+                        "status": "ok",
+                        "http_status": status_code,
+                        "content_type": content_type,
+                        "fetched_count": len(parsed),
+                        "error": "",
+                    }
+                )
             except (OSError, URLError, ET.ParseError, TimeoutError) as exc:
-                source_status.append(f"{feed.get('name')}: недоступен ({exc})")
+                source_status.append(f"{name}: недоступен ({exc})")
+                source_diagnostics.append({"name": name, "url": url, "status": "error", "fetched_count": 0, "error": str(exc)})
         if items:
             source_status.append(f"Внешние RSS-источники: получено {len(items)} сигналов.")
         return items

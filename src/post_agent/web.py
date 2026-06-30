@@ -161,6 +161,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/trend-radar":
             query = parse_qs(urlparse(self.path).query)
+            if self.trend_radar.is_stale():
+                _refresh_trend_radar_now()
             self._send_html(
                 render_trend_radar(
                     self.trend_radar.get_cached(),
@@ -331,21 +333,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/trend-radar/refresh":
-            self.knowledge_base.ensure_seed_documents()
-            author_brain = self._current_author_brain().build()
-            plan = _load_content_plan_raw()
-            pillars = plan.get("content_pillars", [])
-            pillar_query = " ".join(str(item) for item in pillars) if isinstance(pillars, list) else str(pillars)
-            ai_context = self.ai_context_engine.build({"topic": pillar_query}, include_local_sources=True)
-            self.trend_radar.refresh(
-                content_plan=plan,
-                documents=self.knowledge_base.list_documents(),
-                cases=self.knowledge_base.list_cases(),
-                ideas=self.idea_vault.list_ideas(),
-                author_brain=author_brain,
-                graph_links=self.knowledge_graph.related_to(pillar_query),
-                ai_context=ai_context,
-            )
+            _refresh_trend_radar_now()
             self.send_response(303)
             self.send_header("Location", "/trend-radar?saved=1")
             self.end_headers()
@@ -1267,6 +1255,31 @@ def render_learning_center(
 </html>"""
 
 
+def _refresh_trend_radar_now() -> dict[str, object]:
+    DailyBriefRequestHandler.knowledge_base.ensure_seed_documents()
+    author_brain = AuthorBrain(
+        author_profile=DailyBriefRequestHandler.author_profile_repository.load_raw(),
+        writing_dna=DailyBriefRequestHandler.writing_dna_repository.load_raw(),
+        documents=DailyBriefRequestHandler.knowledge_base.list_documents()[:8],
+        cases=DailyBriefRequestHandler.knowledge_base.list_cases()[:8],
+        ideas=DailyBriefRequestHandler.idea_vault.list_ideas()[:12],
+        lessons=DailyBriefRequestHandler.learning_center.list_lessons("accepted"),
+    ).build()
+    plan = _load_content_plan_raw()
+    pillars = plan.get("content_pillars", [])
+    pillar_query = " ".join(str(item) for item in pillars) if isinstance(pillars, list) else str(pillars)
+    ai_context = DailyBriefRequestHandler.ai_context_engine.build({"topic": pillar_query}, include_local_sources=True)
+    return DailyBriefRequestHandler.trend_radar.refresh(
+        content_plan=plan,
+        documents=DailyBriefRequestHandler.knowledge_base.list_documents(),
+        cases=DailyBriefRequestHandler.knowledge_base.list_cases(),
+        ideas=DailyBriefRequestHandler.idea_vault.list_ideas(),
+        author_brain=author_brain,
+        graph_links=DailyBriefRequestHandler.knowledge_graph.related_to(pillar_query),
+        ai_context=ai_context,
+    )
+
+
 def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: bool = False) -> str:
     topics = cache.get("topics", [])
     if not isinstance(topics, list):
@@ -1276,6 +1289,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
     sources = cache.get("sources", [])
     source_text = ", ".join(str(item) for item in sources) if isinstance(sources, list) else ""
     source_status = str(cache.get("source_status", ""))
+    diagnostics = _source_diagnostics_table(cache.get("source_diagnostics", []))
     saved_notice = "<div class=\"notice\">Trend Radar обновлен.</div>" if saved else ""
     status = "Нужно обновить" if stale else "Готов к редакционному выбору"
     main_card = _main_trend_recommendation(topics[0]) if topics else '<div class="empty">Trend Radar еще не запускался. Нажмите «Обновить радар».</div>'
@@ -1329,10 +1343,40 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
         <div><p class="label">Источники</p><p>{escape(source_text or "локальные источники продукта")}</p></div>
         <div><p class="label">Доступ внешних источников</p><p>{escape(source_status or "Внешние источники недоступны, используется локальный анализ.")}</p></div>
       </div>
+      {diagnostics}
     </details>
   </main>
 </body>
 </html>"""
+
+
+def _source_diagnostics_table(value: object) -> str:
+    if not isinstance(value, list) or not value:
+        return '<p class="state-note">Диагностика источников пока не сохранена.</p>'
+    rows = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            f"""
+            <tr>
+              <td>{escape(str(item.get("name", "")))}</td>
+              <td>{escape(str(item.get("status", "")))}</td>
+              <td>{escape(str(item.get("http_status", "")))}</td>
+              <td>{escape(str(item.get("fetched_count", 0)))}</td>
+              <td>{escape(str(item.get("trend_count", 0)))}</td>
+              <td>{escape(str(item.get("error", "")))}</td>
+            </tr>
+            """
+        )
+    return f"""
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Источник</th><th>Статус</th><th>HTTP</th><th>Получено</th><th>В трендах</th><th>Ошибка</th></tr></thead>
+          <tbody>{''.join(rows)}</tbody>
+        </table>
+      </div>
+    """
 
 
 def _main_trend_recommendation(topic: object) -> str:
@@ -2320,6 +2364,8 @@ def _strategy_publications(strategy: dict[str, object], week_start: str, plan: d
 
 
 def _trend_topics_for_plan() -> list[dict[str, object]]:
+    if DailyBriefRequestHandler.trend_radar.is_stale():
+        _refresh_trend_radar_now()
     topics = DailyBriefRequestHandler.trend_radar.get_cached().get("topics", [])
     if not isinstance(topics, list):
         return []

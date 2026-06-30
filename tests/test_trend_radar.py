@@ -1,13 +1,14 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from post_agent.ai_context import AIContextEngine
 from post_agent.idea_vault import IdeaVault
 from post_agent.knowledge import KnowledgeBase
 from post_agent.learning import LearningCenter
 from post_agent.production import run_production_check
-from post_agent.trend_radar import TrendRadar
+from post_agent.trend_radar import ExternalFeedSourceProvider, TrendRadar
 from post_agent.web import _add_trend_to_content_plan, render_trend_radar
 
 
@@ -25,12 +26,13 @@ class TrendRadarTests(unittest.TestCase):
             knowledge = KnowledgeBase(root / "documents", root / "index.json")
             knowledge.add_document("MAYRVEDA.md", "MAYRVEDA Customer Experience SOP.".encode("utf-8"))
 
-            cache = radar.refresh(
-                content_plan={"focus": "Customer Experience and Operations", "content_pillars": ["Customer Experience", "AI"]},
-                documents=knowledge.list_documents(),
-                cases=knowledge.list_cases(),
-                ideas=[],
-            )
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh(
+                    content_plan={"focus": "Customer Experience and Operations", "content_pillars": ["Customer Experience", "AI"]},
+                    documents=knowledge.list_documents(),
+                    cases=knowledge.list_cases(),
+                    ideas=[],
+                )
 
         self.assertTrue(cache["topics"])
         first = cache["topics"][0]
@@ -42,13 +44,21 @@ class TrendRadarTests(unittest.TestCase):
         self.assertIn("recommendation", first)
         self.assertIn("ai_explanation", first)
         self.assertIn("Внешние", cache["source_status"])
+        self.assertIn("source_diagnostics", cache)
+
+    def test_external_feed_provider_is_enabled_by_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            provider = ExternalFeedSourceProvider(feeds=())
+
+        self.assertTrue(provider.enabled)
 
     def test_trend_decisions_can_create_candidate_lesson(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             learning = LearningCenter(root / "learning.json")
             radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json", learning_center=learning)
-            cache = radar.refresh({}, [], [], [])
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh({}, [], [], [])
             topic_id = cache["topics"][0]["id"]
 
             radar.apply_decision(topic_id, "approved")
@@ -62,7 +72,8 @@ class TrendRadarTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json")
-            cache = radar.refresh({}, [], [], [])
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh({}, [], [], [])
 
         html = render_trend_radar(cache)
 
@@ -111,7 +122,8 @@ class TrendRadarTests(unittest.TestCase):
             root = Path(directory)
             vault = IdeaVault(root / "ideas.json")
             radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json")
-            cache = radar.refresh({}, [], [], [])
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh({}, [], [], [])
             topic = cache["topics"][0]
 
             vault.add_idea(topic["title"], topic["description"], source="Trend Radar", platforms=tuple(topic["best_formats"]))
