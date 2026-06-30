@@ -78,33 +78,37 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self._send_html(render_daily_brief(self.service.build_today()))
             return
         if path == "/author-profile":
-            saved = parse_qs(urlparse(self.path).query).get("saved", ["0"])[0] == "1"
-            self._send_html(render_author_profile(self.author_profile_repository.load_raw(), saved=saved))
+            query = parse_qs(urlparse(self.path).query)
+            self._send_html(
+                render_author_profile(
+                    self.author_profile_repository.load_raw(),
+                    saved=query.get("saved", ["0"])[0] == "1",
+                    dna=self.writing_dna_repository.load_raw(),
+                    brain_profile=self.author_brain_repository.load_profile(),
+                    brain_status=self.author_brain_repository.load_status(),
+                    learning_center=self.learning_center,
+                    memory_inbox=self.memory_inbox,
+                    knowledge_graph=self.knowledge_graph,
+                    refreshed=query.get("refreshed", ["0"])[0] == "1",
+                    dna_saved=query.get("dna_saved", ["0"])[0] == "1",
+                    learning_saved=query.get("learning_saved", ["0"])[0] == "1",
+                )
+            )
             return
         if path == "/author-brain":
-            query = parse_qs(urlparse(self.path).query)
-            self._send_html(
-                render_author_brain(
-                    self.author_brain_repository.load_profile(),
-                    self.author_brain_repository.load_status(),
-                    refreshed=query.get("refreshed", ["0"])[0] == "1",
-                )
-            )
+            self.send_response(303)
+            self.send_header("Location", "/author-profile#author-base")
+            self.end_headers()
             return
         if path == "/writing-dna":
-            saved = parse_qs(urlparse(self.path).query).get("saved", ["0"])[0] == "1"
-            self._send_html(render_writing_dna(self.writing_dna_repository.load_raw(), saved=saved))
+            self.send_response(303)
+            self.send_header("Location", "/author-profile#writing-dna")
+            self.end_headers()
             return
         if path == "/learning":
-            query = parse_qs(urlparse(self.path).query)
-            self._send_html(
-                render_learning_center(
-                    self.learning_center,
-                    self.memory_inbox,
-                    self.knowledge_graph,
-                    saved=query.get("saved", ["0"])[0] == "1",
-                )
-            )
+            self.send_response(303)
+            self.send_header("Location", "/author-profile#learning")
+            self.end_headers()
             return
         if path == "/trend-radar":
             query = parse_qs(urlparse(self.path).query)
@@ -196,7 +200,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             data = parse_qs(self.rfile.read(length).decode("utf-8"))
             self.writing_dna_repository.save_raw(writing_dna_form_to_raw(data))
             self.send_response(303)
-            self.send_header("Location", "/writing-dna?saved=1")
+            self.send_header("Location", "/author-profile?dna_saved=1#writing-dna")
             self.end_headers()
             return
         if path == "/content-plan":
@@ -256,7 +260,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             intent = data.get("intent", ["draft"])[0]
             if intent == "lesson":
                 self.learning_center.create_candidate_from_feedback(feedback, title)
-                location = "/learning?saved=1"
+                location = "/author-profile?learning_saved=1#learning"
             else:
                 state = _load_ui_state()
                 refinements = state.setdefault("refinements", {})
@@ -335,7 +339,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 rule=data.get("rule", [None])[0],
             )
             self.send_response(303)
-            self.send_header("Location", "/learning?saved=1")
+            self.send_header("Location", "/author-profile?learning_saved=1#learning")
             self.end_headers()
             return
         if path.startswith("/memory-inbox/"):
@@ -349,7 +353,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 self.memory_inbox.reject(item_id)
             self.knowledge_base.rebuild_graph()
             self.send_response(303)
-            self.send_header("Location", "/learning?saved=1")
+            self.send_header("Location", "/author-profile?learning_saved=1#learning")
             self.end_headers()
             return
         if path == "/knowledge/cases/add":
@@ -399,7 +403,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         if path == "/author-brain/refresh":
             self._refresh_author_brain_background()
             self.send_response(303)
-            self.send_header("Location", "/author-brain?refreshed=1")
+            self.send_header("Location", "/author-profile?refreshed=1#author-base")
             self.end_headers()
             return
         if path.startswith("/knowledge/delete/"):
@@ -503,9 +507,6 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         ("Память", "/knowledge", "knowledge"),
         ("Идеи", "/ideas", "ideas"),
         ("Профиль автора", "/author-profile", "profile"),
-        ("Author Brain", "/author-brain", "brain"),
-        ("ДНК письма", "/writing-dna", "dna"),
-        ("Обучение", "/learning", "learning"),
     )
     items = "".join(
         f"<a class=\"{'active' if key == active else ''}\" href=\"{escape(href)}\">{escape(label)}</a>"
@@ -672,8 +673,229 @@ def render_author_profile(profile: dict[str, object], saved: bool = False) -> st
 </html>"""
 
 
+def render_author_profile(
+    profile: dict[str, object],
+    saved: bool = False,
+    dna: dict[str, object] | None = None,
+    brain_profile: dict[str, object] | None = None,
+    brain_status: object | None = None,
+    learning_center: LearningCenter | None = None,
+    memory_inbox: MemoryInbox | None = None,
+    knowledge_graph: KnowledgeGraph | None = None,
+    refreshed: bool = False,
+    dna_saved: bool = False,
+    learning_saved: bool = False,
+) -> str:
+    dna = dna if dna is not None else WritingDNARepository().load_raw()
+    brain_repository = AuthorBrainRepository()
+    brain_profile = brain_profile if brain_profile is not None else brain_repository.load_profile()
+    brain_status = brain_status if brain_status is not None else brain_repository.load_status()
+    learning_center = learning_center or LearningCenter()
+    memory_inbox = memory_inbox or MemoryInbox()
+    knowledge_graph = knowledge_graph or KnowledgeGraph()
+    notices = []
+    if saved:
+        notices.append("Профиль автора сохранен.")
+    if dna_saved:
+        notices.append("ДНК письма сохранена.")
+    if learning_saved:
+        notices.append("Обучение обновлено.")
+    if refreshed:
+        notices.append("Обновление профиля автора запущено. Пока оно идет, используется последняя сохраненная версия.")
+    notice_html = "".join(f"<div class=\"notice\">{escape(item)}</div>" for item in notices)
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Профиль автора - Personal Brand OS</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">профиль, стиль и обучение</p>
+        <h1>Профиль автора</h1>
+      </div>
+      {_global_nav("profile")}
+    </header>
+    {notice_html}
+    <nav class="view-switch">
+      <a class="active" href="#author-base">Авторская база</a>
+      <a href="#writing-dna">ДНК письма</a>
+      <a href="#learning">Обучение</a>
+    </nav>
+    {_author_base_panel(brain_profile, brain_status)}
+    {_writing_dna_panel(dna, profile)}
+    {_learning_panel(learning_center, memory_inbox, knowledge_graph)}
+  </main>
+</body>
+</html>"""
+
+
+def _author_base_panel(profile: dict[str, object], status: object) -> str:
+    state = _status_label(str(getattr(status, "state", "")))
+    message = _status_message(str(getattr(status, "message", "")))
+    updated = str(getattr(status, "updated_at", "")) or str(profile.get("updated_at", ""))
+    error = str(getattr(status, "error", ""))
+    source_counts = profile.get("source_counts", {})
+    if not isinstance(source_counts, dict):
+        source_counts = {}
+    return f"""
+    <section class="block" id="author-base">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">профиль автора</p>
+          <h2>Авторская база</h2>
+        </div>
+        <span>{escape(state)}</span>
+      </div>
+      <section class="ai-panel ai-{escape(str(getattr(status, "state", "")))}">
+        <div>
+          <strong>{escape(message)}</strong>
+          <p>Обновлено: {escape(updated or "пока нет данных")}</p>
+          {_small_error(escape(error))}
+        </div>
+        <form method="post" action="/author-brain/refresh">
+          <button type="submit">Обновить профиль автора</button>
+        </form>
+      </section>
+      <section class="hero-cards">
+        <div class="summary-card"><span>Документы</span><strong>{escape(str(source_counts.get("documents", 0)))}</strong></div>
+        <div class="summary-card"><span>Кейсы</span><strong>{escape(str(source_counts.get("cases", 0)))}</strong></div>
+        <div class="summary-card"><span>Идеи</span><strong>{escape(str(source_counts.get("ideas", 0)))}</strong></div>
+      </section>
+      <section class="grid two">
+        {_profile_list_section("Главные темы", profile.get("main_themes", []), _theme_item)}
+        {_profile_list_section("Ключевые идеи", profile.get("key_ideas", []), _idea_item)}
+      </section>
+      <section class="block">
+        <div class="section-title"><div><p class="eyebrow">кейсы</p><h2>Кейсы автора</h2></div></div>
+        <div class="card-list">{_profile_items(profile.get("cases", []), _case_item)}</div>
+      </section>
+      <section class="grid two">
+        {_simple_list_section("Стиль мышления", profile.get("thinking_style", []))}
+        {_simple_list_section("Сильные стороны", profile.get("strengths", []))}
+      </section>
+      <section class="grid two">
+        {_platform_fit_section(profile.get("platform_fit", {}))}
+        {_anti_repetition_section(profile.get("anti_repetition", {}))}
+      </section>
+    </section>
+    """
+
+
+def _writing_dna_panel(dna: dict[str, object], profile: dict[str, object]) -> str:
+    tone = profile.get("tone", {})
+    structure = profile.get("structure", {})
+    vocabulary = profile.get("vocabulary", {})
+    platform_rules = profile.get("platform_rules", {})
+    what_not_to_write = profile.get("what_not_to_write", [])
+    examples_and_stories = profile.get("examples_and_stories", [])
+    if not isinstance(tone, dict):
+        tone = {}
+    if not isinstance(structure, dict):
+        structure = {}
+    if not isinstance(vocabulary, dict):
+        vocabulary = {}
+    if not isinstance(platform_rules, dict):
+        platform_rules = {}
+    return f"""
+    <section class="block" id="writing-dna">
+      <div class="section-title"><div><p class="eyebrow">стиль автора</p><h2>ДНК письма</h2></div></div>
+      <form class="profile-form" method="post" action="/author-profile">
+        <section class="profile-section">
+          <p class="eyebrow">правила стиля</p>
+          <div class="form-grid">
+            {_input("formality", "Формальность", tone.get("formality", ""))}
+            {_input("directness", "Прямота", tone.get("directness", ""))}
+            {_input("provocation", "Провокационность", tone.get("provocation", ""))}
+            {_input("emotionality", "Эмоциональность", tone.get("emotionality", ""))}
+          </div>
+          {_textarea("post_structure", "Структура текста", structure.get("post_structure", ""))}
+          {_textarea("intro_length", "Вступление", structure.get("intro_length", ""))}
+          {_textarea("narrative_logic", "Логика рассуждения", structure.get("narrative_logic", ""))}
+          {_textarea("conclusion", "Вывод", structure.get("conclusion", ""))}
+          {_textarea("favorite_words", "Допустимые приемы и любимая лексика", list_to_text(vocabulary.get("favorite_words", [])))}
+          {_textarea("unwanted_words", "Нежелательные слова", list_to_text(vocabulary.get("unwanted_words", [])))}
+          {_textarea("banned_cliches", "Запреты и клише", list_to_text(vocabulary.get("banned_cliches", [])))}
+          {_textarea("professional_terms", "Профессиональная терминология", list_to_text(vocabulary.get("professional_terms", [])))}
+          {_textarea("what_not_to_write", "Чего не писать", list_to_text(what_not_to_write))}
+          {_textarea("examples_and_stories", "Примеры хорошего текста", _stories_to_text(examples_and_stories))}
+          <div class="form-actions"><button type="submit">Сохранить профиль автора</button></div>
+        </section>
+      </form>
+      <form class="profile-form" method="post" action="/writing-dna">
+        <section class="profile-section">
+          <p class="eyebrow">правила генерации</p>
+          {_textarea("main_goal", "Главная цель письма", dna.get("main_goal", ""))}
+          {_textarea("origin_of_posts", "Как рождаются публикации", dna.get("origin_of_posts", ""))}
+          {_textarea("story_rule", "Правило историй", dna.get("story_rule", ""))}
+          {_textarea("memory_usage", "Использование памяти", dna.get("memory_usage", ""))}
+          {_textarea("tone", "Тональность", dna.get("tone", ""))}
+          {_textarea("paragraphs", "Структура абзацев", dna.get("paragraphs", ""))}
+          {_textarea("allowed_phrases", "Допустимые приемы", list_to_text(dna.get("allowed_phrases", [])))}
+          {_textarea("argumentation_patterns", "Паттерны аргументации", list_to_text(dna.get("argumentation_patterns", [])))}
+          {_textarea("forbidden_openings", "Запреты", list_to_text(dna.get("forbidden_openings", [])))}
+          {_textarea("draft_rule", "Правило первого черновика", dna.get("draft_rule", ""))}
+          {_textarea("self_check", "Самопроверка", list_to_text(dna.get("self_check", [])))}
+          {_textarea("anti_template_rule", "Не превращать в шаблон", dna.get("anti_template_rule", ""))}
+          <div class="form-actions"><button type="submit">Сохранить ДНК письма</button></div>
+        </section>
+      </form>
+    </section>
+    """
+
+
+def _learning_panel(learning_center: LearningCenter, memory_inbox: MemoryInbox, knowledge_graph: KnowledgeGraph) -> str:
+    candidates = learning_center.list_lessons("candidate")
+    accepted = learning_center.list_lessons("accepted")
+    rejected = learning_center.list_lessons("rejected")
+    patterns = learning_center.frequent_edit_patterns()
+    candidate_cards = "".join(_lesson_card(lesson) for lesson in candidates) or '<div class="empty">Пока недостаточно данных</div>'
+    accepted_cards = "".join(_lesson_summary_card(lesson) for lesson in accepted) or '<div class="empty">Пока недостаточно данных</div>'
+    rejected_cards = "".join(_lesson_summary_card(lesson) for lesson in rejected) or '<div class="empty">Пока недостаточно данных</div>'
+    pattern_cards = "".join(f'<article class="card"><p>{escape(pattern)}</p></article>' for pattern in patterns) or '<div class="empty">Пока недостаточно данных</div>'
+    return f"""
+    <section class="block" id="learning">
+      <div class="section-title"><div><p class="eyebrow">обучение</p><h2>Обучение</h2></div></div>
+      <section class="block">
+        <div class="section-title"><div><p class="eyebrow">кандидаты</p><h2>Candidate Lessons</h2></div><span>{len(candidates)}</span></div>
+        <div class="card-list">{candidate_cards}</div>
+      </section>
+      <section class="grid two">
+        <section class="profile-section"><p class="eyebrow">принято</p><h2>Подтвержденные Lessons</h2><div class="card-list">{accepted_cards}</div></section>
+        <section class="profile-section"><p class="eyebrow">отклонено</p><h2>Отклоненные Lessons</h2><div class="card-list">{rejected_cards}</div></section>
+      </section>
+      <section class="block">
+        <div class="section-title"><div><p class="eyebrow">учитывается системой</p><h2>Правила, которые система уже учитывает</h2></div></div>
+        <div class="card-list">{pattern_cards}</div>
+      </section>
+    </section>
+    """
+
+
+def _status_label(state: str) -> str:
+    return {
+        "idle": "Ожидание",
+        "running": "Обновляется",
+        "completed": "Готово",
+        "error": "Ошибка",
+    }.get(state, state or "Ожидание")
+
+
+def _status_message(message: str) -> str:
+    return {
+        "Author Brain has not been refreshed yet.": "Авторская база еще не обновлялась",
+        "Author Brain profile updated.": "Профиль автора обновлен",
+        "Author Brain is updating from Knowledge, Writing DNA, and Lessons.": "Профиль автора обновляется на основе памяти, ДНК письма и обучения",
+        "Author Brain refresh is already running.": "Обновление профиля автора уже выполняется",
+    }.get(message, message or "Авторская база еще не обновлялась")
+
+
 def render_author_brain(profile: dict[str, object], status: object, refreshed: bool = False) -> str:
-    notice = "<div class=\"notice\">Author Brain refresh started. The last saved profile stays available while it updates.</div>" if refreshed else ""
+    notice = "<div class=\"notice\">Обновление профиля автора запущено. Пока оно идет, используется последняя сохраненная версия.</div>" if refreshed else ""
     status_state = escape(str(getattr(status, "state", "")))
     status_message = escape(str(getattr(status, "message", "")))
     status_updated = escape(str(getattr(status, "updated_at", "")))
@@ -686,40 +908,40 @@ def render_author_brain(profile: dict[str, object], status: object, refreshed: b
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Author Brain - Personal Brand OS</title>
+  <title>Авторская база - Personal Brand OS</title>
   <style>{_styles()}</style>
 </head>
 <body>
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">AI Author Brain 2.0</p>
-        <h1>Профиль автора</h1>
+        <p class="eyebrow">профиль автора</p>
+        <h1>Авторская база</h1>
       </div>
       {_global_nav("brain", status_state)}
     </header>
     {notice}
     <section class="ai-panel ai-{status_state}">
       <div>
-        <strong>{status_message or "Author Brain profile is available."}</strong>
-        <p>Updated: {status_updated or escape(str(profile.get("updated_at", "")))}</p>
+        <strong>{_status_message(status_message)}</strong>
+        <p>Обновлено: {status_updated or escape(str(profile.get("updated_at", "")))}</p>
         {_small_error(status_error)}
       </div>
       <form method="post" action="/author-brain/refresh">
-        <button type="submit">Обновить Author Brain</button>
+        <button type="submit">Обновить профиль автора</button>
       </form>
     </section>
     <section class="hero-cards">
       <div class="summary-card">
-        <span>Documents</span>
+        <span>Документы</span>
         <strong>{escape(str(source_counts.get("documents", 0)))}</strong>
       </div>
       <div class="summary-card">
-        <span>Cases</span>
+        <span>Кейсы</span>
         <strong>{escape(str(source_counts.get("cases", 0)))}</strong>
       </div>
       <div class="summary-card">
-        <span>Ideas</span>
+        <span>Идеи</span>
         <strong>{escape(str(source_counts.get("ideas", 0)))}</strong>
       </div>
     </section>
@@ -764,7 +986,7 @@ def _small_error(value: str) -> str:
 
 def _profile_list_section(title: str, items: object, renderer: object) -> str:
     return f"""<section class="profile-section">
-      <p class="eyebrow">Author Brain</p>
+      <p class="eyebrow">Авторская база</p>
       <h2>{escape(title)}</h2>
       <div class="card-list">{_profile_items(items, renderer)}</div>
     </section>"""
@@ -772,9 +994,9 @@ def _profile_list_section(title: str, items: object, renderer: object) -> str:
 
 def _simple_list_section(title: str, items: object) -> str:
     entries = [str(item) for item in items if str(item).strip()] if isinstance(items, list) else []
-    body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>Not enough data yet.</li>"
+    body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>Пока недостаточно данных</li>"
     return f"""<section class="profile-section">
-      <p class="eyebrow">Author Brain</p>
+      <p class="eyebrow">Авторская база</p>
       <h2>{escape(title)}</h2>
       <ul class="ai-list">{body}</ul>
     </section>"""
@@ -782,7 +1004,7 @@ def _simple_list_section(title: str, items: object) -> str:
 
 def _profile_items(items: object, renderer: object) -> str:
     if not isinstance(items, list) or not items:
-        return "<div class=\"empty\">Not enough data yet.</div>"
+        return "<div class=\"empty\">Пока недостаточно данных</div>"
     return "".join(renderer(item) for item in items if isinstance(item, dict))
 
 
@@ -801,7 +1023,7 @@ def _idea_item(item: dict[str, object]) -> str:
     return f"""<article class="card">
       <h3>{escape(str(item.get("idea", "")))}</h3>
       <p>{escape(str(item.get("belief", "")))}</p>
-      <div class="tags"><span>evidence {escape(str(item.get("evidence_count", 0)))}</span><span>{escape(str(item.get("repeat_risk", "")))}</span></div>
+      <div class="tags"><span>подтверждений: {escape(str(item.get("evidence_count", 0)))}</span><span>{_repeat_risk_label(str(item.get("repeat_risk", "")))}</span></div>
     </article>"""
 
 
@@ -828,7 +1050,7 @@ def _platform_fit_section(value: object) -> str:
     items = value if isinstance(value, dict) else {}
     rows = "".join(f"<li><strong>{escape(str(key))}</strong><span>{escape(str(item))}</span></li>" for key, item in items.items())
     return f"""<section class="profile-section">
-      <p class="eyebrow">platform fit</p>
+      <p class="eyebrow">площадки</p>
       <h2>Площадки</h2>
       <ul class="ai-list">{rows}</ul>
     </section>"""
@@ -841,17 +1063,33 @@ def _anti_repetition_section(value: object) -> str:
     themes = raw.get("overused_theme_candidates", [])
     entries = []
     for item in rules if isinstance(rules, list) else []:
-        entries.append(str(item))
+        entries.append(_anti_rule_label(str(item)))
     for item in cases if isinstance(cases, list) else []:
-        entries.append(f"Rotate case: {item}")
+        entries.append(f"Чередовать кейс: {item}")
     for item in themes if isinstance(themes, list) else []:
-        entries.append(f"Watch repetition: {item}")
-    body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>No repetition risks yet.</li>"
+        entries.append(f"Следить за повтором: {item}")
+    body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>Пока нет рисков повтора</li>"
     return f"""<section class="profile-section">
-      <p class="eyebrow">anti-repetition</p>
-      <h2>Anti-repetition</h2>
+      <p class="eyebrow">антиповторы</p>
+      <h2>Антиповторы</h2>
       <ul class="ai-list">{body}</ul>
     </section>"""
+
+
+def _repeat_risk_label(value: str) -> str:
+    return {
+        "high": "высокий риск повтора",
+        "medium": "средний риск повтора",
+        "low": "низкий риск повтора",
+    }.get(value, value)
+
+
+def _anti_rule_label(value: str) -> str:
+    return {
+        "Do not propose a topic if it is strongly similar to recent ideas.": "Не предлагать тему, если она слишком похожа на недавние идеи.",
+        "Do not reuse the same case in consecutive drafts unless the user explicitly asks.": "Не использовать один и тот же кейс в соседних черновиках без явного запроса.",
+        "If an idea matches an old idea or case, show the similarity warning before drafting.": "Если новая идея похожа на старую идею или кейс, показать предупреждение перед черновиком.",
+    }.get(value, value)
 
 
 def _update_item(item: dict[str, object]) -> str:

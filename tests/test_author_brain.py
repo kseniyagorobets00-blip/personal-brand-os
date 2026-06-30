@@ -77,9 +77,9 @@ class AuthorBrainTests(unittest.TestCase):
             repository = AuthorBrainRepository(Path(directory) / "profile.json", Path(directory) / "status.json")
             html = render_author_brain(repository.empty_profile(), repository.load_status())
 
-            self.assertIn("Author Brain", html)
+            self.assertIn("Авторская база", html)
             self.assertIn("/author-brain/refresh", html)
-            self.assertIn("Обновить Author Brain", html)
+            self.assertIn("Обновить профиль автора", html)
 
 
 if __name__ == "__main__":
