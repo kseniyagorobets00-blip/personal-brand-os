@@ -10,6 +10,7 @@ import socket
 from urllib.parse import parse_qs, quote, urlparse
 
 from .ai_gateway import AIGateway, AIGatewayError
+from .ai_context import AIContextEngine
 from .ai_pipeline import AIPipeline, ai_diagnostics, load_ai_result, load_ai_status
 from .author_brain import AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository, list_to_text, text_to_list
@@ -100,6 +101,16 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
     idea_vault = IdeaVault()
     author_brain_repository = AuthorBrainRepository()
     trend_radar = TrendRadar(learning_center=learning_center)
+    ai_context_engine = AIContextEngine(
+        author_profile_repository=author_profile_repository,
+        writing_dna_repository=writing_dna_repository,
+        author_brain_repository=author_brain_repository,
+        knowledge_base=knowledge_base,
+        memory_inbox=memory_inbox,
+        knowledge_graph=knowledge_graph,
+        learning_center=learning_center,
+        idea_vault=idea_vault,
+    )
     ai_pipeline = AIPipeline(
         knowledge_base=knowledge_base,
         idea_vault=idea_vault,
@@ -325,6 +336,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             plan = _load_content_plan_raw()
             pillars = plan.get("content_pillars", [])
             pillar_query = " ".join(str(item) for item in pillars) if isinstance(pillars, list) else str(pillars)
+            ai_context = self.ai_context_engine.build({"topic": pillar_query}, include_local_sources=True)
             self.trend_radar.refresh(
                 content_plan=plan,
                 documents=self.knowledge_base.list_documents(),
@@ -332,6 +344,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 ideas=self.idea_vault.list_ideas(),
                 author_brain=author_brain,
                 graph_links=self.knowledge_graph.related_to(pillar_query),
+                ai_context=ai_context,
             )
             self.send_response(303)
             self.send_header("Location", "/trend-radar?saved=1")
@@ -1262,6 +1275,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
     expires_at = str(cache.get("expires_at", ""))
     sources = cache.get("sources", [])
     source_text = ", ".join(str(item) for item in sources) if isinstance(sources, list) else ""
+    source_status = str(cache.get("source_status", ""))
     saved_notice = "<div class=\"notice\">Trend Radar обновлен.</div>" if saved else ""
     status = "Нужно обновить" if stale else "Кэш актуален"
     cards = "".join(_trend_card(topic) for topic in topics) or '<div class="empty">Trend Radar еще не запускался. Нажмите «Обновить радар».</div>'
@@ -1293,6 +1307,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
         <div><p class="label">Последнее обновление</p><p>{escape(generated_at or "еще не запускался")}</p></div>
         <div><p class="label">Кэш до</p><p>{escape(expires_at or "не задан")}</p></div>
         <div><p class="label">Источники</p><p>{escape(source_text or "локальные источники продукта")}</p></div>
+        <div><p class="label">Доступ внешних источников</p><p>{escape(source_status or "Внешние источники недоступны, используется локальный анализ.")}</p></div>
       </div>
       <div class="today-actions">
         <form method="post" action="/trend-radar/refresh">
@@ -1321,6 +1336,11 @@ def _trend_card(topic: object) -> str:
     cases = _inline_list(item.get("matching_cases", []), "Подходящих кейсов пока нет")
     materials = _inline_list(item.get("knowledge_materials", []), "Материалы из Knowledge пока не найдены")
     formats = _inline_list(item.get("best_formats", []), "LinkedIn / Telegram")
+    rubrics = _inline_list(item.get("best_rubrics", []), "Наблюдение / Аналитика")
+    author_topics = _inline_list(item.get("author_brain_topics", []), "Связь с Author Brain пока слабая")
+    sources = _inline_list(item.get("sources", []), str(item.get("source", "")))
+    explanation = item.get("ai_explanation", {})
+    explanation = explanation if isinstance(explanation, dict) else {}
     status = str(item.get("status", "new"))
     return f"""
     <article class="card trend-card" id="{escape(topic_id)}">
@@ -1334,18 +1354,31 @@ def _trend_card(topic: object) -> str:
         <div><p class="label">Соответствие бренду</p><b>{escape(str(item.get("brand_fit_score", "")))}/10</b></div>
       </div>
       <div class="draft-context-grid">
-        <div><p class="label">Источник</p><p>{escape(str(item.get("source", "")))}</p></div>
-        <div><p class="label">Почему обсуждается</p><p>{escape(str(item.get("why_now", "")))}</p></div>
+        <div><p class="label">Источник/источники</p><p>{sources}</p></div>
+        <div><p class="label">Дата обнаружения</p><p>{escape(str(item.get("detected_at", item.get("created_at", ""))))}</p></div>
+        <div><p class="label">Почему это тренд</p><p>{escape(str(item.get("why_trend", item.get("why_now", ""))))}</p></div>
         <div><p class="label">Уровень хайпа</p><p>{escape(str(item.get("hype_level", "")))}</p></div>
         <div><p class="label">Прогноз актуальности</p><p>{escape(str(item.get("relevance_forecast", "")))}</p></div>
+        <div><p class="label">Риск повтора</p><p>{escape(str(item.get("repeat_risk", "низкий")))}</p></div>
+        <div><p class="label">Рекомендация</p><p>{escape(str(item.get("recommendation", "отложить")))}</p></div>
       </div>
-      <p class="label">Почему AI считает тему интересной</p>
+      <p class="label">Почему AI предложил это?</p>
       <p>{escape(str(item.get("ai_reason", "")))}</p>
+      <div class="draft-materials">
+        <p class="label">Объяснение AI</p>
+        <p><b>Тренд:</b> {escape(str(explanation.get("trend", item.get("why_now", ""))))}</p>
+        <p><b>Фокус месяца/недели:</b> {escape(str(explanation.get("month_focus", "")))} / {escape(str(explanation.get("week_focus", "")))}</p>
+        <p><b>Почему подходит площадке:</b> {escape(str(explanation.get("platform_fit", "")))}</p>
+        <p><b>Почему подходит автору:</b> {escape(str(explanation.get("author_fit", item.get("ai_reason", ""))))}</p>
+        <p><b>Риск повтора:</b> {escape(str(explanation.get("repeat_risk", item.get("repeat_risk", ""))))}</p>
+      </div>
       <div class="draft-materials">
         <p class="label">Что можно использовать</p>
         <p><b>Кейсы:</b> {cases}</p>
         <p><b>Knowledge:</b> {materials}</p>
-        <p><b>Форматы:</b> {formats}</p>
+        <p><b>Площадки:</b> {formats}</p>
+        <p><b>Рубрики:</b> {rubrics}</p>
+        <p><b>Темы Author Brain:</b> {author_topics}</p>
       </div>
       <div class="topic-actions">
         {_trend_action_form(topic_id, "approved", "Одобрить")}
@@ -2255,48 +2288,11 @@ def _merge_strategy_publication(base: dict[str, str], generated: dict[str, objec
 
 
 def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[str, object]:
-    knowledge_base = DailyBriefRequestHandler.knowledge_base
-    author_brain = AuthorBrain(
-        author_profile=DailyBriefRequestHandler.author_profile_repository.load_raw(),
-        writing_dna=DailyBriefRequestHandler.writing_dna_repository.load_raw(),
-        documents=knowledge_base.list_documents()[:8],
-        cases=knowledge_base.list_cases()[:8],
-        ideas=DailyBriefRequestHandler.idea_vault.list_ideas()[:12],
-        lessons=DailyBriefRequestHandler.learning_center.list_lessons("accepted"),
-    ).build(target or {})
-    trend_cache = DailyBriefRequestHandler.trend_radar.get_cached()
-    trend_topics = trend_cache.get("topics", [])
-    return {
-        "author_brain": author_brain,
-        "knowledge": [
-            {
-                "title": getattr(document, "title", ""),
-                "excerpt": getattr(document, "excerpt", ""),
-            }
-            for document in knowledge_base.list_documents()[:8]
-        ],
-        "cases": [
-            {
-                "title": getattr(case, "title", ""),
-                "company": getattr(case, "company", ""),
-                "result": getattr(case, "result", ""),
-                "topics": list(getattr(case, "key_topics", ())),
-            }
-            for case in knowledge_base.list_cases()[:8]
-        ],
-        "trend_radar": [
-            {
-                "title": str(topic.get("title", "")),
-                "why_now": str(topic.get("why_now", "")),
-                "brand_fit_score": topic.get("brand_fit_score", ""),
-            }
-            for topic in trend_topics[:6]
-            if isinstance(topic, dict)
-        ] if isinstance(trend_topics, list) else [],
-        "accepted_lessons": lessons_for_prompt(DailyBriefRequestHandler.learning_center.list_lessons("accepted")),
-        "editorial_strategy": _load_editorial_strategy(),
-        "rubric_library": RUBRIC_LIBRARY,
-    }
+    context = DailyBriefRequestHandler.ai_context_engine.build(target or {}, include_local_sources=True)
+    context["editorial_strategy"] = _load_editorial_strategy()
+    context["rubric_library"] = RUBRIC_LIBRARY
+    context["accepted_lessons"] = lessons_for_prompt(DailyBriefRequestHandler.learning_center.list_lessons("accepted"))
+    return context
 
 
 def _save_content_plan_form(data: dict[str, list[str]]) -> str:
@@ -2486,12 +2482,15 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                     f"- format: {publication_format}\n"
                     f"- language: {language}\n\n"
                     f"Правила рубрики: {_publication_format_instruction(rubric)}\n\n"
+                    "Сначала внутри себя сформируй 3 варианта идеи. Проверь каждый по Author Brain, Editorial Strategy, площадке, "
+                    "новизне, риску повтора, наличию сильного кейса/аргумента и актуальности Trend Radar. "
+                    "Выбери лучший вариант и объясни выбор в note. "
                     "Заново придумай: topic, angle, main_thought, summary, note. "
                     "Тема должна быть заметно другой, не рерайтом старой.\n\n"
                     f"Предыдущий вариант, который нельзя повторять: {previous}\n"
                     f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
                     f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
-                    "Верни JSON с полями: topic, angle, main_thought, goal, summary, status, note. "
+                    "Верни JSON с полями: topic, angle, main_thought, goal, summary, status, note, choice_reason, quality_scores. "
                     "Не меняй date, platform, rubric и format."
                 ),
                 action="content_plan_publication",
@@ -2569,6 +2568,9 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     f"{json.dumps(locked_publications, ensure_ascii=False)}\n\n"
                     "Можно генерировать только topic, angle, goal, main_thought, summary, note и draft. "
                     "date, day, platform, rubric, pillar и format должны остаться как в шаблоне.\n\n"
+                    "Алгоритм качества: для каждой ячейки сформируй 2-3 варианта идеи; проверь Author Brain, Editorial Strategy, "
+                    "platform fit, новизну, риск повтора, сильный кейс/аргумент и актуальность тренда; выбери лучший и объясни выбор в note. "
+                    "Для draft оцени strategy_fit, author_voice_fit, originality, practical_value, headline_strength, first_paragraph_strength, platform_fit.\n\n"
                     "Предыдущие публикации запрещено использовать как основу; их нужно только избегать:\n"
                     f"{json.dumps(previous_publications, ensure_ascii=False)}\n\n"
                     "Каждый повторный запуск должен давать другой план: другие темы, идеи, углы и содержание.\n"
@@ -2576,7 +2578,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     f"Редакционная стратегия и правила рубрик: {json.dumps(strategy, ensure_ascii=False)}\n"
                     f"Контекст автора, Knowledge, Trend Radar и Lessons: {json.dumps(context, ensure_ascii=False)}\n\n"
                     "Верни JSON с полями focus, today_recommendation, planned_publications. "
-                    "У каждой публикации верни только: topic, angle, goal, main_thought, summary, status, note, draft. "
+                    "У каждой публикации верни только: topic, angle, goal, main_thought, summary, status, note, draft, choice_reason, quality_scores. "
                     "Для LinkedIn генерируй тему, цель, summary и note на английском языке. Для остальных площадок — на русском. "
                     "Если идея похожа на предыдущую, предложи другой угол."
                 ),
@@ -4012,6 +4014,7 @@ def _refine_with_ai(action: str, title: str, text: str, kind: str) -> dict[str, 
         gateway = AIGateway()
         if not gateway.is_configured():
             raise AIGatewayError("ProxyAPI не настроен.")
+        context = DailyBriefRequestHandler.ai_context_engine.build({"topic": title, "summary": text}, include_local_sources=True)
         response = _complete_json_with_retry(
             gateway,
             system_prompt=(
@@ -4024,6 +4027,7 @@ def _refine_with_ai(action: str, title: str, text: str, kind: str) -> dict[str, 
                 f"Действие: {action}\n"
                 f"Текущий заголовок: {title}\n"
                 f"Текущий текст: {text}\n\n"
+                f"AI Context Engine:\n{json.dumps(context, ensure_ascii=False)}\n\n"
                 "Правила:\n"
                 "- 'Обновить заголовок' меняет прежде всего title.\n"
                 "- 'Другой вариант' дает свежую формулировку без изменения смысла.\n"
@@ -4074,6 +4078,7 @@ def _apply_feedback_with_ai(title: str, text: str, feedback: str) -> dict[str, o
         gateway = AIGateway()
         if not gateway.is_configured():
             raise AIGatewayError("ProxyAPI не настроен.")
+        context = DailyBriefRequestHandler.ai_context_engine.build({"topic": title, "summary": text}, include_local_sources=True)
         response = gateway.complete_json(
             system_prompt=(
                 "You are the Thinking Engine editor for a Personal Brand OS. "
@@ -4084,6 +4089,7 @@ def _apply_feedback_with_ai(title: str, text: str, feedback: str) -> dict[str, o
                 f"Title: {title}\n\n"
                 f"Current draft:\n{text}\n\n"
                 f"User feedback:\n{feedback}\n\n"
+                f"AI Context Engine:\n{json.dumps(context, ensure_ascii=False)}\n\n"
                 "Rewrite the draft in Russian as a complete publication. Return JSON: {\"title\":\"...\", \"text\":\"...\"}."
             ),
         )

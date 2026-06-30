@@ -9,6 +9,7 @@ import threading
 from typing import Any
 import re
 
+from .ai_context import AIContextEngine
 from .ai_gateway import AIGateway, AIGatewayError, DEFAULT_ENV_PATH, load_ai_config
 from .author_brain import FORBIDDEN_OPENINGS, AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository
@@ -79,6 +80,17 @@ class AIPipeline:
         self.status_path = status_path
         self.cache = AICache(result_path=result_path, status_path=status_path)
         self.result_path.parent.mkdir(parents=True, exist_ok=True)
+        self.context_engine = AIContextEngine(
+            author_profile_repository=self.author_profile_repository,
+            writing_dna_repository=self.writing_dna_repository,
+            author_brain_repository=self.author_brain_repository,
+            knowledge_base=self.knowledge_base,
+            memory_inbox=self.memory_inbox,
+            knowledge_graph=self.knowledge_graph,
+            learning_center=self.learning_center,
+            idea_vault=self.idea_vault,
+            seed_repository=self.seed_repository,
+        )
 
     def start_background(self) -> bool:
         if _PIPELINE_LOCK.locked():
@@ -137,7 +149,8 @@ class AIPipeline:
         )
         author_brain = author_brain_builder.build(publication)
         self.author_brain_repository.refresh(author_brain_builder)
-        context = {
+        context = self.context_engine.build(publication, include_local_sources=True)
+        context.update({
             "content_plan": content_plan,
             "target_publication": publication,
             "local_sources": self.seed_repository.load(),
@@ -146,7 +159,7 @@ class AIPipeline:
             "knowledge_graph_links": self.knowledge_graph.related_to(query),
             "author_brain": author_brain,
             "lessons": lessons_for_prompt(self.learning_center.list_lessons("accepted")),
-        }
+        })
         context["thinking_engine"] = self.thinking_engine.think(context)
         return context
 
@@ -169,6 +182,7 @@ class AIPipeline:
             "author_fit_notes": str(response.get("author_fit_notes", "")),
             "thinking_engine": response.get("thinking_engine", {}),
             "thinking_transparency": _as_list(response.get("thinking_transparency", [])),
+            "quality_scores": response.get("quality_scores", {}),
             "raw_response": response,
         }
 
@@ -282,13 +296,16 @@ def _user_prompt(context: dict[str, Any]) -> str:
         +
         "Проанализируй данные Personal Brand OS и верни JSON с полями: "
         "main_topic, daily_recommendation, choice_reason, publication_goal, main_idea, why_today, recommended_materials, ideas, "
-        "thinking_mode, author_fit_score, author_fit_notes, draft. "
+        "thinking_mode, author_fit_score, author_fit_notes, draft, quality_scores. "
         "recommended_materials должен быть массивом объектов с title, type, reason. "
         "ideas должен быть массивом коротких идей. "
         "Выбери thinking_mode из author_brain.allowed_thinking_modes. "
         "author_brain.writing_dna отвечает за КАК мыслит и пишет автор: наблюдение рождает тему, абзацы естественные, голос живой, без шаблонности. "
         "Если author_brain.case_candidates содержит подходящий кейс, сначала попробуй использовать его. "
         "Если подходящего кейса нет, не придумывай искусственный кейс. "
+        "Перед выбором темы сформируй несколько вариантов идеи и проверь их по Author Brain, Editorial Strategy, площадке, "
+        "новизне, риску повтора, наличию сильного кейса/аргумента и актуальности Trend Radar. "
+        "В choice_reason объясни, почему выбран лучший вариант. "
         "draft должен быть готовым постом на русском языке, написанным через Author Brain. "
         "Представь, что Ксения утром решила написать наблюдение после рабочего разговора, аудита или проекта. "
         "Пиши так, как если бы она действительно села писать сама. "
@@ -304,6 +321,7 @@ def _user_prompt(context: dict[str, Any]) -> str:
         "'Цель публикации:', 'Основная мысль:', 'Краткая структура:'. "
         "Нельзя начинать draft с запрещенных вступлений из author_brain.forbidden_openings. "
         "Перед финальным JSON выполни внутреннюю самопроверку 'Похоже ли это на Ксению?'. "
+        "Оцени draft по strategy_fit, author_voice_fit, originality, practical_value, headline_strength, first_paragraph_strength, platform_fit. "
         "Проверь критерии из author_brain.writing_dna.self_check. "
         "Если author_fit_score ниже 8 из 10 или текст звучит как AI, выполни одну внутреннюю итерацию улучшения и верни улучшенную версию. "
         "Для LinkedIn, Telegram и Сетка не используй заголовки внутри текста; для VC подзаголовки допустимы. "

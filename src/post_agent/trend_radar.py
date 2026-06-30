@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from html import unescape
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.request import Request, urlopen
+import xml.etree.ElementTree as ET
 from uuid import uuid4
 
 from .daily_brief import ROOT
@@ -35,6 +39,14 @@ class TrendTopic:
     matching_cases: tuple[str, ...]
     knowledge_materials: tuple[str, ...]
     best_formats: tuple[str, ...]
+    best_rubrics: tuple[str, ...]
+    sources: tuple[str, ...]
+    detected_at: str
+    why_trend: str
+    author_brain_topics: tuple[str, ...]
+    repeat_risk: str
+    recommendation: str
+    ai_explanation: dict[str, object]
     status: str
     created_at: str
 
@@ -81,20 +93,27 @@ class TrendRadar:
         ideas: list[object],
         author_brain: dict[str, object] | None = None,
         graph_links: list[dict[str, str]] | None = None,
+        ai_context: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        sources = self._load_sources()
+        source_status: list[str] = []
+        sources = self._collect_sources(source_status)
+        if ai_context:
+            content_plan = _dict_from(ai_context.get("content_plan")) or content_plan
+            author_brain = _dict_from(ai_context.get("author_brain")) or author_brain
         topics = [
             self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [])
             if author_brain is None
             else self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [], author_brain)
             for source in sources
         ]
-        filtered = sorted(topics, key=lambda item: (item.reach_score * 0.55 + item.brand_fit_score * 0.45), reverse=True)[:8]
+        grouped = self._group_similar_topics(topics)
+        filtered = sorted(grouped, key=lambda item: (item.reach_score * 0.55 + item.brand_fit_score * 0.45), reverse=True)[:8]
         generated_at = datetime.now(timezone.utc)
         cache = {
             "generated_at": generated_at.isoformat(timespec="seconds"),
             "expires_at": (generated_at + timedelta(minutes=self.ttl_minutes)).isoformat(timespec="seconds"),
-            "sources": sorted({topic.source for topic in filtered}),
+            "sources": sorted({source for topic in filtered for source in topic.sources}),
+            "source_status": " ".join(source_status) if source_status else "Используется локальный анализ.",
             "topics": [self._to_raw(topic) for topic in filtered],
         }
         self._write_cache(cache)
@@ -163,8 +182,24 @@ class TrendRadar:
         idea_bonus = _idea_bonus(content_text, ideas)
         graph_bonus = min(0.6, len(graph_links) * 0.1)
         brain_bonus = _author_brain_bonus(content_text, author_brain or {})
+        repeat_risk = _repeat_risk(content_text, content_plan, ideas)
+        rubric_matches = _rubrics(source, content_plan)
+        author_topics = _author_brain_topics(content_text, author_brain or {})
         reach = min(10.0, float(source.get("reach_base", 6.5)) + _controversy_bonus(source) + idea_bonus)
-        brand = min(10.0, float(source.get("brand_base", 6.5)) + plan_bonus + len(knowledge_matches) * 0.25 + len(case_matches) * 0.45 + graph_bonus + brain_bonus)
+        repeat_penalty = 0.7 if repeat_risk == "высокий" else 0.25 if repeat_risk == "средний" else 0.0
+        brand = min(10.0, float(source.get("brand_base", 6.5)) + plan_bonus + len(knowledge_matches) * 0.25 + len(case_matches) * 0.45 + graph_bonus + brain_bonus - repeat_penalty)
+        recommendation = _recommendation(reach, brand, repeat_risk)
+        why_trend = str(source.get("why_trend") or source.get("why_now") or "Тема набирает плотность в нескольких источниках и пересекается с текущим контекстом автора.")
+        explanation = {
+            "trend": why_trend,
+            "month_focus": str(content_plan.get("month_focus", "")),
+            "week_focus": str(content_plan.get("focus", "")),
+            "documents": knowledge_matches,
+            "cases": case_matches,
+            "platform_fit": _platform_fit_reason(source, content_plan),
+            "author_fit": _reason(title, plan_bonus, knowledge_matches, case_matches, brain_bonus),
+            "repeat_risk": repeat_risk,
+        }
         return TrendTopic(
             id=str(source.get("id") or _slug(title)),
             title=title,
@@ -179,9 +214,66 @@ class TrendRadar:
             matching_cases=tuple(case_matches),
             knowledge_materials=tuple(knowledge_matches),
             best_formats=tuple(_formats(source, content_plan)),
+            best_rubrics=tuple(rubric_matches),
+            sources=tuple(_as_list(source.get("sources", [])) or [str(source.get("source", "Локальные редакторские источники"))]),
+            detected_at=str(source.get("detected_at") or datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            why_trend=why_trend,
+            author_brain_topics=tuple(author_topics),
+            repeat_risk=repeat_risk,
+            recommendation=recommendation,
+            ai_explanation=explanation,
             status="new",
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )
+
+    def _collect_sources(self, source_status: list[str]) -> list[dict[str, object]]:
+        local_sources = self._load_sources()
+        external_sources = ExternalFeedSourceProvider().fetch(source_status)
+        if not external_sources:
+            source_status.append("Внешние источники недоступны, используется локальный анализ.")
+        return _dedupe_sources(external_sources + local_sources)
+
+    def _group_similar_topics(self, topics: list[TrendTopic]) -> list[TrendTopic]:
+        groups: list[TrendTopic] = []
+        for topic in topics:
+            existing_index = None
+            topic_tokens = _tokens(" ".join((topic.title, topic.description)))
+            for index, existing in enumerate(groups):
+                existing_tokens = _tokens(" ".join((existing.title, existing.description)))
+                if _jaccard(topic_tokens, existing_tokens) >= 0.42:
+                    existing_index = index
+                    break
+            if existing_index is None:
+                groups.append(topic)
+                continue
+            existing = groups[existing_index]
+            merged_sources = tuple(sorted(set(existing.sources + topic.sources)))
+            groups[existing_index] = TrendTopic(
+                id=existing.id,
+                title=existing.title,
+                description=existing.description,
+                source=", ".join(merged_sources),
+                why_now=existing.why_now,
+                hype_level=existing.hype_level,
+                relevance_forecast=existing.relevance_forecast,
+                reach_score=round(min(10.0, max(existing.reach_score, topic.reach_score) + 0.4), 1),
+                brand_fit_score=round(max(existing.brand_fit_score, topic.brand_fit_score), 1),
+                ai_reason=existing.ai_reason,
+                matching_cases=tuple(sorted(set(existing.matching_cases + topic.matching_cases))),
+                knowledge_materials=tuple(sorted(set(existing.knowledge_materials + topic.knowledge_materials))),
+                best_formats=tuple(sorted(set(existing.best_formats + topic.best_formats))),
+                best_rubrics=tuple(sorted(set(existing.best_rubrics + topic.best_rubrics))),
+                sources=merged_sources,
+                detected_at=min(existing.detected_at, topic.detected_at),
+                why_trend=f"{existing.why_trend} Похожие сигналы найдены в нескольких источниках.",
+                author_brain_topics=tuple(sorted(set(existing.author_brain_topics + topic.author_brain_topics))),
+                repeat_risk=max((existing.repeat_risk, topic.repeat_risk), key=_repeat_risk_rank),
+                recommendation=existing.recommendation,
+                ai_explanation=existing.ai_explanation,
+                status=existing.status,
+                created_at=existing.created_at,
+            )
+        return groups
 
     def _load_sources(self) -> list[dict[str, object]]:
         try:
@@ -248,6 +340,14 @@ class TrendRadar:
             "matching_cases": list(topic.matching_cases),
             "knowledge_materials": list(topic.knowledge_materials),
             "best_formats": list(topic.best_formats),
+            "best_rubrics": list(topic.best_rubrics),
+            "sources": list(topic.sources),
+            "detected_at": topic.detected_at,
+            "why_trend": topic.why_trend,
+            "author_brain_topics": list(topic.author_brain_topics),
+            "repeat_risk": topic.repeat_risk,
+            "recommendation": topic.recommendation,
+            "ai_explanation": topic.ai_explanation,
             "status": topic.status,
             "created_at": topic.created_at,
         }
@@ -308,6 +408,21 @@ def _formats(source: dict[str, object], content_plan: dict[str, object]) -> list
     return platforms[:3] or ["LinkedIn", "Telegram", "VC"]
 
 
+def _rubrics(source: dict[str, object], content_plan: dict[str, object]) -> list[str]:
+    configured = _as_list(source.get("best_rubrics", []))
+    if configured:
+        return configured
+    text = " ".join(str(source.get(key, "")) for key in ("title", "description", "why_now", "source")).lower()
+    if any(word in text for word in ("case", "кейс", "example", "project")):
+        return ["Кейс", "Разбор ошибки"]
+    if any(word in text for word in ("framework", "model", "sop", "process", "system")):
+        return ["Framework", "Аналитика"]
+    if any(word in text for word in ("myth", "миф", "risk", "ошибка")):
+        return ["Миф", "Разбор ошибки"]
+    pillars = _as_list(content_plan.get("content_pillars", []))
+    return ["Аналитика", "Наблюдение"] if pillars else ["Наблюдение"]
+
+
 def _author_brain_bonus(text: str, author_brain: dict[str, object]) -> float:
     profile = author_brain.get("profile", author_brain)
     if not isinstance(profile, dict):
@@ -334,6 +449,56 @@ def _author_brain_bonus(text: str, author_brain: dict[str, object]) -> float:
     return min(1.2, bonus)
 
 
+def _author_brain_topics(text: str, author_brain: dict[str, object]) -> list[str]:
+    profile = author_brain.get("profile", author_brain)
+    if not isinstance(profile, dict):
+        return []
+    tokens = _tokens(text)
+    matches = []
+    themes = profile.get("main_themes", [])
+    if isinstance(themes, list):
+        for theme in themes:
+            if not isinstance(theme, dict):
+                continue
+            name = str(theme.get("name", ""))
+            if tokens.intersection(_tokens(name)):
+                matches.append(name)
+    return matches[:5]
+
+
+def _repeat_risk(text: str, content_plan: dict[str, object], ideas: list[object]) -> str:
+    tokens = _tokens(text)
+    recent_texts = []
+    publications = content_plan.get("planned_publications", [])
+    if isinstance(publications, list):
+        for item in publications[:12]:
+            if isinstance(item, dict):
+                recent_texts.append(" ".join(str(item.get(key, "")) for key in ("topic", "summary", "note")))
+    for idea in ideas[:12]:
+        recent_texts.append(" ".join((getattr(idea, "title", ""), getattr(idea, "description", ""))))
+    best = max((_jaccard(tokens, _tokens(item)) for item in recent_texts), default=0.0)
+    if best >= 0.48:
+        return "высокий"
+    if best >= 0.28:
+        return "средний"
+    return "низкий"
+
+
+def _recommendation(reach: float, brand: float, repeat_risk: str) -> str:
+    if repeat_risk == "высокий" or brand < 5.8:
+        return "не брать"
+    if reach >= 7.0 and brand >= 7.0:
+        return "брать"
+    return "отложить"
+
+
+def _platform_fit_reason(source: dict[str, object], content_plan: dict[str, object]) -> str:
+    formats = _formats(source, content_plan)
+    if not formats:
+        return "Площадка не задана, можно адаптировать после выбора формата."
+    return f"Лучше всего подходит для: {', '.join(formats)}."
+
+
 def _reason(title: str, plan_bonus: float, documents: list[str], cases: list[str], brain_bonus: float = 0.0) -> str:
     parts = [f"Тема «{title}» прошла фильтр Thinking Engine."]
     if plan_bonus > 0:
@@ -353,6 +518,20 @@ def _tokens(text: str) -> set[str]:
     return {word for word in re.findall(r"[A-Za-zА-Яа-я0-9]+", text.lower(), flags=re.UNICODE) if len(word) > 3}
 
 
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _repeat_risk_rank(value: str) -> int:
+    return {"низкий": 0, "средний": 1, "высокий": 2}.get(value, 0)
+
+
+def _dict_from(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
 def _as_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -370,6 +549,97 @@ def _parse_iso(value: str) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _dedupe_sources(sources: list[dict[str, object]]) -> list[dict[str, object]]:
+    seen: list[set[str]] = []
+    result: list[dict[str, object]] = []
+    for source in sources:
+        tokens = _tokens(" ".join(str(source.get(key, "")) for key in ("title", "description")))
+        if any(_jaccard(tokens, existing) >= 0.55 for existing in seen):
+            continue
+        seen.append(tokens)
+        result.append(source)
+    return result
+
+
+class ExternalFeedSourceProvider:
+    """Optional RSS/HTTP provider. It fails closed and lets the radar use local sources."""
+
+    DEFAULT_FEEDS = (
+        "https://www.mckinsey.com/featured-insights/rss",
+        "https://hbr.org/feed",
+        "https://www.technologyreview.com/feed/",
+        "https://www.unite.ai/feed/",
+        "https://www.hospitalitynet.org/rss/1.xml",
+    )
+
+    def __init__(self, feeds: tuple[str, ...] | None = None, timeout_seconds: float = 2.5) -> None:
+        raw_feeds = os.environ.get("TREND_RADAR_RSS_FEEDS", "")
+        configured = tuple(item.strip() for item in raw_feeds.split(",") if item.strip())
+        self.feeds = feeds or configured or self.DEFAULT_FEEDS
+        self.timeout_seconds = timeout_seconds
+        self.enabled = os.environ.get("TREND_RADAR_ENABLE_RSS", "").lower() in {"1", "true", "yes", "on"}
+
+    def fetch(self, source_status: list[str]) -> list[dict[str, object]]:
+        if not self.enabled:
+            source_status.append("Внешние RSS-источники подключаемы, но сейчас выключены; используется локальный анализ.")
+            return []
+        items: list[dict[str, object]] = []
+        for feed in self.feeds:
+            try:
+                request = Request(feed, headers={"User-Agent": "PersonalBrandOS-TrendRadar/2.0"})
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    payload = response.read(500_000)
+                items.extend(_parse_feed_items(payload, feed))
+            except (OSError, URLError, ET.ParseError, TimeoutError) as exc:
+                source_status.append(f"{feed}: недоступен ({exc})")
+        if items:
+            source_status.append(f"Внешние RSS-источники: получено {len(items)} сигналов.")
+        return items
+
+
+def _parse_feed_items(payload: bytes, feed_url: str) -> list[dict[str, object]]:
+    root = ET.fromstring(payload)
+    items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+    result = []
+    for item in items[:12]:
+        title = _first_xml_text(item, ("title", "{http://www.w3.org/2005/Atom}title"))
+        description = _first_xml_text(item, ("description", "summary", "{http://www.w3.org/2005/Atom}summary", "{http://www.w3.org/2005/Atom}content"))
+        published = _first_xml_text(item, ("pubDate", "published", "updated", "{http://www.w3.org/2005/Atom}published", "{http://www.w3.org/2005/Atom}updated"))
+        if not title:
+            continue
+        text = _strip_html(description)
+        result.append(
+            {
+                "id": _slug(f"{feed_url}-{title}"),
+                "title": title,
+                "description": text[:600],
+                "source": feed_url,
+                "sources": [feed_url],
+                "detected_at": published or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "why_now": "Свежий сигнал из внешнего RSS/медиа-источника.",
+                "why_trend": "Тема появилась во внешнем источнике и проверяется на соответствие Author Brain, Knowledge и редакционной стратегии.",
+                "hype_level": "проверить",
+                "relevance_forecast": "1-2 недели",
+                "reach_base": 6.8,
+                "brand_base": 6.2,
+                "tags": list(_tokens(" ".join((title, text))) & {"ai", "operations", "hospitality", "service", "customer", "experience", "management", "analytics"}),
+            }
+        )
+    return result
+
+
+def _first_xml_text(item: ET.Element, names: tuple[str, ...]) -> str:
+    for name in names:
+        node = item.find(name)
+        if node is not None and node.text:
+            return unescape(node.text.strip())
+    return ""
+
+
+def _strip_html(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", unescape(value))).strip()
 
 
 def _env_int(name: str, default: int) -> int:

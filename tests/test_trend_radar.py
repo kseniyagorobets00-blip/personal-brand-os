@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from post_agent.ai_context import AIContextEngine
 from post_agent.idea_vault import IdeaVault
 from post_agent.knowledge import KnowledgeBase
 from post_agent.learning import LearningCenter
@@ -36,6 +37,11 @@ class TrendRadarTests(unittest.TestCase):
         self.assertIn("reach_score", first)
         self.assertIn("brand_fit_score", first)
         self.assertIn("best_formats", first)
+        self.assertIn("best_rubrics", first)
+        self.assertIn("repeat_risk", first)
+        self.assertIn("recommendation", first)
+        self.assertIn("ai_explanation", first)
+        self.assertIn("Внешние", cache["source_status"])
 
     def test_trend_decisions_can_create_candidate_lesson(self) -> None:
         with TemporaryDirectory() as directory:
@@ -65,6 +71,38 @@ class TrendRadarTests(unittest.TestCase):
         self.assertIn("Соответствие бренду", html)
         self.assertIn("Сохранить в Idea Vault", html)
         self.assertIn("Добавить в Content Plan", html)
+        self.assertIn("Почему AI предложил это?", html)
+        self.assertIn("Риск повтора", html)
+        self.assertIn("Рекомендация", html)
+
+    def test_ai_context_engine_collects_shared_context(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            knowledge = KnowledgeBase(root / "documents", root / "index.json")
+            knowledge.add_document("ops.md", "Operations and Customer Experience SOP.".encode("utf-8"))
+            vault = IdeaVault(root / "ideas.json")
+            vault.add_idea("AI in operations", "Use AI only when process ownership is clear.")
+            content_plan_path = root / "content_plan.json"
+            content_plan_path.write_text(
+                '{"week":"test","focus":"CX","month_focus":"Operations","planned_publications":[{"platform":"LinkedIn","pillar":"Аналитика","format":"экспертный пост","topic":"CX ops","status":"planned"}]}',
+                encoding="utf-8",
+            )
+            engine = AIContextEngine(
+                knowledge_base=knowledge,
+                idea_vault=vault,
+                seed_repository=type("Repo", (), {"load_content_plan": lambda self: __import__("json").loads(content_plan_path.read_text(encoding="utf-8")), "load": lambda self: []})(),
+                editorial_strategy_path=root / "editorial_strategy.json",
+                trend_cache_path=root / "trend_cache.json",
+            )
+
+            context = engine.build({"platform": "LinkedIn", "rubric": "Аналитика", "format": "экспертный пост"})
+
+        self.assertIn("author_brain", context)
+        self.assertIn("writing_dna", context)
+        self.assertIn("editorial_strategy", context)
+        self.assertIn("semantic_chunks", context)
+        self.assertEqual(context["month_focus"], "Operations")
+        self.assertEqual(context["selected"]["platform"], "LinkedIn")
 
     def test_trend_can_be_saved_to_idea_vault(self) -> None:
         with TemporaryDirectory() as directory:
