@@ -1350,6 +1350,77 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
 </html>"""
 
 
+def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: bool = False) -> str:
+    topics = cache.get("topics", [])
+    if not isinstance(topics, list):
+        topics = []
+    generated_at = str(cache.get("generated_at", ""))
+    expires_at = str(cache.get("expires_at", ""))
+    sources = cache.get("sources", [])
+    source_text = ", ".join(str(item) for item in sources) if isinstance(sources, list) else ""
+    source_status = str(cache.get("source_status", ""))
+    diagnostics = _source_diagnostics_table(cache.get("source_diagnostics", []))
+    saved_notice = '<div class="notice">Радар трендов обновлен.</div>' if saved else ""
+    status = "Нужно обновить" if stale else "Готов к редакционному выбору"
+    empty = '<div class="empty">Радар трендов еще не запускался. Нажмите «Обновить радар».</div>'
+    main_card = _main_trend_recommendation(topics[0]) if topics else empty
+    cards = "".join(_trend_card(topic) for topic in topics) or empty
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Радар трендов - Personal Brand OS</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">редактор идей</p>
+        <h1>Радар трендов</h1>
+      </div>
+      {_global_nav("trends")}
+    </header>
+    {saved_notice}
+    <section class="today-card">
+      <div class="today-main">
+        <p class="eyebrow">сегодня AI рекомендует</p>
+        <h2>Лучшая тема для редакционного решения</h2>
+      </div>
+      {main_card}
+      <div class="today-actions">
+        <form method="post" action="/trend-radar/refresh">
+          <button type="submit">Обновить радар</button>
+        </form>
+      </div>
+    </section>
+    <section class="block">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">темы с потенциалом</p>
+          <h2>Редакционные рекомендации</h2>
+        </div>
+        <span>{len(topics)} тем</span>
+      </div>
+      <div class="card-list trend-radar-list">{cards}</div>
+    </section>
+    <details class="block strategy-rules">
+      <summary>Техническая информация</summary>
+      <div class="draft-context-grid">
+        <div><p class="label">Статус</p><p>{escape(status)}</p></div>
+        <div><p class="label">Последнее обновление</p><p>{escape(generated_at or "еще не запускался")}</p></div>
+        <div><p class="label">Кэш до</p><p>{escape(expires_at or "не задан")}</p></div>
+        <div><p class="label">Источники</p><p>{escape(source_text or "локальные источники продукта")}</p></div>
+        <div><p class="label">Доступ внешних источников</p><p>{escape(source_status or "Внешние источники недоступны, используется локальный анализ.")}</p></div>
+      </div>
+      {diagnostics}
+    </details>
+  </main>
+</body>
+</html>"""
+
+
 def _source_diagnostics_table(value: object) -> str:
     if not isinstance(value, list) or not value:
         return '<p class="state-note">Диагностика источников пока не сохранена.</p>'
@@ -1449,7 +1520,7 @@ def _trend_card(topic: object) -> str:
         <p><b>Content Potential:</b> {escape(str(explanation.get("content_potential", item.get("content_potential", ""))))}</p>
         <p><b>Фокус месяца/недели:</b> {escape(str(explanation.get("month_focus", "")))} / {escape(str(explanation.get("week_focus", "")))}</p>
         <p><b>Почему подходит площадке:</b> {escape(str(explanation.get("platform_fit", "")))}</p>
-        <p><b>Почему подходит автору:</b> {escape(str(explanation.get("author_fit", item.get("ai_reason", ""))))}</p>
+        <p><b>Почему подходит автору:</b> {escape(str(item.get("expertise_connection", "")))}</p>
         <p><b>Почему лучше альтернатив:</b> {escape(str(item.get("ai_reason", "")))}</p>
         <p><b>Риск повтора:</b> {escape(str(explanation.get("repeat_risk", item.get("repeat_risk", ""))))}</p>
       </details>
@@ -1470,6 +1541,172 @@ def _trend_card(topic: object) -> str:
       </div>
     </article>
     """
+
+
+def _main_trend_recommendation(topic: object) -> str:
+    item = topic if isinstance(topic, dict) else {}
+    topic_id = str(item.get("id", ""))
+    reasons = [
+        f"оценка тренда {_score_value(item, 'trend_score')}/10",
+        f"соответствие бренду {_score_value(item, 'brand_fit_score')}/10",
+        f"контентный потенциал {_score_value(item, 'content_potential')}/10",
+        f"риск повтора: {_repeat_risk_label(str(item.get('repeat_risk', '')))}",
+        "основана на текущем рыночном сигнале",
+    ]
+    reason_items = "".join(f"<li>{escape(str(reason))}</li>" for reason in reasons if str(reason).strip())
+    return f"""
+      <article class="card trend-card main-trend-card">
+        <p class="label">Главная рекомендация</p>
+        <h3>{escape(str(item.get("title", "")))}</h3>
+        <p class="score-stars">{_score_stars(item.get("trend_score", 0))}</p>
+        <p>{escape(str(item.get("trend_essence") or item.get("description", "")))}</p>
+        <ul>{reason_items}</ul>
+        <div class="topic-actions">
+          {_trend_action_form(topic_id, "drafted", "Создать пост")}
+          {_trend_action_form(topic_id, "planned", "Добавить в контент-план", "secondary")}
+          {_trend_action_form(topic_id, "saved", "Добавить в идеи", "secondary")}
+          {_trend_action_form(topic_id, "rejected", "Отклонить", "ghost")}
+        </div>
+      </article>
+    """
+
+
+def _trend_card(topic: object) -> str:
+    item = topic if isinstance(topic, dict) else {}
+    topic_id = str(item.get("id", ""))
+    cases = _inline_list(item.get("matching_cases", []), "Подходящих кейсов пока нет")
+    materials = _inline_list(item.get("knowledge_materials", []), "Документы из памяти пока не найдены")
+    sources = _inline_list(item.get("sources", []), str(item.get("source", "")))
+    publication_ideas = _publication_ideas_html(item.get("publication_ideas", {}))
+    source_url = str(item.get("source_url", "")).strip()
+    source_link = (
+        f'<a class="open-link" href="{escape(source_url)}" target="_blank" rel="noreferrer">Открыть оригинальную статью</a>'
+        if source_url
+        else '<span class="state-note">Оригинальная ссылка не найдена</span>'
+    )
+    status = str(item.get("status", "new"))
+    explanation = item.get("ai_explanation", {})
+    explanation = explanation if isinstance(explanation, dict) else {}
+    return f"""
+    <article class="card trend-card" id="{escape(topic_id)}">
+      <div class="card-head">
+        <h3>{escape(str(item.get("title", "")))}</h3>
+        <strong>{escape(_trend_status_ru(status))}</strong>
+      </div>
+      <p class="score-stars">{_score_stars(item.get("trend_score", 0))}</p>
+      <div class="score-grid">
+        <div><p class="label">Оценка тренда</p><b>{escape(str(item.get("trend_score", "")))}/10</b></div>
+        <div><p class="label">Соответствие бренду</p><b>{escape(str(item.get("brand_fit_score", "")))}/10</b></div>
+        <div><p class="label">Контентный потенциал</p><b>{escape(str(item.get("content_potential", item.get("reach_score", ""))))}/10</b></div>
+        <div><p class="label">Категория</p><b>{escape(_category_ru(str(item.get("category", ""))))}</b></div>
+      </div>
+      <div class="draft-materials">
+        <p class="label">Краткая суть</p>
+        <p>{escape(str(item.get("trend_essence") or item.get("description", "")))}</p>
+        <p class="label">О чем на самом деле этот тренд?</p>
+        <p><b>Суть тренда:</b> {escape(str(item.get("trend_essence", "")))}</p>
+        <p><b>Главная идея:</b> {escape(str(item.get("main_idea", "")))}</p>
+        <p><b>Почему это важно для моей аудитории:</b> {escape(str(item.get("audience_importance", "")))}</p>
+        <p class="label">Почему это важно именно сейчас</p>
+        <p>{escape(str(item.get("why_trend", item.get("why_now", ""))))}</p>
+        <p class="label">Какой авторский угол предлагает AI</p>
+        <p>{escape(str(item.get("author_angle", "")))}</p>
+        <p class="label">Как это связано с моей экспертизой</p>
+        <p>{escape(str(item.get("expertise_connection", "")))}</p>
+      </div>
+      <div class="draft-context-grid">
+        <div><p class="label">Кейсы использовать</p><p>{cases}</p></div>
+        <div><p class="label">Документы использованы</p><p>{materials}</p></div>
+        <div><p class="label">Риск повтора</p><p>{escape(_repeat_risk_label(str(item.get("repeat_risk", ""))))}</p></div>
+        <div><p class="label">Рекомендация</p><p>{escape(_recommendation_label(str(item.get("recommendation", ""))))}</p></div>
+      </div>
+      <div class="draft-materials">
+        <p class="label">Какие публикации можно сделать</p>
+        {publication_ideas}
+      </div>
+      <details class="draft-materials">
+        <summary>Почему AI предложил это?</summary>
+        <p><b>Тренд:</b> {escape(str(explanation.get("trend", item.get("why_now", ""))))}</p>
+        <p><b>Оценка тренда:</b> {escape(str(explanation.get("trend_score", item.get("trend_score", ""))))}/10</p>
+        <p><b>Соответствие бренду:</b> {escape(str(item.get("brand_fit_score", "")))}/10</p>
+        <p><b>Контентный потенциал:</b> {escape(str(explanation.get("content_potential", item.get("content_potential", ""))))}/10</p>
+        <p><b>Фокус месяца/недели:</b> {escape(str(explanation.get("month_focus", "")))} / {escape(str(explanation.get("week_focus", "")))}</p>
+        <p><b>Почему подходит автору:</b> {escape(str(explanation.get("author_fit", item.get("ai_reason", ""))))}</p>
+        <p><b>Авторский угол:</b> {escape(str(explanation.get("author_angle", item.get("author_angle", ""))))}</p>
+        <p><b>Риск повтора:</b> {escape(_repeat_risk_label(str(explanation.get("repeat_risk", item.get("repeat_risk", "")))))}</p>
+      </details>
+      <div class="draft-materials">
+        <p class="label">Источник новости</p>
+        <p>{sources}</p>
+        {source_link}
+      </div>
+      <div class="topic-actions">
+        {_trend_action_form(topic_id, "drafted", "Создать пост")}
+        {_trend_action_form(topic_id, "planned", "Добавить в контент-план", "secondary")}
+        {_trend_action_form(topic_id, "saved", "Добавить в идеи", "secondary")}
+        {_trend_action_form(topic_id, "rejected", "Отклонить", "ghost")}
+      </div>
+    </article>
+    """
+
+
+def _score_value(item: dict[str, object], key: str) -> str:
+    return str(item.get(key, "")).strip() or "0"
+
+
+def _score_stars(value: object) -> str:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        score = 0.0
+    filled = max(1, min(5, round(score / 2)))
+    return "★" * filled + "☆" * (5 - filled)
+
+
+def _publication_ideas_html(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "<p>Пока недостаточно данных для вариантов публикаций.</p>"
+    rows = []
+    for platform in ("LinkedIn", "Telegram", "VC", "Сетка"):
+        title = str(value.get(platform, "")).strip()
+        if title:
+            rows.append(f"<p><b>{escape(platform)}:</b> {escape(title)}</p>")
+    return "".join(rows) or "<p>Пока недостаточно данных для вариантов публикаций.</p>"
+
+
+def _category_ru(value: str) -> str:
+    return {
+        "AI": "ИИ",
+        "Hospitality": "Гостеприимство",
+        "Customer Experience": "Клиентский опыт",
+        "Operations": "Операции",
+        "Management": "Управление",
+        "External": "Внешний сигнал",
+    }.get(value, value or "Не задана")
+
+
+def _repeat_risk_label(value: str) -> str:
+    labels = {
+        "низкий": "низкий",
+        "средний": "средний",
+        "высокий": "высокий",
+        "РЅРёР·РєРёР№": "низкий",
+        "СЃСЂРµРґРЅРёР№": "средний",
+        "РІС‹СЃРѕРєРёР№": "высокий",
+    }
+    return labels.get(value, value or "низкий")
+
+
+def _recommendation_label(value: str) -> str:
+    labels = {
+        "брать": "брать",
+        "отложить": "отложить",
+        "не брать": "не брать",
+        "Р±СЂР°С‚СЊ": "брать",
+        "РѕС‚Р»РѕР¶РёС‚СЊ": "отложить",
+        "РЅРµ Р±СЂР°С‚СЊ": "не брать",
+    }
+    return labels.get(value, value or "отложить")
 
 
 def _trend_action_form(topic_id: str, action: str, label: str, button_class: str = "") -> str:
@@ -2333,7 +2570,7 @@ def _strategy_publications(strategy: dict[str, object], week_start: str, plan: d
         platform = _normalize_platform(str(entry.get("platform", "")))
         trend = _best_trend_for_strategy(trend_topics, platform, rubric)
         evergreen = _evergreen_topic_for_strategy(platform, rubric)
-        trend_title = str(trend.get("title", "")) if trend else ""
+        trend_title = _platform_publication_title(trend, platform) if trend else ""
         source_title = trend_title or evergreen
         publications.append(
             {
@@ -2387,6 +2624,17 @@ def _best_trend_for_strategy(topics: list[dict[str, object]], platform: str, rub
     if not candidates:
         return None
     return max(candidates, key=lambda item: float(item.get("trend_score") or item.get("brand_fit_score") or 0))
+
+
+def _platform_publication_title(trend: dict[str, object] | None, platform: str) -> str:
+    if not trend:
+        return ""
+    ideas = trend.get("publication_ideas", {})
+    if isinstance(ideas, dict):
+        value = str(ideas.get(platform, "")).strip()
+        if value:
+            return value
+    return str(trend.get("title", "")).strip()
 
 
 def _evergreen_topic_for_strategy(platform: str, rubric: str) -> str:
@@ -2468,6 +2716,59 @@ def _why_ai_chose_topic(platform: str, rubric: str, trend: dict[str, object] | N
     if platform == "LinkedIn":
         return f"Chosen because the trend fits {platform}, rubric {rubric}, Brand Fit {trend.get('brand_fit_score', '')}, Content Potential {trend.get('content_potential', '')}, Trend Score {trend.get('trend_score', '')}, Repeat Risk {trend.get('repeat_risk', '')}."
     return f"Выбрано, потому что тренд подходит площадке {platform}, рубрике {rubric}, Brand Fit {trend.get('brand_fit_score', '')}, Content Potential {trend.get('content_potential', '')}, Trend Score {trend.get('trend_score', '')}, Repeat Risk {trend.get('repeat_risk', '')}."
+
+
+def _editorial_topic_from_signal(signal: str, platform: str, rubric: str) -> str:
+    signal = signal.strip()
+    if platform == "LinkedIn":
+        safe_signal = signal if signal and not re.search(r"[А-Яа-я]", signal) else "This Market Signal"
+        return f"{_english_rubric_prefix(rubric)}: {safe_signal}"
+    if not signal:
+        signal = "актуальный тренд"
+    if rubric == "Кейс":
+        return f"Как тренд «{signal}» проявляется в операционной реальности сервиса"
+    if rubric == "Framework":
+        return f"Фреймворк: как разложить тренд «{signal}» на процессы, роли и контроль"
+    if rubric == "Миф":
+        return f"Миф вокруг тренда «{signal}»: почему он не работает без операционной системы"
+    return signal
+
+
+def _localized_summary(platform: str, trend: dict[str, object] | None, evergreen: str) -> str:
+    if trend:
+        score = str(trend.get("trend_score", ""))
+        if platform == "LinkedIn":
+            return f"Use this trend signal with a trend score of {score}/10 as an editorial angle. Connect it to operations maturity, customer experience and service systems."
+        return f"Использовать тренд с оценкой {score}/10 как смысловой сигнал: связать его с операционной зрелостью, клиентским опытом и сервисными системами."
+    if platform == "LinkedIn":
+        return f"No strong trend matched the strategy, so use an evergreen knowledge angle: {evergreen}."
+    return f"Подходящий тренд не найден, поэтому используется evergreen-тема из памяти: {evergreen}."
+
+
+def _trend_selection_note(platform: str, rubric: str, trend: dict[str, object] | None, strategy_note: str) -> str:
+    if not trend:
+        base = "Evergreen fallback: the radar did not find a strong enough match." if platform == "LinkedIn" else "Запасной вариант: радар не нашел достаточно сильное совпадение."
+    elif platform == "LinkedIn":
+        base = (
+            f"The radar selected this signal: trend score {trend.get('trend_score', '')}/10, "
+            f"brand fit {trend.get('brand_fit_score', '')}/10, content potential {trend.get('content_potential', '')}/10, "
+            f"repeat risk {_repeat_risk_label(str(trend.get('repeat_risk', '')))}. Rubric: {rubric}."
+        )
+    else:
+        base = (
+            f"Радар выбрал этот сигнал: оценка тренда {trend.get('trend_score', '')}/10, "
+            f"соответствие бренду {trend.get('brand_fit_score', '')}/10, контентный потенциал {trend.get('content_potential', '')}/10, "
+            f"риск повтора {_repeat_risk_label(str(trend.get('repeat_risk', '')))}. Рубрика: {rubric}."
+        )
+    return " ".join(part for part in (base, strategy_note) if part)
+
+
+def _why_ai_chose_topic(platform: str, rubric: str, trend: dict[str, object] | None) -> str:
+    if not trend:
+        return "Evergreen knowledge topic selected because no trend matched the strategy." if platform == "LinkedIn" else "Выбрана evergreen-тема из памяти, потому что подходящий тренд не найден."
+    if platform == "LinkedIn":
+        return f"Chosen because it fits {platform}, the {rubric} rubric, has brand fit {trend.get('brand_fit_score', '')}/10, content potential {trend.get('content_potential', '')}/10 and trend score {trend.get('trend_score', '')}/10."
+    return f"Выбрано, потому что тема подходит площадке {platform}, рубрике «{rubric}», бренду автора и имеет оценку тренда {trend.get('trend_score', '')}/10."
 
 
 def _merge_strategy_publication(base: dict[str, str], generated: dict[str, object]) -> dict[str, str]:
@@ -2649,6 +2950,47 @@ def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
             "content_potential": str(topic.get("content_potential", "")),
             "repeat_risk": str(topic.get("repeat_risk", "")),
             "why_ai_chose": _why_ai_chose_topic(_normalize_platform(platform), rubric, topic),
+        }
+    )
+    raw["planned_publications"] = publications
+    DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
+    raw = _load_content_plan_raw()
+    publications = raw.get("planned_publications", [])
+    if not isinstance(publications, list):
+        publications = []
+    formats = topic.get("best_formats", [])
+    platform = _normalize_platform(str(formats[0]) if isinstance(formats, list) and formats else "LinkedIn")
+    title = _platform_publication_title(topic, platform)
+    if not title:
+        return
+    if any(isinstance(item, dict) and str(item.get("topic", "")).strip() == title for item in publications):
+        return
+    rubrics = topic.get("best_rubrics", [])
+    rubric = _normalize_rubric(str(rubrics[0])) if isinstance(rubrics, list) and rubrics else "Наблюдение"
+    localized_title = _editorial_topic_from_signal(title, platform, rubric)
+    today = today_moscow().strftime("%d.%m.%Y")
+    publications.append(
+        {
+            "date": today,
+            "day": weekday_name_for_date(today),
+            "platform": platform,
+            "topic": localized_title,
+            "goal": _localized_goal(platform, "Проверить тренд как потенциально сильную публикацию дня."),
+            "format": "пост",
+            "pillar": rubric,
+            "rubric": rubric,
+            "status": "idea",
+            "summary": _localized_summary(platform, topic, ""),
+            "note": _trend_selection_note(platform, rubric, topic, str(topic.get("ai_reason", ""))),
+            "used_trend": title,
+            "trend_score": str(topic.get("trend_score", "")),
+            "brand_fit_score": str(topic.get("brand_fit_score", "")),
+            "content_potential": str(topic.get("content_potential", "")),
+            "repeat_risk": str(topic.get("repeat_risk", "")),
+            "why_ai_chose": _why_ai_chose_topic(platform, rubric, topic),
         }
     )
     raw["planned_publications"] = publications

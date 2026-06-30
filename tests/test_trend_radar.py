@@ -88,6 +88,26 @@ class TrendRadarTests(unittest.TestCase):
         self.assertIn("Рекомендация", html)
         self.assertIn("Техническая информация", html)
 
+    def test_trend_radar_page_renders_actions(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json")
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh({}, [], [], [])
+
+        html = render_trend_radar(cache)
+
+        self.assertIn("Радар трендов", html)
+        self.assertIn("Оценка тренда", html)
+        self.assertIn("Контентный потенциал", html)
+        self.assertIn("Соответствие бренду", html)
+        self.assertIn("Добавить в идеи", html)
+        self.assertIn("Добавить в контент-план", html)
+        self.assertIn("О чем на самом деле этот тренд?", html)
+        self.assertIn("Какой авторский угол предлагает AI", html)
+        self.assertIn("Какие публикации можно сделать", html)
+        self.assertIn("Техническая информация", html)
+
     def test_ai_context_engine_collects_shared_context(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

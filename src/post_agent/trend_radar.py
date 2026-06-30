@@ -28,8 +28,16 @@ TREND_CACHE_TTL_MINUTES = 30
 class TrendTopic:
     id: str
     title: str
+    original_title: str
     description: str
+    trend_essence: str
+    main_idea: str
+    audience_importance: str
+    author_angle: str
+    expertise_connection: str
+    publication_ideas: dict[str, str]
     source: str
+    source_url: str
     why_now: str
     why_important: str
     category: str
@@ -186,10 +194,18 @@ class TrendRadar:
         graph_links: list[dict[str, str]],
         author_brain: dict[str, object] | None = None,
     ) -> TrendTopic:
-        title = str(source.get("title", ""))
+        original_title = str(source.get("title", ""))
         description = str(source.get("description", ""))
         tags = _as_list(source.get("tags", []))
-        content_text = " ".join((title, description, " ".join(tags)))
+        content_text = " ".join((original_title, description, " ".join(tags)))
+        category = _category(source)
+        title = _editorial_theme(content_text, category)
+        trend_essence = _trend_essence(content_text, category)
+        main_idea = _main_trend_idea(content_text, category)
+        audience_importance = _audience_importance(category)
+        author_angle = _author_angle(content_text, category)
+        expertise_connection = _expertise_connection(category)
+        publication_ideas = _publication_ideas(content_text, category)
         plan_bonus = _plan_fit_bonus(content_text, content_plan)
         knowledge_matches = _matching_documents(content_text, documents)
         case_matches = _matching_cases(content_text, cases)
@@ -235,15 +251,25 @@ class TrendRadar:
             "platform_fit": _platform_fit_reason(source, content_plan),
             "author_fit": _reason(title, plan_bonus, knowledge_matches, case_matches, brain_bonus),
             "repeat_risk": repeat_risk,
+            "author_angle": author_angle,
+            "original_title": original_title,
         }
         return TrendTopic(
             id=str(source.get("id") or _slug(title)),
             title=title,
+            original_title=original_title,
             description=description,
+            trend_essence=trend_essence,
+            main_idea=main_idea,
+            audience_importance=audience_importance,
+            author_angle=author_angle,
+            expertise_connection=expertise_connection,
+            publication_ideas=publication_ideas,
             source=str(source.get("source", "Локальные редакторские источники")),
+            source_url=str(source.get("url", "")),
             why_now=str(source.get("why_now", "")),
             why_important=why_important,
-            category=_category(source),
+            category=category,
             hype_level=str(source.get("hype_level", "средний")),
             relevance_forecast=str(source.get("relevance_forecast", "1-2 недели")),
             reach_score=round(reach, 1),
@@ -294,8 +320,16 @@ class TrendRadar:
             groups[existing_index] = TrendTopic(
                 id=existing.id,
                 title=existing.title,
+                original_title=existing.original_title,
                 description=existing.description,
+                trend_essence=existing.trend_essence,
+                main_idea=existing.main_idea,
+                audience_importance=existing.audience_importance,
+                author_angle=existing.author_angle,
+                expertise_connection=existing.expertise_connection,
+                publication_ideas=existing.publication_ideas,
                 source=", ".join(merged_sources),
+                source_url=existing.source_url or topic.source_url,
                 why_now=existing.why_now,
                 why_important=existing.why_important,
                 category=existing.category,
@@ -377,8 +411,16 @@ class TrendRadar:
         return {
             "id": topic.id,
             "title": topic.title,
+            "original_title": topic.original_title,
             "description": topic.description,
+            "trend_essence": topic.trend_essence,
+            "main_idea": topic.main_idea,
+            "audience_importance": topic.audience_importance,
+            "author_angle": topic.author_angle,
+            "expertise_connection": topic.expertise_connection,
+            "publication_ideas": topic.publication_ideas,
             "source": topic.source,
+            "source_url": topic.source_url,
             "why_now": topic.why_now,
             "why_important": topic.why_important,
             "category": topic.category,
@@ -559,6 +601,126 @@ def _editorial_strategy_score(source: dict[str, object], content_plan: dict[str,
         )
     )
     return round(min(10.0, 5.8 + len(tokens & plan_tokens) * 0.45 + (0.8 if rubrics else 0.0)), 1)
+
+
+def _editorial_theme(text: str, category: str) -> str:
+    lower = text.lower()
+    if any(word in lower for word in ("hotel", "hospitality", "guest", "travel", "booking", "room", "property")):
+        if any(word in lower for word in ("mobile", "digital", "app", "key", "platform", "automation")):
+            return "Как цифровые сервисы становятся новым стандартом гостевого опыта в гостиницах"
+        return "Почему гостевой опыт все сильнее зависит от операционной дисциплины отеля"
+    if any(word in lower for word in ("agent", "workflow", "automation", "enterprise ai", "copilot")):
+        return "Почему AI-агенты не заменяют операционные системы, а показывают, где они сломаны"
+    if any(word in lower for word in ("customer", "experience", "cx", "service", "journey", "ux")):
+        return "Как клиентский опыт становится проверкой управляемости процессов"
+    if any(word in lower for word in ("lean", "process", "operations", "sop", "productivity", "supply")):
+        return "Почему улучшение процессов снова становится главным источником роста сервиса"
+    if any(word in lower for word in ("leadership", "management", "strategy", "change", "organization")):
+        return "Как управленческие системы становятся конкурентным преимуществом"
+    if category == "Hospitality":
+        return "Как меняется операционная модель современного гостеприимства"
+    if category == "Customer Experience":
+        return "Почему хороший сервис начинается не с эмоций, а с системы"
+    if category == "Operations":
+        return "Почему операционная зрелость становится главным фильтром для новых инициатив"
+    return "Как новый рыночный сигнал связан с сервисом, процессами и управляемостью"
+
+
+def _trend_essence(text: str, category: str) -> str:
+    if category == "Hospitality":
+        return "Компании в гостеприимстве усиливают цифровые сервисы, инструменты для гостей и внутренние сервисные процессы."
+    if category == "Customer Experience":
+        return "Рынок все чаще смотрит на клиентский опыт как на результат согласованных процессов, данных и ответственности команд."
+    if category == "Operations":
+        return "Бизнес возвращается к базовой операционной дисциплине: прозрачным процессам, ролям, стандартам и измеримому улучшению."
+    if category == "Management":
+        return "Управленческая повестка смещается от отдельных инициатив к системам, которые помогают компаниям стабильно выполнять обещания клиенту."
+    return "Новые AI-инструменты становятся поводом проверить, насколько зрелы процессы, данные и управленческая модель внутри компании."
+
+
+def _main_trend_idea(text: str, category: str) -> str:
+    if category == "Hospitality":
+        return "Главная идея не в технологии, а в перестройке операционной модели обслуживания."
+    if category == "Customer Experience":
+        return "Клиентский опыт нельзя улучшить отдельно от процессов, в которых рождается этот опыт."
+    if category == "Operations":
+        return "Процессные улучшения работают только тогда, когда у системы есть владелец, метрики и понятные стандарты."
+    if category == "Management":
+        return "Сильная стратегия проявляется в том, как компания ежедневно принимает решения и удерживает качество исполнения."
+    return "AI усиливает не хаос, а уже работающую систему; без операционной базы он делает проблемы заметнее."
+
+
+def _audience_importance(category: str) -> str:
+    if category == "Hospitality":
+        return "Это помогает показать связь между цифровизацией, качеством сервиса, нагрузкой на команду и ожиданиями гостя."
+    if category == "Customer Experience":
+        return "Это дает аудитории практичный взгляд: CX зависит не от красивых обещаний, а от того, как устроена работа внутри."
+    if category == "Operations":
+        return "Это позволяет говорить о процессах не абстрактно, а через бизнес-эффект, скорость, качество и повторяемость результата."
+    if category == "Management":
+        return "Это переводит обсуждение из общих слов о лидерстве в конкретные управленческие механики."
+    return "Это связывает актуальный AI-сигнал с темами операционной зрелости, ответственности и практической ценности для бизнеса."
+
+
+def _author_angle(text: str, category: str) -> str:
+    if category == "Hospitality":
+        return "Использовать тренд как повод показать: мобильный ключ или приложение не делают сервис лучше без операционной дисциплины."
+    if category == "Customer Experience":
+        return "Не пересказывать новость, а разобрать, почему клиентский опыт ломается там, где у процесса нет владельца."
+    if category == "Operations":
+        return "Показать, что улучшение процесса начинается не с инструмента, а с ясности ролей, стандартов и метрик."
+    if category == "Management":
+        return "Развернуть тему как управленческий вывод: система сильнее разовой инициативы."
+    return "Не обсуждать технологию саму по себе, а показать, какие слабые места в процессах она вскрывает."
+
+
+def _expertise_connection(category: str) -> str:
+    if category == "Hospitality":
+        return "Связано с гостеприимством, премиальным сервисом, клиентским опытом и операционными стандартами сервиса."
+    if category == "Customer Experience":
+        return "Связано с клиентским опытом, сервисными системами, разрывами в клиентском пути и улучшением процессов."
+    if category == "Operations":
+        return "Связано с операциями, стандартами работы, аналитикой, улучшением процессов и управленческими системами."
+    if category == "Management":
+        return "Связано с управленческими системами, операционной зрелостью и качеством исполнения."
+    return "Связано с AI, операционной зрелостью, процессами, данными и управляемостью сервисной системы."
+
+
+def _publication_ideas(text: str, category: str) -> dict[str, str]:
+    if category == "Hospitality":
+        return {
+            "LinkedIn": "Digital Guest Experience Is No Longer a Feature. It Is an Operations Test",
+            "Telegram": "Мобильный ключ не улучшает сервис, если внутри отеля хаос",
+            "VC": "Почему цифровизация гостиниц не работает без операционной дисциплины",
+            "Сетка": "Гость видит приложение. Но качество сервиса рождается внутри процесса",
+        }
+    if category == "Customer Experience":
+        return {
+            "LinkedIn": "Customer Experience Is Becoming an Operations Discipline",
+            "Telegram": "CX ломается не в интерфейсе. Он ломается внутри процесса",
+            "VC": "Почему клиентский опыт нельзя улучшить без владельца процесса",
+            "Сетка": "Сервис начинается там, где команда понимает, кто за что отвечает",
+        }
+    if category == "Operations":
+        return {
+            "LinkedIn": "Process Improvement Is Back Because Growth Needs Discipline",
+            "Telegram": "Процессы снова в центре. Потому что без них рост разваливается",
+            "VC": "Почему бизнес снова возвращается к процессам, SOP и операционной дисциплине",
+            "Сетка": "Улучшение начинается не с идеи, а с повторяемого процесса",
+        }
+    if category == "Management":
+        return {
+            "LinkedIn": "Management Systems Are the Real Competitive Advantage",
+            "Telegram": "Стратегия видна не в презентации, а в ежедневных решениях",
+            "VC": "Как управленческие системы влияют на сервис, рост и качество исполнения",
+            "Сетка": "Сильная система переживает слабый день. Слабая ломается от любой нагрузки",
+        }
+    return {
+        "LinkedIn": "AI Agents Are Not Replacing Operations. They Are Exposing Broken Workflows",
+        "Telegram": "ИИ не чинит хаос в процессах. Он просто делает его видимым",
+        "VC": "Почему ИИ-агенты не спасут бизнес с хаотичными процессами",
+        "Сетка": "ИИ не заменяет операционную систему. Он подсвечивает, где ее нет",
+    }
 
 
 def _category(source: dict[str, object]) -> str:
@@ -765,6 +927,7 @@ def _parse_feed_items(payload: bytes, feed: dict[str, object]) -> list[dict[str,
         title = _first_xml_text(item, ("title", "{http://www.w3.org/2005/Atom}title"))
         description = _first_xml_text(item, ("description", "summary", "{http://www.w3.org/2005/Atom}summary", "{http://www.w3.org/2005/Atom}content"))
         published = _first_xml_text(item, ("pubDate", "published", "updated", "{http://www.w3.org/2005/Atom}published", "{http://www.w3.org/2005/Atom}updated"))
+        article_url = _feed_item_url(item)
         if not title:
             continue
         text = _strip_html(description)
@@ -774,6 +937,7 @@ def _parse_feed_items(payload: bytes, feed: dict[str, object]) -> list[dict[str,
                 "title": title,
                 "description": text[:600],
                 "source": feed_name,
+                "url": article_url,
                 "sources": [feed_name],
                 "category": category,
                 "detected_at": published or datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -795,6 +959,17 @@ def _first_xml_text(item: ET.Element, names: tuple[str, ...]) -> str:
         node = item.find(name)
         if node is not None and node.text:
             return unescape(node.text.strip())
+    return ""
+
+
+def _feed_item_url(item: ET.Element) -> str:
+    link_text = _first_xml_text(item, ("link", "guid", "{http://www.w3.org/2005/Atom}id"))
+    if link_text.startswith("http"):
+        return link_text
+    for node in item.findall("{http://www.w3.org/2005/Atom}link"):
+        href = str(node.attrib.get("href", "")).strip()
+        if href.startswith("http"):
+            return href
     return ""
 
 
