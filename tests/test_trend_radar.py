@@ -64,16 +64,18 @@ class TrendRadarTests(unittest.TestCase):
             radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json")
             cache = radar.refresh({}, [], [], [])
 
-            html = render_trend_radar(cache)
+        html = render_trend_radar(cache)
 
         self.assertIn("Trend Radar", html)
-        self.assertIn("Потенциал охвата", html)
+        self.assertIn("Trend Score", html)
+        self.assertIn("Content Potential", html)
         self.assertIn("Соответствие бренду", html)
         self.assertIn("Сохранить в Idea Vault", html)
         self.assertIn("Добавить в Content Plan", html)
-        self.assertIn("Почему AI предложил это?", html)
+        self.assertIn("Почему AI выбрал эту тему?", html)
         self.assertIn("Риск повтора", html)
         self.assertIn("Рекомендация", html)
+        self.assertIn("Техническая информация", html)
 
     def test_ai_context_engine_collects_shared_context(self) -> None:
         with TemporaryDirectory() as directory:

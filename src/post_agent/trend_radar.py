@@ -31,10 +31,15 @@ class TrendTopic:
     description: str
     source: str
     why_now: str
+    why_important: str
+    category: str
     hype_level: str
     relevance_forecast: str
     reach_score: float
     brand_fit_score: float
+    content_potential: float
+    trend_score: float
+    component_scores: dict[str, float]
     ai_reason: str
     matching_cases: tuple[str, ...]
     knowledge_materials: tuple[str, ...]
@@ -107,7 +112,7 @@ class TrendRadar:
             for source in sources
         ]
         grouped = self._group_similar_topics(topics)
-        filtered = sorted(grouped, key=lambda item: (item.reach_score * 0.55 + item.brand_fit_score * 0.45), reverse=True)[:8]
+        filtered = sorted(grouped, key=lambda item: item.trend_score, reverse=True)[:12]
         generated_at = datetime.now(timezone.utc)
         cache = {
             "generated_at": generated_at.isoformat(timespec="seconds"),
@@ -188,10 +193,32 @@ class TrendRadar:
         reach = min(10.0, float(source.get("reach_base", 6.5)) + _controversy_bonus(source) + idea_bonus)
         repeat_penalty = 0.7 if repeat_risk == "высокий" else 0.25 if repeat_risk == "средний" else 0.0
         brand = min(10.0, float(source.get("brand_base", 6.5)) + plan_bonus + len(knowledge_matches) * 0.25 + len(case_matches) * 0.45 + graph_bonus + brain_bonus - repeat_penalty)
-        recommendation = _recommendation(reach, brand, repeat_risk)
+        editorial_fit = _editorial_strategy_score(source, content_plan, rubric_matches)
+        content_potential = min(10.0, reach + len(case_matches) * 0.35 + len(knowledge_matches) * 0.2 + (0.4 if rubric_matches else 0.0))
+        trend_relevance = _trend_relevance_score(source)
+        repeat_score = {"низкий": 10.0, "средний": 6.0, "высокий": 2.0}.get(repeat_risk, 7.0)
+        component_scores = {
+            "trend_relevance": round(trend_relevance, 1),
+            "brand_fit": round(brand, 1),
+            "editorial_strategy_fit": round(editorial_fit, 1),
+            "content_potential": round(content_potential, 1),
+            "repeat_safety": round(repeat_score, 1),
+        }
+        trend_score = round(
+            trend_relevance * 0.30
+            + brand * 0.25
+            + editorial_fit * 0.20
+            + content_potential * 0.15
+            + repeat_score * 0.10,
+            1,
+        )
+        recommendation = _recommendation(trend_score, brand, repeat_risk)
         why_trend = str(source.get("why_trend") or source.get("why_now") or "Тема набирает плотность в нескольких источниках и пересекается с текущим контекстом автора.")
+        why_important = str(source.get("why_important") or "Тема может дать авторский угол о связи тренда с операционной зрелостью, сервисом и управленческими системами.")
         explanation = {
             "trend": why_trend,
+            "trend_score": trend_score,
+            "content_potential": round(content_potential, 1),
             "month_focus": str(content_plan.get("month_focus", "")),
             "week_focus": str(content_plan.get("focus", "")),
             "documents": knowledge_matches,
@@ -206,10 +233,15 @@ class TrendRadar:
             description=description,
             source=str(source.get("source", "Локальные редакторские источники")),
             why_now=str(source.get("why_now", "")),
+            why_important=why_important,
+            category=_category(source),
             hype_level=str(source.get("hype_level", "средний")),
             relevance_forecast=str(source.get("relevance_forecast", "1-2 недели")),
             reach_score=round(reach, 1),
             brand_fit_score=round(brand, 1),
+            content_potential=round(content_potential, 1),
+            trend_score=trend_score,
+            component_scores=component_scores,
             ai_reason=_reason(title, plan_bonus, knowledge_matches, case_matches, brain_bonus),
             matching_cases=tuple(case_matches),
             knowledge_materials=tuple(knowledge_matches),
@@ -254,10 +286,15 @@ class TrendRadar:
                 description=existing.description,
                 source=", ".join(merged_sources),
                 why_now=existing.why_now,
+                why_important=existing.why_important,
+                category=existing.category,
                 hype_level=existing.hype_level,
                 relevance_forecast=existing.relevance_forecast,
                 reach_score=round(min(10.0, max(existing.reach_score, topic.reach_score) + 0.4), 1),
                 brand_fit_score=round(max(existing.brand_fit_score, topic.brand_fit_score), 1),
+                content_potential=round(max(existing.content_potential, topic.content_potential), 1),
+                trend_score=round(min(10.0, max(existing.trend_score, topic.trend_score) + 0.3), 1),
+                component_scores=existing.component_scores,
                 ai_reason=existing.ai_reason,
                 matching_cases=tuple(sorted(set(existing.matching_cases + topic.matching_cases))),
                 knowledge_materials=tuple(sorted(set(existing.knowledge_materials + topic.knowledge_materials))),
@@ -332,10 +369,15 @@ class TrendRadar:
             "description": topic.description,
             "source": topic.source,
             "why_now": topic.why_now,
+            "why_important": topic.why_important,
+            "category": topic.category,
             "hype_level": topic.hype_level,
             "relevance_forecast": topic.relevance_forecast,
             "reach_score": topic.reach_score,
             "brand_fit_score": topic.brand_fit_score,
+            "content_potential": topic.content_potential,
+            "trend_score": topic.trend_score,
+            "component_scores": topic.component_scores,
             "ai_reason": topic.ai_reason,
             "matching_cases": list(topic.matching_cases),
             "knowledge_materials": list(topic.knowledge_materials),
@@ -484,10 +526,50 @@ def _repeat_risk(text: str, content_plan: dict[str, object], ideas: list[object]
     return "низкий"
 
 
-def _recommendation(reach: float, brand: float, repeat_risk: str) -> str:
+def _trend_relevance_score(source: dict[str, object]) -> float:
+    base = float(source.get("trend_base", source.get("reach_base", 6.5)))
+    if str(source.get("detected_at", "")).strip():
+        base += 0.4
+    if _as_list(source.get("sources", [])):
+        base += min(1.0, len(_as_list(source.get("sources", []))) * 0.2)
+    return round(min(10.0, base), 1)
+
+
+def _editorial_strategy_score(source: dict[str, object], content_plan: dict[str, object], rubrics: list[str]) -> float:
+    tokens = _tokens(" ".join(str(source.get(key, "")) for key in ("title", "description", "why_now", "category")))
+    plan_tokens = _tokens(
+        " ".join(
+            [
+                str(content_plan.get("focus", "")),
+                str(content_plan.get("month_focus", "")),
+                " ".join(_as_list(content_plan.get("content_pillars", []))),
+                " ".join(rubrics),
+            ]
+        )
+    )
+    return round(min(10.0, 5.8 + len(tokens & plan_tokens) * 0.45 + (0.8 if rubrics else 0.0)), 1)
+
+
+def _category(source: dict[str, object]) -> str:
+    category = str(source.get("category", "")).strip()
+    if category:
+        return category
+    text = " ".join(str(source.get(key, "")) for key in ("title", "description", "source")).lower()
+    if any(word in text for word in ("hotel", "hospitality", "travel", "skift", "phocus")):
+        return "Hospitality"
+    if any(word in text for word in ("customer", "cx", "service design", "ux", "nielsen")):
+        return "Customer Experience"
+    if any(word in text for word in ("operations", "lean", "process", "apqc")):
+        return "Operations"
+    if any(word in text for word in ("hbr", "mckinsey", "deloitte", "bcg", "management", "sloan")):
+        return "Management"
+    return "AI"
+
+
+def _recommendation(trend_score: float, brand: float, repeat_risk: str) -> str:
     if repeat_risk == "высокий" or brand < 5.8:
         return "не брать"
-    if reach >= 7.0 and brand >= 7.0:
+    if trend_score >= 7.2 and brand >= 7.0:
         return "брать"
     return "отложить"
 
@@ -567,16 +649,34 @@ class ExternalFeedSourceProvider:
     """Optional RSS/HTTP provider. It fails closed and lets the radar use local sources."""
 
     DEFAULT_FEEDS = (
-        "https://www.mckinsey.com/featured-insights/rss",
-        "https://hbr.org/feed",
-        "https://www.technologyreview.com/feed/",
-        "https://www.unite.ai/feed/",
-        "https://www.hospitalitynet.org/rss/1.xml",
+        {"name": "OpenAI News", "category": "AI", "url": "https://openai.com/news/rss.xml"},
+        {"name": "Anthropic News", "category": "AI", "url": "https://www.anthropic.com/news/rss.xml"},
+        {"name": "Google DeepMind", "category": "AI", "url": "https://deepmind.google/blog/rss.xml"},
+        {"name": "Google AI Blog", "category": "AI", "url": "https://blog.google/technology/ai/rss/"},
+        {"name": "Microsoft AI Blog", "category": "AI", "url": "https://blogs.microsoft.com/ai/feed/"},
+        {"name": "AWS ML Blog", "category": "AI", "url": "https://aws.amazon.com/blogs/machine-learning/feed/"},
+        {"name": "Hugging Face Blog", "category": "AI", "url": "https://huggingface.co/blog/feed.xml"},
+        {"name": "Harvard Business Review", "category": "Management", "url": "https://hbr.org/feed"},
+        {"name": "MIT Sloan", "category": "Management", "url": "https://sloanreview.mit.edu/feed/"},
+        {"name": "McKinsey Insights", "category": "Management", "url": "https://www.mckinsey.com/featured-insights/rss"},
+        {"name": "Deloitte Insights", "category": "Management", "url": "https://www2.deloitte.com/us/en/insights/rss.xml"},
+        {"name": "BCG", "category": "Management", "url": "https://www.bcg.com/publications/rss.aspx"},
+        {"name": "Gartner", "category": "Management", "url": "", "stub": True},
+        {"name": "HospitalityNet", "category": "Hospitality", "url": "https://www.hospitalitynet.org/rss/1.xml"},
+        {"name": "Hotel Management", "category": "Hospitality", "url": "https://www.hotelmanagement.net/rss/xml"},
+        {"name": "Hotel News Resource", "category": "Hospitality", "url": "https://www.hotelnewsresource.com/rss.xml"},
+        {"name": "Skift", "category": "Hospitality", "url": "https://skift.com/feed/"},
+        {"name": "PhocusWire", "category": "Hospitality", "url": "https://www.phocuswire.com/RSS/All-News"},
+        {"name": "CX Network", "category": "Customer Experience", "url": "https://www.cxnetwork.com/rss"},
+        {"name": "Nielsen Norman Group", "category": "Customer Experience", "url": "https://www.nngroup.com/feed/rss/"},
+        {"name": "Service Design Network", "category": "Customer Experience", "url": "https://www.service-design-network.org/feed"},
+        {"name": "APQC", "category": "Operations", "url": "https://www.apqc.org/blog/rss.xml"},
+        {"name": "Lean Enterprise Institute", "category": "Operations", "url": "https://www.lean.org/feed/"},
     )
 
-    def __init__(self, feeds: tuple[str, ...] | None = None, timeout_seconds: float = 2.5) -> None:
+    def __init__(self, feeds: tuple[dict[str, object], ...] | None = None, timeout_seconds: float = 1.2) -> None:
         raw_feeds = os.environ.get("TREND_RADAR_RSS_FEEDS", "")
-        configured = tuple(item.strip() for item in raw_feeds.split(",") if item.strip())
+        configured = tuple({"name": item.strip(), "category": "External", "url": item.strip()} for item in raw_feeds.split(",") if item.strip())
         self.feeds = feeds or configured or self.DEFAULT_FEEDS
         self.timeout_seconds = timeout_seconds
         self.enabled = os.environ.get("TREND_RADAR_ENABLE_RSS", "").lower() in {"1", "true", "yes", "on"}
@@ -587,21 +687,30 @@ class ExternalFeedSourceProvider:
             return []
         items: list[dict[str, object]] = []
         for feed in self.feeds:
+            if feed.get("stub"):
+                source_status.append(f"{feed.get('name')}: provider-заглушка, RSS недоступен.")
+                continue
+            url = str(feed.get("url", "")).strip()
+            if not url:
+                continue
             try:
-                request = Request(feed, headers={"User-Agent": "PersonalBrandOS-TrendRadar/2.0"})
+                request = Request(url, headers={"User-Agent": "PersonalBrandOS-TrendRadar/3.0"})
                 with urlopen(request, timeout=self.timeout_seconds) as response:
                     payload = response.read(500_000)
                 items.extend(_parse_feed_items(payload, feed))
             except (OSError, URLError, ET.ParseError, TimeoutError) as exc:
-                source_status.append(f"{feed}: недоступен ({exc})")
+                source_status.append(f"{feed.get('name')}: недоступен ({exc})")
         if items:
             source_status.append(f"Внешние RSS-источники: получено {len(items)} сигналов.")
         return items
 
 
-def _parse_feed_items(payload: bytes, feed_url: str) -> list[dict[str, object]]:
+def _parse_feed_items(payload: bytes, feed: dict[str, object]) -> list[dict[str, object]]:
     root = ET.fromstring(payload)
     items = root.findall(".//item") or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+    feed_url = str(feed.get("url", ""))
+    feed_name = str(feed.get("name", feed_url))
+    category = str(feed.get("category", "External"))
     result = []
     for item in items[:12]:
         title = _first_xml_text(item, ("title", "{http://www.w3.org/2005/Atom}title"))
@@ -615,11 +724,13 @@ def _parse_feed_items(payload: bytes, feed_url: str) -> list[dict[str, object]]:
                 "id": _slug(f"{feed_url}-{title}"),
                 "title": title,
                 "description": text[:600],
-                "source": feed_url,
-                "sources": [feed_url],
+                "source": feed_name,
+                "sources": [feed_name],
+                "category": category,
                 "detected_at": published or datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "why_now": "Свежий сигнал из внешнего RSS/медиа-источника.",
                 "why_trend": "Тема появилась во внешнем источнике и проверяется на соответствие Author Brain, Knowledge и редакционной стратегии.",
+                "why_important": "Внешний сигнал помогает найти редакционный угол, который не является дословным переводом новости.",
                 "hype_level": "проверить",
                 "relevance_forecast": "1-2 недели",
                 "reach_base": 6.8,
