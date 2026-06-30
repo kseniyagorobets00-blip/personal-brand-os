@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from post_agent.ai_context import AIContextEngine
 from post_agent.idea_vault import IdeaVault
-from post_agent.knowledge import KnowledgeBase
+from post_agent.knowledge import KnowledgeBase, KnowledgeCase, KnowledgeDocument
 from post_agent.learning import LearningCenter
 from post_agent.production import run_production_check
 from post_agent.trend_radar import ExternalFeedSourceProvider, TrendRadar
@@ -107,6 +107,79 @@ class TrendRadarTests(unittest.TestCase):
         self.assertIn("Какой авторский угол предлагает AI", html)
         self.assertIn("Какие публикации можно сделать", html)
         self.assertIn("Техническая информация", html)
+
+    def test_trend_radar_uses_semantic_documents_cases_and_dedupes_group_reason(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed_path = root / "sources.json"
+            seed_path.write_text(
+                __import__("json").dumps(
+                    {
+                        "sources": [
+                            {
+                                "id": "guest-app-1",
+                                "title": "Hotel mobile guest app and digital key",
+                                "description": "Guest app changes service workflow and staff operations.",
+                                "source": "Test source A",
+                                "category": "Hospitality",
+                                "sources": ["Test source A"],
+                                "brand_base": 5.8,
+                            },
+                            {
+                                "id": "guest-app-2",
+                                "title": "Hotel mobile guest app and digital key update",
+                                "description": "Guest app changes service workflow and staff operations.",
+                                "source": "Test source B",
+                                "category": "Hospitality",
+                                "sources": ["Test source B"],
+                                "brand_base": 5.8,
+                            },
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            radar = TrendRadar(root / "cache.json", root / "decisions.json", seed_path)
+            documents = [
+                KnowledgeDocument(
+                    id="doc-1",
+                    title="Service operations playbook",
+                    original_filename="ops.md",
+                    extension=".md",
+                    stored_path="ops.md",
+                    excerpt="",
+                    content_text="",
+                    word_count=12,
+                    uploaded_at="",
+                    semantic_chunks=("Guest journey depends on hotel staff workflow, SOP and operational ownership.",),
+                )
+            ]
+            cases = [
+                KnowledgeCase(
+                    id="case-1",
+                    title="Guest service workflow",
+                    company="Hotel Project",
+                    what_happened="Digital check-in created pressure on service teams.",
+                    reason="The workflow did not have clear ownership.",
+                    solution="Mapped service steps and SOP.",
+                    result="More predictable guest experience.",
+                    public_usage="Use as hospitality operations case.",
+                    key_topics=("hospitality", "operations", "customer experience"),
+                    platforms=("LinkedIn", "Telegram"),
+                    created_at="",
+                    key_takeaways=("Mobile service needs internal ownership", "SOP protects guest experience"),
+                )
+            ]
+
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh({}, documents, cases, [])
+
+        first = cache["topics"][0]
+        self.assertIn("Service operations playbook", first["knowledge_materials"])
+        self.assertTrue(first["case_insights"])
+        self.assertGreaterEqual(first["brand_fit_score"], 7.0)
+        self.assertLessEqual(str(first["why_trend"]).count("Похожие сигналы найдены"), 1)
 
     def test_ai_context_engine_collects_shared_context(self) -> None:
         with TemporaryDirectory() as directory:

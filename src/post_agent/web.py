@@ -1650,6 +1650,105 @@ def _trend_card(topic: object) -> str:
     """
 
 
+def _trend_card(topic: object) -> str:
+    item = topic if isinstance(topic, dict) else {}
+    topic_id = str(item.get("id", ""))
+    cases = _inline_list(item.get("matching_cases", []), "Подходящих кейсов пока нет")
+    case_insights = _case_insights_html(item.get("case_insights", []))
+    materials = _inline_list(item.get("knowledge_materials", []), "Документы из памяти пока не найдены")
+    sources = _inline_list(item.get("sources", []), str(item.get("source", "")))
+    publication_ideas = _publication_ideas_html(item.get("publication_ideas", {}))
+    source_url = str(item.get("source_url", "")).strip()
+    source_link = (
+        f'<a class="open-link" href="{escape(source_url)}" target="_blank" rel="noreferrer">Открыть оригинальную статью</a>'
+        if source_url
+        else '<span class="state-note">Оригинальная ссылка не найдена</span>'
+    )
+    status = str(item.get("status", "new"))
+    explanation = item.get("ai_explanation", {})
+    explanation = explanation if isinstance(explanation, dict) else {}
+    return f"""
+    <article class="card trend-card" id="{escape(topic_id)}">
+      <div class="card-head">
+        <h3>{escape(str(item.get("title", "")))}</h3>
+        <strong>{escape(_trend_status_ru(status))}</strong>
+      </div>
+      <p class="score-stars">{_score_stars(item.get("trend_score", 0))}</p>
+      <div class="score-grid">
+        <div><p class="label">Оценка тренда</p><b>{escape(str(item.get("trend_score", "")))}/10</b></div>
+        <div><p class="label">Соответствие бренду</p><b>{escape(str(item.get("brand_fit_score", "")))}/10</b></div>
+        <div><p class="label">Контентный потенциал</p><b>{escape(str(item.get("content_potential", item.get("reach_score", ""))))}/10</b></div>
+        <div><p class="label">Категория</p><b>{escape(_category_ru(str(item.get("category", ""))))}</b></div>
+      </div>
+      <div class="draft-materials">
+        <p class="label">Краткая суть</p>
+        <p>{escape(str(item.get("trend_essence") or item.get("description", "")))}</p>
+        <p class="label">О чем на самом деле этот тренд?</p>
+        <p><b>Суть тренда:</b> {escape(str(item.get("trend_essence", "")))}</p>
+        <p><b>Главная идея:</b> {escape(str(item.get("main_idea", "")))}</p>
+        <p><b>Почему это важно для моей аудитории:</b> {escape(str(item.get("audience_importance", "")))}</p>
+        <p class="label">Почему это важно именно сейчас</p>
+        <p>{escape(str(item.get("why_trend", item.get("why_now", ""))))}</p>
+        <p class="label">Какой авторский угол предлагает AI</p>
+        <p>{escape(str(item.get("author_angle", "")))}</p>
+        <p class="label">Как это связано с моей экспертизой</p>
+        <p>{escape(str(item.get("expertise_connection", "")))}</p>
+      </div>
+      <div class="draft-context-grid">
+        <div><p class="label">Кейсы использовать</p><p>{cases}</p></div>
+        <div><p class="label">Документы использованы</p><p>{materials}</p></div>
+        <div><p class="label">Риск повтора</p><p>{escape(_repeat_risk_label(str(item.get("repeat_risk", ""))))}</p></div>
+        <div><p class="label">Рекомендация</p><p>{escape(_recommendation_label(str(item.get("recommendation", ""))))}</p></div>
+      </div>
+      <div class="draft-materials">
+        <p class="label">Как использовать кейсы</p>
+        {case_insights}
+      </div>
+      <div class="draft-materials">
+        <p class="label">Какие публикации можно сделать</p>
+        {publication_ideas}
+      </div>
+      <details class="draft-materials">
+        <summary>Почему AI предложил это?</summary>
+        <p><b>Тренд:</b> {escape(str(explanation.get("trend", item.get("why_now", ""))))}</p>
+        <p><b>Оценка тренда:</b> {escape(str(explanation.get("trend_score", item.get("trend_score", ""))))}/10</p>
+        <p><b>Соответствие бренду:</b> {escape(str(item.get("brand_fit_score", "")))}/10</p>
+        <p><b>Контентный потенциал:</b> {escape(str(explanation.get("content_potential", item.get("content_potential", ""))))}/10</p>
+        <p><b>Фокус месяца/недели:</b> {escape(str(explanation.get("month_focus", "")))} / {escape(str(explanation.get("week_focus", "")))}</p>
+        <p><b>Почему подходит автору:</b> {escape(str(item.get("expertise_connection", "")))}</p>
+        <p><b>Авторский угол:</b> {escape(str(explanation.get("author_angle", item.get("author_angle", ""))))}</p>
+        <p><b>Риск повтора:</b> {escape(_repeat_risk_label(str(explanation.get("repeat_risk", item.get("repeat_risk", "")))))}</p>
+      </details>
+      <div class="draft-materials">
+        <p class="label">Источник новости</p>
+        <p>{sources}</p>
+        {source_link}
+      </div>
+      <div class="topic-actions">
+        {_trend_action_form(topic_id, "drafted", "Создать пост")}
+        {_trend_action_form(topic_id, "planned", "Добавить в контент-план", "secondary")}
+        {_trend_action_form(topic_id, "saved", "Добавить в идеи", "secondary")}
+        {_trend_action_form(topic_id, "rejected", "Отклонить", "ghost")}
+      </div>
+    </article>
+    """
+
+
+def _case_insights_html(value: object) -> str:
+    if not isinstance(value, list) or not value:
+        return "<p>Подходящих кейсов пока нет. Можно использовать общий авторский опыт как наблюдение.</p>"
+    rows = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = escape(str(item.get("title", "")).strip())
+        why = escape(str(item.get("why", "")).strip())
+        theses = escape(str(item.get("theses", "")).strip())
+        if title:
+            rows.append(f"<p><b>{title}</b><br>{why}<br><span>{theses}</span></p>")
+    return "".join(rows) or "<p>Подходящих кейсов пока нет. Можно использовать общий авторский опыт как наблюдение.</p>"
+
+
 def _score_value(item: dict[str, object], key: str) -> str:
     return str(item.get(key, "")).strip() or "0"
 

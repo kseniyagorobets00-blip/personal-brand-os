@@ -50,6 +50,7 @@ class TrendTopic:
     component_scores: dict[str, float]
     ai_reason: str
     matching_cases: tuple[str, ...]
+    case_insights: tuple[dict[str, str], ...]
     knowledge_materials: tuple[str, ...]
     best_formats: tuple[str, ...]
     best_rubrics: tuple[str, ...]
@@ -207,8 +208,9 @@ class TrendRadar:
         expertise_connection = _expertise_connection(category)
         publication_ideas = _publication_ideas(content_text, category)
         plan_bonus = _plan_fit_bonus(content_text, content_plan)
-        knowledge_matches = _matching_documents(content_text, documents)
-        case_matches = _matching_cases(content_text, cases)
+        knowledge_matches = _matching_documents(content_text, documents, category, author_brain or {})
+        case_insights = _matching_case_insights(content_text, cases, category, author_brain or {})
+        case_matches = [item["title"] for item in case_insights]
         idea_bonus = _idea_bonus(content_text, ideas)
         graph_bonus = min(0.6, len(graph_links) * 0.1)
         brain_bonus = _author_brain_bonus(content_text, author_brain or {})
@@ -217,7 +219,9 @@ class TrendRadar:
         author_topics = _author_brain_topics(content_text, author_brain or {})
         reach = min(10.0, float(source.get("reach_base", 6.5)) + _controversy_bonus(source) + idea_bonus)
         repeat_penalty = 0.7 if repeat_risk == "высокий" else 0.25 if repeat_risk == "средний" else 0.0
-        brand = min(10.0, float(source.get("brand_base", 6.5)) + plan_bonus + len(knowledge_matches) * 0.25 + len(case_matches) * 0.45 + graph_bonus + brain_bonus - repeat_penalty)
+        direction_bonus = _brand_direction_bonus(content_text, category, author_brain or {})
+        brand_base = max(float(source.get("brand_base", 6.5)), 7.4 if direction_bonus >= 0.9 else 6.5)
+        brand = min(10.0, brand_base + plan_bonus + len(knowledge_matches) * 0.35 + len(case_matches) * 0.55 + graph_bonus + brain_bonus + direction_bonus - repeat_penalty)
         editorial_fit = _editorial_strategy_score(source, content_plan, rubric_matches)
         content_potential = min(10.0, reach + len(case_matches) * 0.35 + len(knowledge_matches) * 0.2 + (0.4 if rubric_matches else 0.0))
         trend_relevance = _trend_relevance_score(source)
@@ -279,6 +283,7 @@ class TrendRadar:
             component_scores=component_scores,
             ai_reason=_reason(title, plan_bonus, knowledge_matches, case_matches, brain_bonus),
             matching_cases=tuple(case_matches),
+            case_insights=tuple(case_insights),
             knowledge_materials=tuple(knowledge_matches),
             best_formats=tuple(_formats(source, content_plan)),
             best_rubrics=tuple(rubric_matches),
@@ -342,12 +347,13 @@ class TrendRadar:
                 component_scores=existing.component_scores,
                 ai_reason=existing.ai_reason,
                 matching_cases=tuple(sorted(set(existing.matching_cases + topic.matching_cases))),
+                case_insights=_merge_case_insights(existing.case_insights, topic.case_insights),
                 knowledge_materials=tuple(sorted(set(existing.knowledge_materials + topic.knowledge_materials))),
                 best_formats=tuple(sorted(set(existing.best_formats + topic.best_formats))),
                 best_rubrics=tuple(sorted(set(existing.best_rubrics + topic.best_rubrics))),
                 sources=merged_sources,
                 detected_at=min(existing.detected_at, topic.detected_at),
-                why_trend=f"{existing.why_trend} Похожие сигналы найдены в нескольких источниках.",
+                why_trend=_dedupe_sentences(existing.why_trend, "Похожие сигналы найдены в нескольких источниках."),
                 author_brain_topics=tuple(sorted(set(existing.author_brain_topics + topic.author_brain_topics))),
                 repeat_risk=max((existing.repeat_risk, topic.repeat_risk), key=_repeat_risk_rank),
                 recommendation=existing.recommendation,
@@ -433,6 +439,7 @@ class TrendRadar:
             "component_scores": topic.component_scores,
             "ai_reason": topic.ai_reason,
             "matching_cases": list(topic.matching_cases),
+            "case_insights": list(topic.case_insights),
             "knowledge_materials": list(topic.knowledge_materials),
             "best_formats": list(topic.best_formats),
             "best_rubrics": list(topic.best_rubrics),
@@ -448,24 +455,76 @@ class TrendRadar:
         }
 
 
-def _matching_documents(text: str, documents: list[object]) -> list[str]:
-    tokens = _tokens(text)
-    matches = []
+def _matching_documents(text: str, documents: list[object], category: str = "", author_brain: dict[str, object] | None = None) -> list[str]:
+    scored: list[tuple[float, str]] = []
+    query = _semantic_query(text, category, author_brain or {})
     for document in documents:
-        haystack = " ".join((getattr(document, "title", ""), getattr(document, "excerpt", "")))
-        if tokens.intersection(_tokens(haystack)):
-            matches.append(getattr(document, "title", ""))
-    return matches[:3]
+        title = str(getattr(document, "title", "")).strip()
+        haystack = " ".join(
+            (
+                title,
+                str(getattr(document, "excerpt", "")),
+                str(getattr(document, "content_text", "")),
+                " ".join(str(chunk) for chunk in getattr(document, "semantic_chunks", ())[:8]),
+                json.dumps(getattr(document, "document_metadata", {}), ensure_ascii=False),
+            )
+        )
+        score = _semantic_similarity(query, haystack) + _category_similarity_bonus(category, haystack)
+        if score >= 0.12:
+            scored.append((score, title))
+    if not scored and documents:
+        for document in documents[:3]:
+            title = str(getattr(document, "title", "")).strip()
+            haystack = " ".join((title, str(getattr(document, "excerpt", "")), str(getattr(document, "content_text", ""))))
+            if _tokens(haystack):
+                scored.append((_semantic_similarity(query, haystack) * 0.8, title))
+    return [title for _, title in sorted(scored, key=lambda item: item[0], reverse=True) if title][:3]
 
 
 def _matching_cases(text: str, cases: list[object]) -> list[str]:
-    tokens = _tokens(text)
-    matches = []
+    return [item["title"] for item in _matching_case_insights(text, cases)]
+
+
+def _matching_case_insights(
+    text: str,
+    cases: list[object],
+    category: str = "",
+    author_brain: dict[str, object] | None = None,
+) -> list[dict[str, str]]:
+    scored: list[tuple[float, dict[str, str]]] = []
+    query = _semantic_query(text, category, author_brain or {})
     for case in cases:
-        haystack = " ".join((getattr(case, "title", ""), getattr(case, "company", ""), " ".join(getattr(case, "key_topics", ()))))
-        if tokens.intersection(_tokens(haystack)):
-            matches.append(getattr(case, "title", ""))
-    return matches[:3]
+        title = str(getattr(case, "title", "")).strip()
+        company = str(getattr(case, "company", "")).strip()
+        takeaways = [str(item) for item in getattr(case, "key_takeaways", ()) if str(item).strip()]
+        haystack = " ".join(
+            (
+                title,
+                company,
+                str(getattr(case, "what_happened", "")),
+                str(getattr(case, "reason", "")),
+                str(getattr(case, "solution", "")),
+                str(getattr(case, "result", "")),
+                str(getattr(case, "public_usage", "")),
+                " ".join(str(item) for item in getattr(case, "key_topics", ())),
+                " ".join(takeaways),
+            )
+        )
+        score = _semantic_similarity(query, haystack) + _category_similarity_bonus(category, haystack)
+        if score < 0.10:
+            continue
+        display_title = f"{company}: {title}" if company and company.lower() not in title.lower() else title
+        scored.append(
+            (
+                score,
+                {
+                    "title": display_title,
+                    "why": _case_match_reason(category, haystack),
+                    "theses": "; ".join(takeaways[:3]) or _case_theses(category),
+                },
+            )
+        )
+    return [item for _, item in sorted(scored, key=lambda item: item[0], reverse=True)][:3]
 
 
 def _plan_fit_bonus(text: str, content_plan: dict[str, object]) -> float:
@@ -478,6 +537,111 @@ def _plan_fit_bonus(text: str, content_plan: dict[str, object]) -> float:
         ]
     )
     return min(1.4, len(tokens.intersection(_tokens(plan_text))) * 0.25)
+
+
+def _semantic_query(text: str, category: str, author_brain: dict[str, object]) -> str:
+    profile = author_brain.get("profile", author_brain)
+    brain_terms: list[str] = []
+    if isinstance(profile, dict):
+        themes = profile.get("main_themes", [])
+        if isinstance(themes, list):
+            for theme in themes[:8]:
+                if isinstance(theme, dict):
+                    brain_terms.append(str(theme.get("name", "")))
+                else:
+                    brain_terms.append(str(theme))
+    return " ".join((text, category, " ".join(brain_terms), _category_keywords(category)))
+
+
+def _semantic_similarity(left: str, right: str) -> float:
+    left_tokens = _expanded_tokens(left)
+    right_tokens = _expanded_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    overlap = len(left_tokens & right_tokens)
+    containment = overlap / max(1, min(len(left_tokens), len(right_tokens)))
+    jaccard = overlap / max(1, len(left_tokens | right_tokens))
+    return round(containment * 0.7 + jaccard * 0.3, 3)
+
+
+def _expanded_tokens(text: str) -> set[str]:
+    tokens = _tokens(text)
+    expanded = set(tokens)
+    groups = (
+        {"operations", "operation", "process", "processes", "sop", "workflow", "workflows", "операции", "процессы", "процесс", "стандарты", "регламенты"},
+        {"customer", "experience", "cx", "service", "guest", "journey", "клиент", "клиентский", "сервис", "гость", "опыт"},
+        {"hospitality", "hotel", "travel", "property", "гостеприимство", "отель", "гостиница", "гостевой"},
+        {"ai", "agent", "agents", "automation", "copilot", "ии", "автоматизация", "агенты"},
+        {"management", "strategy", "leadership", "system", "systems", "управление", "стратегия", "система", "системы"},
+        {"analytics", "data", "bi", "metrics", "аналитика", "данные", "метрики"},
+    )
+    for group in groups:
+        if tokens & group:
+            expanded |= group
+    return expanded
+
+
+def _category_keywords(category: str) -> str:
+    return {
+        "AI": "AI agents automation operations workflows data",
+        "Hospitality": "hospitality hotel guest service customer experience operations",
+        "Customer Experience": "customer experience service design journey operations",
+        "Operations": "operations process improvement SOP analytics management systems",
+        "Management": "management strategy operating model leadership systems",
+    }.get(category, "")
+
+
+def _category_similarity_bonus(category: str, text: str) -> float:
+    if not category:
+        return 0.0
+    return min(0.18, _semantic_similarity(_category_keywords(category), text) * 0.5)
+
+
+def _brand_direction_bonus(text: str, category: str, author_brain: dict[str, object]) -> float:
+    core = "operations customer experience service design hospitality ai analytics sop process improvement management systems"
+    score = _semantic_similarity(" ".join((category, core)), text)
+    bonus = 0.0
+    if score >= 0.18:
+        bonus += 0.9
+    if category in {"Operations", "Customer Experience", "Hospitality", "AI", "Management"}:
+        bonus += 0.45
+    if _author_brain_bonus(text, author_brain) > 0:
+        bonus += 0.35
+    return min(1.7, bonus)
+
+
+def _case_match_reason(category: str, haystack: str) -> str:
+    if category == "Hospitality":
+        return "Подходит как пример связи гостевого опыта, сервиса и операционной дисциплины."
+    if category == "Customer Experience":
+        return "Подходит как доказательство, что клиентский опыт зависит от процессов и ответственности внутри команды."
+    if category == "Operations":
+        return "Подходит как пример процессного улучшения, стандартов и повторяемого результата."
+    if category == "Management":
+        return "Подходит как управленческий пример: система решений важнее разовой инициативы."
+    return "Подходит как пример того, как технология вскрывает качество процессов и данных."
+
+
+def _case_theses(category: str) -> str:
+    if category == "Hospitality":
+        return "сервис держится на стандартах; цифровой инструмент требует операционной базы; качество видно в деталях процесса"
+    if category == "Customer Experience":
+        return "CX рождается внутри процесса; нужен владелец результата; обещание клиенту должно быть управляемым"
+    if category == "Operations":
+        return "процесс должен быть измеримым; SOP защищает качество; улучшение должно давать бизнес-эффект"
+    return "технология не заменяет систему; слабые процессы становятся видимыми; управляемость важнее инструмента"
+
+
+def _merge_case_insights(left: tuple[dict[str, str], ...], right: tuple[dict[str, str], ...]) -> tuple[dict[str, str], ...]:
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in list(left) + list(right):
+        title = str(item.get("title", "")).strip()
+        if not title or title in seen:
+            continue
+        seen.add(title)
+        result.append(item)
+    return tuple(result[:3])
 
 
 def _idea_bonus(text: str, ideas: list[object]) -> float:
@@ -773,6 +937,26 @@ def _tokens(text: str) -> set[str]:
     return {word for word in re.findall(r"[A-Za-zА-Яа-я0-9]+", text.lower(), flags=re.UNICODE) if len(word) > 3}
 
 
+def _reason(title: str, plan_bonus: float, documents: list[str], cases: list[str], brain_bonus: float = 0.0) -> str:
+    openings = (
+        f"Тема «{title}» сильна как редакционный повод, потому что соединяет рынок с авторской экспертизой.",
+        f"Сигнал «{title}» можно развить не как новость, а как управленческий вывод.",
+        f"AI выбрал «{title}» как тему, где внешний тренд можно перевести в практический разбор.",
+    )
+    parts = [openings[abs(hash(title)) % len(openings)]]
+    if plan_bonus > 0:
+        parts.append("Есть связь с текущим фокусом контент-плана.")
+    if brain_bonus > 0:
+        parts.append("Авторская база подтверждает связь с темами, кейсами и позицией автора.")
+    if documents:
+        parts.append("В памяти есть материалы, которые можно использовать как опору.")
+    if cases:
+        parts.append("Есть подходящие кейсы для доказательности.")
+    if len(parts) == 1:
+        parts.append("Перед публикацией тему лучше привязать к конкретному процессу, сервисному разрыву или управленческому решению.")
+    return _dedupe_sentences(*parts)
+
+
 def _jaccard(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
@@ -834,6 +1018,22 @@ def _source_diagnostics_with_trend_counts(diagnostics: list[dict[str, object]], 
         updated["trend_count"] = trend_counts.get(str(item.get("name", "")), 0)
         result.append(updated)
     return result
+
+
+def _dedupe_sentences(*parts: str) -> str:
+    seen: set[str] = set()
+    result: list[str] = []
+    for part in parts:
+        for sentence in re.split(r"(?<=[.!?])\s+", str(part).strip()):
+            clean = re.sub(r"\s+", " ", sentence).strip()
+            if not clean:
+                continue
+            key = clean.lower().strip(".!? ")
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(clean)
+    return " ".join(result)
 
 
 class ExternalFeedSourceProvider:
