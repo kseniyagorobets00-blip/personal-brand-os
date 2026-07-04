@@ -11,12 +11,12 @@ from .author_brain import AuthorBrain
 from .author_profile import AuthorProfile, AuthorProfileRepository
 from .knowledge import KnowledgeBase, KnowledgeSearchResult
 from .learning import LearningCenter
+from .storage import PROJECT_ROOT as ROOT, data_path
 from .writing_dna import WritingDNARepository
 
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SEED_PATH = ROOT / "data" / "seeds" / "daily_brief_sources.json"
-DEFAULT_CONTENT_PLAN_PATH = ROOT / "data" / "seeds" / "content_plan.json"
+DEFAULT_SEED_PATH = data_path("seeds", "daily_brief_sources.json")
+DEFAULT_CONTENT_PLAN_PATH = data_path("seeds", "content_plan.json")
 PLAN_DATE_FORMATS = ("%d.%m.%Y", "%Y-%m-%d")
 RU_WEEKDAYS = (
     "Понедельник",
@@ -142,7 +142,60 @@ class SeedRepository:
     def load_content_plan(self) -> dict[str, Any]:
         if not self.content_plan_path.exists():
             raise FileNotFoundError(f"Content plan seed file not found: {self.content_plan_path}")
-        return json.loads(self.content_plan_path.read_text(encoding="utf-8"))
+        plan = json.loads(self.content_plan_path.read_text(encoding="utf-8"))
+        if self.content_plan_path != DEFAULT_CONTENT_PLAN_PATH:
+            return plan
+        refreshed = refresh_stale_content_plan(plan, today_moscow())
+        if refreshed != plan:
+            self.content_plan_path.write_text(
+                json.dumps(refreshed, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return refreshed
+        return plan
+
+
+def refresh_stale_content_plan(plan: dict[str, Any], today: date) -> dict[str, Any]:
+    publications = plan.get("planned_publications", [])
+    if not isinstance(publications, list) or not publications:
+        return plan
+
+    dated_items: list[tuple[date, int, dict[str, Any]]] = []
+    for index, item in enumerate(publications):
+        if not isinstance(item, dict):
+            continue
+        parsed = parse_plan_date(str(item.get("date", "")))
+        if parsed:
+            dated_items.append((parsed, index, item))
+    if not dated_items:
+        return plan
+
+    latest_publication = max(item[0] for item in dated_items)
+    if latest_publication >= today:
+        return plan
+
+    first_publication = min(item[0] for item in dated_items)
+    refreshed = dict(plan)
+    refreshed_publications = [dict(item) if isinstance(item, dict) else item for item in publications]
+    for old_date, index, item in dated_items:
+        shifted_date = today + (old_date - first_publication)
+        updated_item = dict(item)
+        updated_item["date"] = shifted_date.isoformat()
+        updated_item["day"] = weekday_name_for_date(shifted_date.isoformat())
+        refreshed_publications[index] = updated_item
+
+    latest_shifted = max(
+        parse_plan_date(str(item.get("date", ""))) or today
+        for item in refreshed_publications
+        if isinstance(item, dict)
+    )
+    refreshed["planned_publications"] = refreshed_publications
+    refreshed["week_start"] = today.isoformat()
+    refreshed["week_end"] = latest_shifted.isoformat()
+    refreshed["week"] = f"{today.strftime('%d.%m.%Y')} - {latest_shifted.strftime('%d.%m.%Y')}"
+    refreshed["updated_at"] = datetime.now(MOSCOW_TZ).isoformat(timespec="seconds")
+    refreshed["last_action"] = "Контент-план автоматически перенесен на актуальные даты."
+    return refreshed
 
 
 class DailyBriefService:
@@ -425,7 +478,7 @@ class DailyBriefService:
     def _approvals(self, seed: dict[str, Any], topics: tuple[BriefItem, ...]) -> tuple[ApprovalItem, ...]:
         approvals = [
             ApprovalItem(
-                title="Подтвердить главный фокус Daily Brief",
+                title="Подтвердить главный фокус дневного брифа",
                 decision=f"Использовать тему «{topics[0].title}» как главный фокус дня." if topics else "Пропустить публикационную реакцию сегодня.",
                 recommendation="Рекомендую подтвердить: тема хорошо связывает рынок с вашей экспертной территорией.",
                 risk="Если выбрать слишком широкий угол, текст может стать похож на общий комментарий о трендах.",
@@ -528,7 +581,7 @@ class DailyBriefService:
         rubric_part = f", рубрика {publication.pillar}" if publication.pillar else ""
         return (
             f"Публикация выбрана из контент-плана{date_part}: {publication.platform}, "
-            f"статус {publication.status}{rubric_part}. Она поддерживает фокус недели: {content_plan.focus}."
+            f"статус {_status_label(publication.status)}{rubric_part}. Она поддерживает фокус недели: {content_plan.focus}."
             f"{goal_part}"
         )
 
@@ -574,7 +627,7 @@ class DailyBriefService:
         if publication:
             return (
                 f"{base_reason} Тема предложена сегодня, потому что стоит в плане недели "
-                f"для {publication.platform} со статусом {publication.status}."
+                f"для {publication.platform} со статусом {_status_label(publication.status)}."
             )
         if self._topic_matches_pillar(topic, content_plan):
             return f"{base_reason} Тема не стоит в расписании напрямую, но поддерживает один из pillars недели."
@@ -594,7 +647,10 @@ class DailyBriefService:
         for topic in idea.get("related_topics", ()):
             publication = self._planned_publication_for_topic(topic, content_plan)
             if publication:
-                return f"{idea['next_step']} Приоритет: {publication.platform}, статус {publication.status}."
+                return f"{idea['next_step']} Приоритет: {publication.platform}, статус {_status_label(publication.status)}."
+        if self._idea_matches_pillar(idea, content_plan) and content_plan.planned_publications:
+            publication = content_plan.planned_publications[0]
+            return f"{idea['next_step']} Связать с планом недели: {publication.platform}, статус {_status_label(publication.status)}."
         return f"{idea['next_step']} Если не связано с планом недели, оставить в хранилище идей."
 
     def _topic_action(self, topic: str, content_plan: ContentPlan) -> str:
@@ -741,3 +797,16 @@ class DailyBriefService:
         if excerpt:
             return f"Мне здесь полезно вспоминать {title}: {excerpt}\n\n"
         return f"Мне здесь полезно вспоминать кейс {title}, где тема проявлялась не как теория, а как рабочая ситуация.\n\n"
+
+
+def _status_label(status: str) -> str:
+    return {
+        "idea": "Идея",
+        "planned": "Запланировано",
+        "suggested": "Предложено",
+        "drafted": "Черновик",
+        "in_progress": "В работе",
+        "approved": "Утверждено",
+        "published": "Опубликовано",
+        "skipped": "Пропущено",
+    }.get(status, status)

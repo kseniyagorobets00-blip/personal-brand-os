@@ -12,10 +12,10 @@ from zipfile import ZipFile
 
 from .knowledge_graph import KnowledgeGraph
 from .memory import MemoryInbox, analyze_memory_text
+from .storage import PROJECT_ROOT as ROOT, data_path, data_root, resolve_data_reference
 
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_KNOWLEDGE_DIR = ROOT / "data" / "knowledge"
+DEFAULT_KNOWLEDGE_DIR = data_path("knowledge")
 DEFAULT_DOCUMENT_DIR = DEFAULT_KNOWLEDGE_DIR / "documents"
 DEFAULT_INDEX_PATH = DEFAULT_KNOWLEDGE_DIR / "index.json"
 DEFAULT_CASES_PATH = DEFAULT_KNOWLEDGE_DIR / "cases.json"
@@ -77,7 +77,7 @@ class KnowledgeBase:
         self.document_dir = document_dir
         self.index_path = index_path
         self.cases_path = index_path.with_name("cases.json") if cases_path == DEFAULT_CASES_PATH and index_path != DEFAULT_INDEX_PATH else cases_path
-        memory_path = DEFAULT_KNOWLEDGE_DIR.parent / "memory" / "inbox.json" if self.index_path == DEFAULT_INDEX_PATH else self.index_path.parent / "memory" / "inbox.json"
+        memory_path = data_path("memory", "inbox.json") if self.index_path == DEFAULT_INDEX_PATH else self.index_path.parent / "memory" / "inbox.json"
         self.memory_inbox = memory_inbox or MemoryInbox(memory_path)
         self.knowledge_graph = knowledge_graph or KnowledgeGraph(self.index_path.parent / "graph.json")
         self.document_dir.mkdir(parents=True, exist_ok=True)
@@ -161,9 +161,7 @@ class KnowledgeBase:
         if not removed:
             return False
 
-        stored = ROOT / str(removed.get("stored_path", ""))
-        if not stored.exists():
-            stored = Path(str(removed.get("stored_path", "")))
+        stored = resolve_data_reference(str(removed.get("stored_path", "")))
         if stored.exists() and stored.is_file():
             stored.unlink()
         self._write_index(kept)
@@ -386,7 +384,7 @@ class KnowledgeBase:
 
     def _stored_path_for_index(self, path: Path) -> str:
         try:
-            return str(path.relative_to(ROOT))
+            return str(Path("data") / path.relative_to(data_root()))
         except ValueError:
             return str(path)
 

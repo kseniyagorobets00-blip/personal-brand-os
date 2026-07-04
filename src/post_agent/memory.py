@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MEMORY_DIR = ROOT / "data" / "memory"
+from .storage import data_path
+
+DEFAULT_MEMORY_DIR = data_path("memory")
 DEFAULT_MEMORY_INBOX_PATH = DEFAULT_MEMORY_DIR / "inbox.json"
 
 

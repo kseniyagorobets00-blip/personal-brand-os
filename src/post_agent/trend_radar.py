@@ -13,14 +13,14 @@ from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 from uuid import uuid4
 
-from .daily_brief import ROOT
 from .learning import LearningCenter
+from .storage import data_path
 
 
-DEFAULT_TREND_DIR = ROOT / "data" / "trend_radar"
+DEFAULT_TREND_DIR = data_path("trend_radar")
 DEFAULT_TREND_CACHE_PATH = DEFAULT_TREND_DIR / "cache.json"
 DEFAULT_TREND_DECISIONS_PATH = DEFAULT_TREND_DIR / "decisions.json"
-DEFAULT_TREND_SEED_PATH = ROOT / "data" / "seeds" / "trend_sources.json"
+DEFAULT_TREND_SEED_PATH = data_path("seeds", "trend_sources.json")
 TREND_CACHE_TTL_MINUTES = 30
 
 

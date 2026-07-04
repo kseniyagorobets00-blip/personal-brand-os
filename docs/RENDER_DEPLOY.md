@@ -37,6 +37,7 @@ Add these in Render dashboard:
 
 ```env
 APP_ENV=production
+PERSONAL_BRAND_OS_DATA_DIR=/var/data/personal-brand-os
 PROXY_API_KEY=your_proxyapi_key
 PROXY_API_BASE_URL=https://api.proxyapi.ru/openai/v1
 AI_MODEL=gpt-5.4-nano
@@ -44,6 +45,22 @@ TREND_RADAR_CACHE_TTL_MINUTES=30
 ```
 
 Do not add `.env` to GitHub.
+
+## Persistent Memory
+
+For real use from phone, iPad, and any network, connect a persistent disk to the Render service and mount it at:
+
+```text
+/var/data
+```
+
+The app will store memory, uploaded documents, content plan changes, author profile settings, ideas, rules, and AI cache under:
+
+```text
+/var/data/personal-brand-os
+```
+
+On first start, the app copies the default `data/` files from the repository into this persistent folder without overwriting existing files. After that, user changes are written to the persistent folder, not to the temporary app filesystem.
 
 ## Open From iPhone / iPad
 
@@ -76,4 +93,4 @@ Useful pages:
 
 Render Free can sleep after inactivity, so the first request after a pause may be slow.
 
-The current product uses local filesystem storage under `data/`. On Render Free this storage can be temporary and is not reliable for long-term memory. This is OK for testing the first release, but reliable production storage will later require an external database or persistent storage.
+Render Free storage can be temporary and is not reliable for long-term memory. For real memory, use a paid service with persistent disk or move storage to an external database/object storage later.

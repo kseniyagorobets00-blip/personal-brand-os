@@ -43,6 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="Run the Daily Brief web app.")
     serve.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
+    serve.add_argument(
+        "--lan",
+        action="store_true",
+        help="Make the app available to phones and tablets on the same Wi-Fi network.",
+    )
     return parser
 
 
@@ -51,7 +56,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "serve":
-        run_server(host=args.host, port=args.port)
+        host = "0.0.0.0" if args.lan and args.host == "127.0.0.1" else args.host
+        run_server(host=host, port=args.port)
         return
 
     if args.command == "daily-brief":

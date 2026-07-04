@@ -47,7 +47,7 @@ class AuthorBrainTests(unittest.TestCase):
         brain = builder.build({"topic": "SOP protects customer experience in hospitality operations"})
 
         self.assertEqual(profile["version"], "2.0")
-        self.assertTrue(any(item["name"] == "operations" for item in profile["main_themes"]))
+        self.assertTrue(any(item["name"] == "операции и процессы" for item in profile["main_themes"]))
         self.assertIn("key_ideas", profile)
         self.assertIn("anti_repetition", brain)
         self.assertIn("similarity_report", brain)
@@ -71,6 +71,28 @@ class AuthorBrainTests(unittest.TestCase):
             self.assertEqual(repository.load_status().state, "completed")
             self.assertEqual(repository.load_profile()["version"], "2.0")
             self.assertEqual(profile["source_counts"]["documents"], 1)
+
+    def test_author_brain_repository_preserves_manual_author_base(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = AuthorBrainRepository(root / "profile.json", root / "status.json")
+            repository.save_profile(
+                {
+                    "main_themes": [{"name": "ручная тема", "score": 90, "evidence": [], "risk": "", "source": "manual"}],
+                    "key_ideas": [{"idea": "ручная идея", "belief": "ручная идея", "evidence_count": 1, "repeat_risk": "low", "source": "manual"}],
+                    "manual_author_base": {"main_themes": True, "key_ideas": True},
+                }
+            )
+
+            merged = repository.apply_manual_overrides(
+                {
+                    "main_themes": [{"name": "авто тема", "score": 80}],
+                    "key_ideas": [{"idea": "авто идея"}],
+                }
+            )
+
+            self.assertEqual(merged["main_themes"][0]["name"], "ручная тема")
+            self.assertEqual(merged["key_ideas"][0]["idea"], "ручная идея")
 
     def test_author_brain_page_renders_refresh_button(self) -> None:
         with TemporaryDirectory() as directory:

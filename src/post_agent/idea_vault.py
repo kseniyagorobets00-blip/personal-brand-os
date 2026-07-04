@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from .storage import data_path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_IDEA_DIR = ROOT / "data" / "idea_vault"
+DEFAULT_IDEA_DIR = data_path("idea_vault")
 DEFAULT_IDEA_INDEX_PATH = DEFAULT_IDEA_DIR / "ideas.json"
 IDEA_STATUSES = ("New", "In Progress", "Drafted", "Published", "Archived")
 

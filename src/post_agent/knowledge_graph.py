@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from .memory import MemoryInboxItem
+from .storage import data_path
 
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_GRAPH_PATH = ROOT / "data" / "knowledge" / "graph.json"
+DEFAULT_GRAPH_PATH = data_path("knowledge", "graph.json")
 
 
 @dataclass(frozen=True)

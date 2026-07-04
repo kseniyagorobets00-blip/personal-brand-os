@@ -8,13 +8,17 @@ import re
 import threading
 from typing import Any
 
+from .storage import data_path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_AUTHOR_BRAIN_DIR = ROOT / "data" / "author_brain"
+DEFAULT_AUTHOR_BRAIN_DIR = data_path("author_brain")
 DEFAULT_AUTHOR_BRAIN_PROFILE_PATH = DEFAULT_AUTHOR_BRAIN_DIR / "profile.json"
 DEFAULT_AUTHOR_BRAIN_STATUS_PATH = DEFAULT_AUTHOR_BRAIN_DIR / "status.json"
 AUTHOR_BRAIN_VERSION = "2.0"
 _REFRESH_LOCK = threading.Lock()
+THEME_WEIGHT_RULE = (
+    "Вес главной темы управляет приоритетом AI: 90-100 — основной фокус и предпочтительный угол; "
+    "70-89 — регулярный рабочий угол; 40-69 — вспомогательный контекст; ниже 40 — использовать только при явном совпадении с задачей."
+)
 
 THINKING_MODES = (
     "Observation",
@@ -48,32 +52,31 @@ DEFAULT_AUTHOR_MOVES = (
 )
 
 CORE_THEMES = (
-    ("operations", ("operations", "operational", "process", "handoff", "ownership", "операц", "процесс")),
-    ("customer experience", ("customer experience", "cx", "guest experience", "клиент", "опыт")),
-    ("service systems", ("service system", "service design", "blueprint", "сервис")),
-    ("hospitality", ("hospitality", "hotel", "guest", "гост", "отел")),
-    ("premium service", ("premium", "luxury", "personalization", "преми", "luxury hospitality")),
-    ("process improvement", ("improvement", "diagnostics", "audit", "maturity", "улучш", "диагност")),
+    ("операции и процессы", ("operations", "operational", "process", "handoff", "ownership", "операц", "процесс")),
+    ("клиентский опыт (CX)", ("customer experience", "cx", "guest experience", "клиент", "опыт")),
+    ("сервисные системы", ("service system", "service design", "blueprint", "сервис")),
+    ("гостеприимство", ("hospitality", "hotel", "guest", "гост", "отел")),
+    ("премиальный сервис", ("premium", "luxury", "personalization", "преми", "luxury hospitality")),
+    ("улучшение процессов", ("improvement", "diagnostics", "audit", "maturity", "улучш", "диагност")),
     ("BI / analytics", ("bi", "analytics", "dashboard", "data", "metric", "аналит", "данн")),
     ("SOP", ("sop", "standard", "regulation", "регламент", "стандарт")),
     ("управленческие системы", ("management system", "управлен", "ответствен", "контрол")),
 )
 
 CONTENT_ANGLES = (
-    "personal observation",
-    "case",
-    "analytics",
-    "provocation",
-    "framework",
-    "practical teardown",
+    "личное наблюдение",
+    "кейс",
+    "аналитика",
+    "провокационный угол",
+    "фреймворк",
+    "практический разбор",
 )
 
 PLATFORM_FIT = {
-    "LinkedIn": "English, executive/consulting tone, clear business effect.",
-    "VC": "Russian, expert but alive, practical teardown or case logic.",
-    "Telegram": "Short, conversational, one thought with a working observation.",
-    "Сетка": "Observation-first, short thoughts, low ceremony.",
-    "РЎРµС‚РєР°": "Observation-first, short thoughts, low ceremony.",
+    "LinkedIn": "Английский язык только для самого поста; управленческий, консультационный тон; понятный бизнес-эффект.",
+    "VC": "Русский язык; экспертно, но живо; практический разбор или логика кейса.",
+    "Telegram": "Русский язык; коротко и разговорно: одна мысль через рабочее наблюдение.",
+    "Сетка": "Русский язык; сначала наблюдение, короткая мысль, без лишней официальности.",
 }
 
 
@@ -114,6 +117,7 @@ class AuthorBrain:
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "status": "ready",
             "main_themes": themes,
+            "theme_weight_rule": THEME_WEIGHT_RULE,
             "key_ideas": key_ideas,
             "cases": cases,
             "content_angles": self._content_angles(corpus),
@@ -369,13 +373,13 @@ class AuthorBrain:
         for theme, markers in CORE_THEMES:
             evidence = [marker for marker in markers if marker.lower() in lowered]
             count = sum(lowered.count(marker.lower()) for marker in markers)
-            if evidence or theme in {"operations", "customer experience", "service systems", "hospitality", "SOP"}:
+            if evidence or theme in {"операции и процессы", "клиентский опыт (CX)", "сервисные системы", "гостеприимство", "SOP"}:
                 themes.append(
                     {
                         "name": theme,
                         "score": min(100, 42 + count * 8 + len(evidence) * 6),
                         "evidence": evidence[:5],
-                        "risk": "rotate with adjacent angles" if count > 5 else "",
+                        "risk": "чередовать со смежными углами" if count > 5 else "",
                     }
                 )
         return sorted(themes, key=lambda item: int(item["score"]), reverse=True)
@@ -383,12 +387,12 @@ class AuthorBrain:
     def _key_ideas(self, corpus: str) -> list[dict[str, object]]:
         sentences = _sentences(corpus)
         defaults = [
-            "Customer experience is an operational outcome, not only a communication layer.",
-            "SOP and standards protect service from randomness when connected to responsibility.",
-            "AI amplifies process maturity and exposes gaps in data, ownership, and handoffs.",
-            "Premium service needs both human attention and repeatable systems.",
-            "Service design becomes useful when it reaches implementation, roles, control points, and metrics.",
-            "Business symptoms usually point to deeper management-system causes.",
+            "Клиентский опыт — это операционный результат, а не только слой коммуникации.",
+            "SOP и стандарты защищают сервис от случайности, если связаны с ответственностью.",
+            "AI усиливает зрелость процессов и показывает разрывы в данных, ответственности и передачах между ролями.",
+            "Премиальному сервису нужны и человеческое внимание, и повторяемые системы.",
+            "Service Design становится полезным, когда доходит до внедрения, ролей, точек контроля и метрик.",
+            "Бизнес-симптомы обычно указывают на более глубокие причины в управленческой системе.",
         ]
         ideas = [
             {
@@ -420,7 +424,7 @@ class AuthorBrain:
                     "business_effect": getattr(case, "reason", "") or getattr(case, "result", ""),
                     "themes": list(getattr(case, "key_topics", ())),
                     "platform_fit": list(getattr(case, "platforms", ())),
-                    "usage_risk": "avoid using this case too often",
+                    "usage_risk": "не использовать этот кейс слишком часто",
                 }
             )
         for document in self.documents:
@@ -439,7 +443,7 @@ class AuthorBrain:
                     "business_effect": _sentence_with_any(text, ("business effect", "эффект", "result", "%")),
                     "themes": themes if isinstance(themes, list) else [],
                     "platform_fit": ["LinkedIn", "VC", "Telegram"],
-                    "usage_risk": "use only facts present in Knowledge",
+                    "usage_risk": "использовать только факты из памяти",
                 }
             )
         return result[:12]
@@ -452,23 +456,23 @@ class AuthorBrain:
         result = _as_str_list(self.writing_dna.get("argumentation_patterns", []))
         result.extend(
             [
-                "Starts from a working observation before moving to a management cause.",
-                "Connects service quality with operations, ownership, standards, and data.",
-                "Prefers practical conclusions over abstract definitions.",
+                "Начинает с рабочего наблюдения, а потом переходит к управленческой причине.",
+                "Связывает качество сервиса с операциями, ответственностью, стандартами и данными.",
+                "Предпочитает практические выводы абстрактным определениям.",
             ]
         )
         return result[:8]
 
     def _strengths(self, themes: list[dict[str, object]], cases: list[dict[str, object]]) -> list[str]:
         result = [
-            "Operational diagnosis of service problems.",
-            "Translation of customer experience into process, roles, SOP, and control points.",
-            "Ability to turn cases and observations into executive content.",
+            "Операционная диагностика сервисных проблем.",
+            "Перевод клиентского опыта в процессы, роли, SOP и точки контроля.",
+            "Умение превращать кейсы и наблюдения в управленческий контент.",
         ]
         if cases:
-            result.append("Real case base for hospitality and service-system content.")
+            result.append("Реальная база кейсов для тем про гостеприимство и сервисные системы.")
         if any(str(theme.get("name", "")).lower() == "bi / analytics" for theme in themes):
-            result.append("Connects service and operations with BI / analytics logic.")
+            result.append("Связывает сервис и операции с логикой BI / аналитики.")
         return result
 
     def _anti_repetition(self, key_ideas: list[dict[str, object]], cases: list[dict[str, object]]) -> dict[str, object]:
@@ -478,19 +482,19 @@ class AuthorBrain:
             "overused_theme_candidates": [str(item["idea"]) for item in key_ideas if str(item.get("repeat_risk", "")) == "high"][:4],
             "case_rotation": [str(item.get("project") or item.get("company", "")) for item in cases[:6] if item.get("project") or item.get("company")],
             "rules": [
-                "Do not propose a topic if it is strongly similar to recent ideas.",
-                "Do not reuse the same case in consecutive drafts unless the user explicitly asks.",
-                "If an idea matches an old idea or case, show the similarity warning before drafting.",
+                "Не предлагать тему, если она слишком похожа на недавние идеи.",
+                "Не использовать один и тот же кейс в соседних черновиках без явного запроса.",
+                "Если новая идея похожа на старую идею или кейс, показать предупреждение перед черновиком.",
             ],
         }
 
     def _recent_updates(self) -> list[dict[str, str]]:
         updates = [
-            {"type": "document", "title": getattr(document, "title", ""), "updated_at": getattr(document, "uploaded_at", "")}
+            {"type": "документ", "title": getattr(document, "title", ""), "updated_at": getattr(document, "uploaded_at", "")}
             for document in self.documents[:5]
         ]
         updates.extend(
-            {"type": "case", "title": getattr(case, "title", ""), "updated_at": getattr(case, "created_at", "")}
+            {"type": "кейс", "title": getattr(case, "title", ""), "updated_at": getattr(case, "created_at", "")}
             for case in self.cases[:3]
         )
         return updates[:8]
@@ -529,7 +533,7 @@ class AuthorBrainRepository:
     def refresh(self, brain: AuthorBrain) -> dict[str, object]:
         self.write_status("running", "Author Brain is updating from Knowledge, Writing DNA, and Lessons.")
         try:
-            profile = brain.build_profile()
+            profile = self.apply_manual_overrides(brain.build_profile())
             self.profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             self.write_status("completed", "Author Brain profile updated.")
             return profile
@@ -563,12 +567,34 @@ class AuthorBrainRepository:
         }
         self.status_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    def save_profile(self, profile: dict[str, object]) -> None:
+        self.profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def apply_manual_overrides(self, profile: dict[str, object]) -> dict[str, object]:
+        current = self.load_profile()
+        controls = current.get("manual_author_base", {})
+        if not isinstance(controls, dict):
+            return profile
+        merged = dict(profile)
+        if controls.get("main_themes") and isinstance(current.get("main_themes"), list):
+            merged["main_themes"] = current["main_themes"]
+        if controls.get("key_ideas") and isinstance(current.get("key_ideas"), list):
+            merged["key_ideas"] = current["key_ideas"]
+        if controls.get("platform_fit") and isinstance(current.get("platform_fit"), dict):
+            merged["platform_fit"] = current["platform_fit"]
+        if controls.get("anti_repetition") and isinstance(current.get("anti_repetition"), dict):
+            merged["anti_repetition"] = current["anti_repetition"]
+        if controls:
+            merged["manual_author_base"] = controls
+        return merged
+
     def empty_profile(self) -> dict[str, object]:
         return {
             "version": AUTHOR_BRAIN_VERSION,
             "updated_at": "",
             "status": "empty",
             "main_themes": [],
+            "theme_weight_rule": THEME_WEIGHT_RULE,
             "key_ideas": [],
             "cases": [],
             "content_angles": [],

@@ -21,6 +21,21 @@ Open:
 http://127.0.0.1:8000/daily-brief
 ```
 
+To test from a phone or iPad on the same Wi-Fi network:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m post_agent serve --lan
+```
+
+For access from any network or mobile internet, deploy the app to hosting and use a persistent data directory:
+
+```env
+PERSONAL_BRAND_OS_DATA_DIR=/var/data/personal-brand-os
+```
+
+See `docs/RENDER_DEPLOY.md`.
+
 Author Profile:
 
 ```text

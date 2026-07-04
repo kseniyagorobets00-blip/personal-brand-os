@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_LEARNING_DIR = ROOT / "data" / "learning"
+from .storage import data_path
+
+DEFAULT_LEARNING_DIR = data_path("learning")
 DEFAULT_LESSONS_PATH = DEFAULT_LEARNING_DIR / "lessons.json"
 
 
@@ -39,12 +40,22 @@ class LearningCenter:
         return lessons
 
     def create_candidate(self, rule: str, reason: str, confidence: int = 60, source: str = "feedback") -> Lesson:
+        return self.create_rule(rule=rule, reason=reason, confidence=confidence, status="candidate", source=source)
+
+    def create_rule(
+        self,
+        rule: str,
+        reason: str = "",
+        confidence: int = 100,
+        status: str = "accepted",
+        source: str = "manual",
+    ) -> Lesson:
         lesson = Lesson(
             id=uuid4().hex,
             rule=rule.strip(),
             reason=reason.strip(),
             confidence=max(0, min(100, int(confidence))),
-            status="candidate",
+            status=status if status in {"candidate", "accepted", "rejected"} else "accepted",
             source=source,
             created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         )

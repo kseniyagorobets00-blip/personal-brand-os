@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .storage import data_path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_WRITING_DNA_PATH = ROOT / "data" / "seeds" / "writing_dna.json"
+DEFAULT_WRITING_DNA_PATH = data_path("seeds", "writing_dna.json")
 
 
 DEFAULT_WRITING_DNA: dict[str, object] = {

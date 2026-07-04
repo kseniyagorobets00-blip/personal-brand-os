@@ -7,9 +7,9 @@ from datetime import date, timedelta
 
 from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
-from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, today_moscow, weekday_name_for_date
+from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, refresh_stale_content_plan, today_moscow, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, render_author_profile, render_content_plan_page, render_daily_brief, render_writing_dna
+from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, _text_matches_platform, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault, render_writing_dna
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -49,7 +49,7 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Радар трендов", html)
         self.assertIn("Профиль автора", html)
         self.assertNotIn("ДНК письма", html)
-        self.assertNotIn("Обучение", html)
+        self.assertNotIn("Правила, которые система уже учитывает", html)
         self.assertIn(brief.brief_date.strftime("%d.%m.%Y"), html)
         self.assertIn("Публикация дня", html)
         self.assertIn("Цель публикации", html)
@@ -124,6 +124,26 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual({item.title for item in brief.topics}, {"Первая тема", "Вторая тема"})
         self.assertEqual(len(brief.drafts), 2)
 
+    def test_stale_content_plan_is_moved_to_current_dates(self) -> None:
+        plan = {
+            "week": "25-30 июня 2026",
+            "focus": "Focus",
+            "planned_publications": [
+                {"date": "2026-06-25", "topic": "First", "day": "Четверг"},
+                {"date": "2026-06-26", "topic": "Second", "day": "Пятница"},
+                {"date": "2026-06-30", "topic": "Last", "day": "Вторник"},
+            ],
+        }
+
+        refreshed = refresh_stale_content_plan(plan, date(2026, 7, 4))
+
+        self.assertEqual(refreshed["week_start"], "2026-07-04")
+        self.assertEqual(refreshed["week_end"], "2026-07-09")
+        self.assertEqual(refreshed["planned_publications"][0]["date"], "2026-07-04")
+        self.assertEqual(refreshed["planned_publications"][0]["day"], "Суббота")
+        self.assertEqual(refreshed["planned_publications"][2]["date"], "2026-07-09")
+        self.assertIn("автоматически перенесен", refreshed["last_action"])
+
     def test_2026_06_26_is_friday(self) -> None:
         self.assertEqual(weekday_name_for_date("2026-06-26"), "Пятница")
         self.assertEqual(weekday_name_for_date("26.06.2026"), "Пятница")
@@ -197,6 +217,14 @@ class DailyBriefTests(unittest.TestCase):
         self.assertTrue(any("контент-плана" in item.reason for item in brief.topics))
         self.assertTrue(any("статус" in item.action for item in brief.ideas))
 
+    def test_russian_platform_blocks_long_english_ai_text(self) -> None:
+        english = "Among the available angles, the strongest fit for today is the CX operations thesis."
+        russian = "AI усиливает CX только там, где SOP и контроль качества уже работают."
+
+        self.assertFalse(_text_matches_platform(english, "Сетка"))
+        self.assertFalse(_text_matches_platform(english, "Telegram"))
+        self.assertTrue(_text_matches_platform(russian, "Сетка"))
+
     def test_daily_brief_exports_standalone_html(self) -> None:
         with TemporaryDirectory() as directory:
             path = export_daily_brief(f"{directory}/daily-brief.html")
@@ -207,18 +235,39 @@ class DailyBriefTests(unittest.TestCase):
     def test_author_profile_page_renders_editable_sections(self) -> None:
         profile = AuthorProfileRepository().load_raw()
         html = render_author_profile(profile)
+        dna_html = render_author_profile(profile, tab="dna")
+        strategy_html = render_author_profile(profile, tab="strategy")
+        rules_html = render_author_profile(profile, tab="rules")
+        ideas_html = render_idea_vault([])
 
         self.assertIn("Профиль автора", html)
         self.assertIn("Авторская база", html)
         self.assertIn("ДНК письма", html)
-        self.assertIn("Обучение", html)
-        self.assertIn("правила стиля", html)
-        self.assertIn("Тональность", html)
-        self.assertIn("Структура абзацев", html)
-        self.assertIn("Допустимые приемы", html)
-        self.assertIn("Запреты", html)
-        self.assertIn("Примеры хорошего текста", html)
-        self.assertIn("Сохранить профиль автора", html)
+        self.assertIn("Правила", html)
+        self.assertIn("Редакционная стратегия", html)
+        self.assertIn("href=\"/author-profile?tab=dna\"", html)
+        self.assertIn("href=\"/author-profile?tab=strategy\"", html)
+        self.assertIn("Главные темы", html)
+        self.assertNotIn("Ключевые идеи", html)
+        self.assertNotIn("Кейсы автора", html)
+        self.assertNotIn("Площадки", html)
+        self.assertNotIn("Антиповторы", html)
+        self.assertIn("Ключевые идеи", ideas_html)
+        self.assertIn("Правила, которые система уже учитывает", rules_html)
+        self.assertIn("Добавить правило", rules_html)
+        self.assertNotIn("Предложенные правила", rules_html)
+        self.assertNotIn("Площадки", rules_html)
+        self.assertNotIn("Антиповторы", rules_html)
+        self.assertNotIn("правила стиля", html)
+        self.assertIn("правила стиля", dna_html)
+        self.assertIn("Тональность", dna_html)
+        self.assertIn("Структура абзацев", dna_html)
+        self.assertIn("Допустимые приемы", dna_html)
+        self.assertIn("Запреты", dna_html)
+        self.assertIn("Примеры хорошего текста", dna_html)
+        self.assertIn("Сохранить профиль автора", dna_html)
+        self.assertIn("Сохранить стратегию", strategy_html)
+        self.assertIn("Создать план по стратегии", strategy_html)
         nav = html.split("global-nav", 1)[-1].split("</div>", 1)[0]
         self.assertNotIn("/writing-dna", nav)
         self.assertNotIn("/learning", nav)
@@ -258,9 +307,10 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Контент-план", html)
         self.assertIn("Сохранить план", html)
         self.assertIn("Утвердить план", html)
-        self.assertIn("Редакционная стратегия", html)
-        self.assertIn("Сохранить стратегию", html)
         self.assertIn("Создать план по стратегии", html)
+        self.assertIn("Настроить стратегию", html)
+        self.assertIn("/author-profile?tab=strategy", html)
+        self.assertNotIn("Сохранить стратегию", html)
         self.assertIn("Рубрика", html)
         self.assertIn("Сгенерировать тему/содержание", html)
         self.assertIn("Добавить публикацию", html)
@@ -564,6 +614,84 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(len(saved["planned_publications"]), 2)
         self.assertEqual(saved["last_action"], "Создан план по редакционной стратегии.")
         self.assertTrue(saved["updated_at"])
+
+    def test_content_plan_strategy_respects_calendar_weekdays(self) -> None:
+        class Gateway:
+            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, object]:
+                return {
+                    "content_plan": {
+                        "planned_publications": [
+                            {"topic": "Generated Saturday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                            {"topic": "Generated Monday", "goal": "Goal", "summary": "Summary", "status": "planned", "note": "Note"},
+                        ],
+                    },
+                }
+
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            strategy_path = Path(directory) / "editorial_strategy.json"
+            plan_path.write_text("{}", encoding="utf-8")
+            form = {
+                "view": ["list"],
+                "plan_action": ["strategy_plan"],
+                "week_start": ["2026-07-04"],
+                "week_end": ["2026-07-06"],
+                "focus": ["Focus"],
+                "month_focus": ["Month"],
+                "content_pillars": ["Operations"],
+                "platform_targets": ["LinkedIn"],
+                "today_recommendation": ["Today"],
+                "strategy_0_day": ["Понедельник"],
+                "strategy_0_active": ["on"],
+                "strategy_0_platform": ["LinkedIn"],
+                "strategy_0_rubric": ["Аналитика"],
+                "strategy_0_format": ["экспертный пост"],
+                "strategy_0_note": [""],
+                "strategy_1_day": ["Вторник"],
+                "strategy_1_platform": ["Telegram"],
+                "strategy_1_rubric": ["Наблюдение"],
+                "strategy_1_format": ["короткий пост"],
+                "strategy_1_note": [""],
+                "strategy_2_day": ["Среда"],
+                "strategy_2_platform": ["VC"],
+                "strategy_2_rubric": ["Кейс"],
+                "strategy_2_format": ["статья"],
+                "strategy_2_note": [""],
+                "strategy_3_day": ["Четверг"],
+                "strategy_3_platform": ["LinkedIn"],
+                "strategy_3_rubric": ["Framework"],
+                "strategy_3_format": ["карусель/пост"],
+                "strategy_3_note": [""],
+                "strategy_4_day": ["Пятница"],
+                "strategy_4_platform": ["Telegram"],
+                "strategy_4_rubric": ["Разговорный пост"],
+                "strategy_4_format": ["короткий пост"],
+                "strategy_4_note": [""],
+                "strategy_5_day": ["Суббота"],
+                "strategy_5_active": ["on"],
+                "strategy_5_platform": ["Сетка"],
+                "strategy_5_rubric": ["Наблюдение"],
+                "strategy_5_format": ["мини-пост"],
+                "strategy_5_note": [""],
+                "strategy_6_day": ["Воскресенье"],
+                "strategy_6_platform": ["Telegram"],
+                "strategy_6_rubric": ["Наблюдение"],
+                "strategy_6_format": ["мини-пост"],
+                "strategy_6_note": ["Выходной"],
+            }
+
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch("post_agent.web.EDITORIAL_STRATEGY_PATH", strategy_path), patch("post_agent.web.AIGateway", return_value=Gateway()):
+                _save_content_plan_form(form)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(saved["planned_publications"][0]["date"], "2026-07-04")
+        self.assertEqual(saved["planned_publications"][0]["day"], "Суббота")
+        self.assertEqual(saved["planned_publications"][0]["platform"], "Сетка")
+        self.assertEqual(saved["planned_publications"][0]["format"], "мини-пост")
+        self.assertEqual(saved["planned_publications"][1]["date"], "2026-07-06")
+        self.assertEqual(saved["planned_publications"][1]["day"], "Понедельник")
+        self.assertEqual(saved["planned_publications"][1]["platform"], "LinkedIn")
+        self.assertEqual(saved["planned_publications"][1]["format"], "экспертный пост")
 
     def test_author_profile_form_can_be_saved_as_json(self) -> None:
         raw = _author_profile_form_to_raw(

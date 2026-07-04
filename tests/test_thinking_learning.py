@@ -75,9 +75,9 @@ class ThinkingLearningTests(unittest.TestCase):
 
             html = render_learning_center(center, inbox, graph)
 
-        self.assertIn("Learning Center", html)
-        self.assertIn("Candidate Lessons", html)
-        self.assertIn("Memory Inbox", html)
+        self.assertIn("Центр обучения", html)
+        self.assertIn("Предложенные правила", html)
+        self.assertIn("Входящие памяти", html)
         self.assertIn("Писать живее.", html)
 
 

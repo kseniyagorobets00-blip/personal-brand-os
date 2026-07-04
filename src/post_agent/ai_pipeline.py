@@ -19,11 +19,12 @@ from .knowledge import KnowledgeBase
 from .knowledge_graph import KnowledgeGraph
 from .learning import LearningCenter, lessons_for_prompt
 from .memory import MemoryInbox
+from .storage import data_path
 from .thinking_engine import ThinkingEngine
 from .writing_dna import WritingDNARepository
 
 
-DEFAULT_AI_DIR = ROOT / "data" / "ai"
+DEFAULT_AI_DIR = data_path("ai")
 DEFAULT_AI_RESULT_PATH = DEFAULT_AI_DIR / "daily_brief_ai.json"
 DEFAULT_AI_STATUS_PATH = DEFAULT_AI_DIR / "status.json"
 DEFAULT_AI_ACTION_ERRORS_PATH = DEFAULT_AI_DIR / "action_errors.json"
@@ -233,8 +234,11 @@ def load_ai_result(path: Path = DEFAULT_AI_RESULT_PATH) -> dict[str, Any] | None
 
 
 def load_ai_status(path: Path = DEFAULT_AI_STATUS_PATH) -> AIPipelineStatus:
+    config = load_ai_config()
+    should_refresh_stale_config_status = path == DEFAULT_AI_STATUS_PATH
     if not path.exists():
-        config = load_ai_config()
+        if should_refresh_stale_config_status and config.is_configured:
+            return AIPipelineStatus("idle", "AI-анализ еще не запускался.", "")
         if not config.is_configured:
             return AIPipelineStatus("not_configured", "ProxyAPI не настроен.", "")
         return AIPipelineStatus("idle", "AI-анализ еще не запускался.", "")
@@ -242,6 +246,8 @@ def load_ai_status(path: Path = DEFAULT_AI_STATUS_PATH) -> AIPipelineStatus:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return AIPipelineStatus("error", "Статус AI-анализа поврежден.", "")
+    if raw.get("state") == "not_configured" and config.is_configured and should_refresh_stale_config_status:
+        return AIPipelineStatus("idle", "ProxyAPI настроен. Можно запустить AI-анализ.", "")
     return AIPipelineStatus(
         state=str(raw.get("state", "idle")),
         message=str(raw.get("message", "")),

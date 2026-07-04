@@ -66,6 +66,8 @@ class AIContextEngine:
             ideas=ideas,
             lessons=lessons,
         ).build(selected)
+        if isinstance(author_brain.get("profile"), dict):
+            author_brain["profile"] = self.author_brain_repository.apply_manual_overrides(author_brain["profile"])
         target_publication = selected or _target_publication(content_plan)
         query = " ".join(str(target_publication.get(key, "")) for key in ("platform", "rubric", "pillar", "format", "topic", "summary", "goal"))
         context: dict[str, Any] = {

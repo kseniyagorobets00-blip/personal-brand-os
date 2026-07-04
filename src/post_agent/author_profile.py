@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .storage import data_path
 
-ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_AUTHOR_PROFILE_PATH = ROOT / "data" / "seeds" / "author_profile.json"
+DEFAULT_AUTHOR_PROFILE_PATH = data_path("seeds", "author_profile.json")
 
 
 @dataclass(frozen=True)
