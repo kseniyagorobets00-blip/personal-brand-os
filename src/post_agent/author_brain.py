@@ -106,6 +106,14 @@ class AuthorBrain:
         self.cases = cases
         self.ideas = ideas
         self.lessons = lessons or []
+        self._rules_cache: dict[str, object] | None = None
+
+    def _rules(self) -> dict[str, object]:
+        if self._rules_cache is None:
+            from .bot_rules import load_bot_rules  # lazy import avoids a circular dependency
+
+            self._rules_cache = load_bot_rules()
+        return self._rules_cache
 
     def build_profile(self) -> dict[str, object]:
         corpus = self._corpus()
@@ -117,11 +125,11 @@ class AuthorBrain:
             "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "status": "ready",
             "main_themes": themes,
-            "theme_weight_rule": THEME_WEIGHT_RULE,
+            "theme_weight_rule": str(self._rules().get("theme_weight_rule", THEME_WEIGHT_RULE)),
             "key_ideas": key_ideas,
             "cases": cases,
             "content_angles": self._content_angles(corpus),
-            "platform_fit": PLATFORM_FIT,
+            "platform_fit": self._rules().get("platform_rules", PLATFORM_FIT) if isinstance(self._rules().get("platform_rules"), dict) else PLATFORM_FIT,
             "thinking_style": self._thinking_style(),
             "strengths": self._strengths(themes, cases),
             "anti_repetition": self._anti_repetition(key_ideas, cases),
@@ -152,9 +160,9 @@ class AuthorBrain:
             ),
             "writing_dna": self.writing_dna,
             "thinking_mode": self._select_mode(platform, query),
-            "allowed_thinking_modes": list(THINKING_MODES),
+            "allowed_thinking_modes": _as_str_list(self._rules().get("thinking_modes", THINKING_MODES)) or list(THINKING_MODES),
             "voice_principles": self._voice_principles(platform),
-            "author_moves": list(DEFAULT_AUTHOR_MOVES),
+            "author_moves": _as_str_list(self._rules().get("thinking_rules", DEFAULT_AUTHOR_MOVES)) or list(DEFAULT_AUTHOR_MOVES),
             "vocabulary": self._vocabulary(),
             "platform_goal": self._platform_goal(platform),
             "platform_rule": self._platform_rule(platform),
@@ -165,6 +173,8 @@ class AuthorBrain:
             "knowledge_observations": self._knowledge_observations(query),
             "idea_patterns": self._idea_patterns(query),
             "anti_repetition": profile["anti_repetition"],
+            "anti_repeat_rules": _as_str_list(self._rules().get("anti_repeat_rules", [])),
+            "platform_rules": self._rules().get("platform_rules", {}) if isinstance(self._rules().get("platform_rules"), dict) else {},
             "similarity_report": self.similarity_report(topic or summary or goal, profile),
             "self_check": {
                 "question": "Похоже ли это на Ксению?",
@@ -241,7 +251,8 @@ class AuthorBrain:
 
     def _forbidden_openings(self) -> list[str]:
         configured = _as_str_list(self.writing_dna.get("forbidden_openings", []))
-        return configured or list(FORBIDDEN_OPENINGS)
+        rules = _as_str_list(self._rules().get("forbidden_openings", []))
+        return configured or rules or list(FORBIDDEN_OPENINGS)
 
     def _examples_and_stories(self, query: str) -> list[dict[str, object]]:
         stories = self.author_profile.get("examples_and_stories", [])

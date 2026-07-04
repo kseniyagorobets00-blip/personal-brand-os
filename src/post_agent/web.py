@@ -150,6 +150,12 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 )
             )
             return
+        if path == "/bot-rules":
+            from .bot_rules import load_bot_rules
+
+            query = parse_qs(urlparse(self.path).query)
+            self._send_html(render_bot_rules(load_bot_rules(), saved=query.get("saved", ["0"])[0] == "1"))
+            return
         if path == "/author-brain":
             self.send_response(303)
             self.send_header("Location", "/author-profile?tab=base")
@@ -258,6 +264,16 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.writing_dna_repository.save_raw(writing_dna_form_to_raw(data))
             self.send_response(303)
             self.send_header("Location", "/author-profile?tab=dna&dna_saved=1")
+            self.end_headers()
+            return
+        if path == "/bot-rules":
+            from .bot_rules import save_bot_rules
+
+            length = int(self.headers.get("Content-Length", "0"))
+            data = parse_qs(self.rfile.read(length).decode("utf-8"))
+            save_bot_rules(_bot_rules_form_to_raw(data))
+            self.send_response(303)
+            self.send_header("Location", "/bot-rules?saved=1")
             self.end_headers()
             return
         if path == "/author-profile/base":
@@ -595,6 +611,7 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         ("Память", "/knowledge", "knowledge"),
         ("Идеи", "/ideas", "ideas"),
         ("Профиль автора", "/author-profile", "profile"),
+        ("Правила бота", "/bot-rules", "bot-rules"),
     )
     items = "".join(
         f"<a class=\"{'active' if key == active else ''}\" href=\"{escape(href)}\">{escape(label)}</a>"
@@ -4046,6 +4063,85 @@ def render_knowledge(
       </form>
     </section>
     {section_html}
+  </main>
+</body>
+</html>"""
+
+
+def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
+    def first(key: str) -> str:
+        return data.get(key, [""])[0]
+
+    platform_rules: dict[str, str] = {}
+    for key, values in data.items():
+        if key.startswith("platform__"):
+            platform_rules[key[len("platform__"):]] = values[0] if values else ""
+    return {
+        "thinking_rules": first("thinking_rules"),
+        "forbidden_openings": first("forbidden_openings"),
+        "anti_repeat_rules": first("anti_repeat_rules"),
+        "theme_weight_rule": first("theme_weight_rule"),
+        "thinking_modes": first("thinking_modes"),
+        "platform_rules": platform_rules,
+    }
+
+
+def render_bot_rules(rules: dict[str, object], saved: bool = False) -> str:
+    def _lines(key: str) -> str:
+        value = rules.get(key, [])
+        items = value if isinstance(value, list) else []
+        return "\n".join(str(item) for item in items)
+
+    platform_rules = rules.get("platform_rules", {})
+    if not isinstance(platform_rules, dict):
+        platform_rules = {}
+    platform_blocks = "".join(
+        _textarea(f"platform__{platform}", f"Площадка: {platform}", text)
+        for platform, text in platform_rules.items()
+    )
+    notice = '<div class="notice ok">Правила сохранены. AI будет использовать их при следующей генерации.</div>' if saved else ""
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Правила бота - Personal Brand OS</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">настройки поведения</p>
+        <h1>Правила бота</h1>
+      </div>
+      {_global_nav("bot-rules")}
+    </header>
+    {notice}
+    <section class="block">
+      <p>Это внутренние правила, по которым AI думает и пишет от вашего имени. Раньше они были спрятаны в коде — теперь их можно менять здесь. Каждое правило пишите с новой строки. Пустое поле вернётся к значению по умолчанию.</p>
+      <form method="post" action="/bot-rules" class="stack-form">
+        <div class="section-title"><div><p class="eyebrow">как думает автор</p><h2>Правила мышления</h2></div></div>
+        {_textarea("thinking_rules", "По одному правилу на строку", _lines("thinking_rules"))}
+
+        <div class="section-title"><div><p class="eyebrow">чего избегать</p><h2>Запрещённые начала текста</h2></div></div>
+        {_textarea("forbidden_openings", "Фразы, с которых нельзя начинать пост (по одной на строку)", _lines("forbidden_openings"))}
+
+        <div class="section-title"><div><p class="eyebrow">площадки</p><h2>Правила площадок</h2></div></div>
+        {platform_blocks}
+
+        <div class="section-title"><div><p class="eyebrow">против повторов</p><h2>Правила против повторов</h2></div></div>
+        {_textarea("anti_repeat_rules", "По одному правилу на строку", _lines("anti_repeat_rules"))}
+
+        <div class="section-title"><div><p class="eyebrow">приоритет тем</p><h2>Правило веса главных тем</h2></div></div>
+        {_textarea("theme_weight_rule", "Как вес темы влияет на приоритет", str(rules.get("theme_weight_rule", "")))}
+
+        <div class="section-title"><div><p class="eyebrow">режимы мышления</p><h2>Режимы мышления</h2></div></div>
+        {_textarea("thinking_modes", "Доступные режимы (по одному на строку)", _lines("thinking_modes"))}
+
+        <div class="form-actions"><button type="submit">Сохранить правила</button></div>
+      </form>
+    </section>
   </main>
 </body>
 </html>"""

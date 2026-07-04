@@ -386,8 +386,11 @@ def _needs_revision(result: dict[str, Any]) -> bool:
 
 
 def _starts_with_forbidden_opening(text: str) -> bool:
+    from .bot_rules import load_bot_rules
+
+    openings = load_bot_rules().get("forbidden_openings") or list(FORBIDDEN_OPENINGS)
     first = re.sub(r"\s+", " ", text.strip().split("\n", 1)[0]).lower()
-    return any(first.startswith(opening) for opening in FORBIDDEN_OPENINGS)
+    return any(first.startswith(str(opening).lower()) for opening in openings)
 
 
 def _score_as_int(value: object) -> int | None:
