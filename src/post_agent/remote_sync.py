@@ -30,6 +30,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .ai_gateway import DEFAULT_ENV_PATH, _read_env_file
@@ -129,7 +130,14 @@ def push_file(rel_path: str) -> None:
     _request(
         "POST",
         "",
-        body=[{"path": rel_path, "content": payload}],
+        body=[
+            {
+                "path": rel_path,
+                "content": payload,
+                # updated_at only defaults on insert, so set it on every upsert to keep it truthful.
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
         prefer="resolution=merge-duplicates,return=minimal",
     )
 
