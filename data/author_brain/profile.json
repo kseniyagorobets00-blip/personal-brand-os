@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-07-04T12:47:12+00:00",
+  "updated_at": "2026-07-04T16:08:54+00:00",
   "status": "ready",
   "main_themes": [
     {
@@ -200,12 +200,12 @@
     {
       "type": "документ",
       "title": "SOP-as-service-care",
-      "updated_at": "2026-07-04T11:28:13+00:00"
+      "updated_at": "2026-07-04T14:27:40+00:00"
     },
     {
       "type": "документ",
       "title": "MAYRVEDA-cx-operations-note",
-      "updated_at": "2026-07-04T11:28:13+00:00"
+      "updated_at": "2026-07-04T14:27:40+00:00"
     }
   ],
   "source_counts": {

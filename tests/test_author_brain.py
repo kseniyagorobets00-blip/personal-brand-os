@@ -22,15 +22,15 @@ class AuthorBrainTests(unittest.TestCase):
         ).build(
             {
                 "platform": "LinkedIn",
-                "topic": "Customer Experience РєР°Рє СЃР»РµРґСЃС‚РІРёРµ РѕРїРµСЂР°С†РёРѕРЅРЅРѕР№ РґРёСЃС†РёРїР»РёРЅС‹",
-                "summary": "CX Р·Р°РІРёСЃРёС‚ РѕС‚ operations, SOP Рё hospitality.",
+                "topic": "Customer Experience как следствие операционной дисциплины",
+                "summary": "CX зависит от operations, SOP и hospitality.",
             }
         )
 
         self.assertEqual(brain["thinking_mode"], "Case")
         self.assertTrue(any("MAYRVEDA" in str(item.get("title", "")) for item in brain["case_candidates"]))
-        self.assertIn("РІ СЃРѕРІСЂРµРјРµРЅРЅРѕРј РјРёСЂРµ", FORBIDDEN_OPENINGS)
-        self.assertIn("РџРѕС…РѕР¶Рµ Р»Рё СЌС‚Рѕ РЅР° РљСЃРµРЅРёСЋ?", brain["self_check"]["question"])
+        self.assertIn("в современном мире", FORBIDDEN_OPENINGS)
+        self.assertIn("Похоже ли это на Ксению?", brain["self_check"]["question"])
 
     def test_author_brain_20_builds_structured_profile_and_similarity(self) -> None:
         knowledge = KnowledgeBase()
