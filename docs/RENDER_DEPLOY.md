@@ -37,30 +37,36 @@ Add these in Render dashboard:
 
 ```env
 APP_ENV=production
-PERSONAL_BRAND_OS_DATA_DIR=/var/data/personal-brand-os
 PROXY_API_KEY=your_proxyapi_key
 PROXY_API_BASE_URL=https://api.proxyapi.ru/openai/v1
 AI_MODEL=gpt-5.4-nano
 TREND_RADAR_CACHE_TTL_MINUTES=30
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_SERVICE_KEY=your_service_role_key
 ```
 
 Do not add `.env` to GitHub.
 
-## Persistent Memory
+## Persistent Memory (Supabase, free)
 
-For real use from phone, iPad, and any network, connect a persistent disk to the Render service and mount it at:
+Persistent memory works through Supabase (free tier), so no paid Render disk is needed.
 
-```text
-/var/data
+One-time setup:
+
+1. Create a free project at supabase.com.
+2. In SQL Editor run:
+
+```sql
+create table if not exists app_data (
+  path text primary key,
+  content jsonb not null,
+  updated_at timestamptz not null default now()
+);
 ```
 
-The app will store memory, uploaded documents, content plan changes, author profile settings, ideas, rules, and AI cache under:
+3. Copy the project URL and the `service_role` API key into the `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` environment variables.
 
-```text
-/var/data/personal-brand-os
-```
-
-On first start, the app copies the default `data/` files from the repository into this persistent folder without overwriting existing files. After that, user changes are written to the persistent folder, not to the temporary app filesystem.
+How it works: on startup the app downloads all saved files from Supabase, then a background sync pushes every local change (memory, uploaded documents, content plan, author profile, ideas, rules, AI cache) back to Supabase within a few seconds. Uploads or edits survive restarts, redeploys, and free-tier disk resets, and are visible from any device.
 
 ## Open From iPhone / iPad
 
@@ -93,4 +99,4 @@ Useful pages:
 
 Render Free can sleep after inactivity, so the first request after a pause may be slow.
 
-Render Free storage can be temporary and is not reliable for long-term memory. For real memory, use a paid service with persistent disk or move storage to an external database/object storage later.
+Render Free local storage is temporary, but that is fine here: long-term memory lives in Supabase and is restored automatically on every start.

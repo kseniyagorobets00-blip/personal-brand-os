@@ -28,10 +28,11 @@ $env:PYTHONPATH = "src"
 python -m post_agent serve --lan
 ```
 
-For access from any network or mobile internet, deploy the app to hosting and use a persistent data directory:
+For access from any network or mobile internet, deploy the app to hosting and connect free persistent memory via Supabase:
 
 ```env
-PERSONAL_BRAND_OS_DATA_DIR=/var/data/personal-brand-os
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_SERVICE_KEY=your_service_role_key
 ```
 
 See `docs/RENDER_DEPLOY.md`.

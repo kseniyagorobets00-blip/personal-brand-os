@@ -622,6 +622,9 @@ def local_network_url(port: int = 8000) -> str:
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
+    from .remote_sync import bootstrap as bootstrap_remote_sync
+
+    bootstrap_remote_sync()
     server = ThreadingHTTPServer((host, port), DailyBriefRequestHandler)
     try:
         print(f"Personal Brand OS is running at http://{host}:{port}/daily-brief")
