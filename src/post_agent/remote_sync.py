@@ -64,6 +64,7 @@ def bootstrap() -> bool:
     config = sync_config()
     if not config:
         return False
+    print(f"Supabase sync: папка данных = {data_root()}")
     try:
         remote_paths = pull_all()
         print(f"Supabase sync: восстановлено файлов из облака: {len(remote_paths)}.")
@@ -149,11 +150,16 @@ def start_background_sync() -> bool:
 def _watch_loop() -> None:
     interval = _env_float("SUPABASE_SYNC_INTERVAL_SECONDS", 3.0)
     snapshot = _scan()
+    print(f"Supabase sync: фоновое слежение запущено, файлов под наблюдением: {len(snapshot)}, интервал {interval}с.")
     while True:
         time.sleep(interval)
         try:
             current = _scan()
-        except OSError:
+        except OSError as exc:
+            _log_sync_error(exc)
+            continue
+        except Exception as exc:  # noqa: BLE001 - never let the watcher thread die silently
+            _log_sync_error(exc)
             continue
         changed = [path for path, stamp in current.items() if snapshot.get(path) != stamp]
         removed = [path for path in snapshot if path not in current]
@@ -161,12 +167,14 @@ def _watch_loop() -> None:
             try:
                 push_file(rel_path)
                 snapshot[rel_path] = current[rel_path]
+                print(f"Supabase sync: отправлено в облако -> {rel_path}")
             except Exception as exc:  # noqa: BLE001 - keep the loop alive on network errors
                 _log_sync_error(exc)
         for rel_path in removed:
             try:
                 delete_remote(rel_path)
                 snapshot.pop(rel_path, None)
+                print(f"Supabase sync: удалено из облака -> {rel_path}")
             except Exception as exc:  # noqa: BLE001
                 _log_sync_error(exc)
         for rel_path in current:
