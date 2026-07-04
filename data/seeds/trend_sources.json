@@ -1,0 +1,88 @@
+{
+  "sources": [
+    {
+      "id": "ai-operational-maturity",
+      "title": "AI как зеркало операционной зрелости",
+      "description": "Компании активнее обсуждают AI, но результаты зависят от качества процессов, данных и ответственности.",
+      "source": "Локальные редакторские источники: AI / Operations",
+      "why_now": "AI остается горячей темой, но аудитория устала от общих обещаний и ищет практический управленческий взгляд.",
+      "hype_level": "высокий",
+      "relevance_forecast": "2-4 недели",
+      "reach_base": 9.0,
+      "brand_base": 9.2,
+      "tags": [
+        "AI",
+        "Operations",
+        "Customer Experience",
+        "Operational Excellence"
+      ],
+      "best_formats": [
+        "LinkedIn",
+        "Telegram"
+      ]
+    },
+    {
+      "id": "service-design-implementation-gap",
+      "title": "Service Design без внедрения",
+      "description": "Journey map и service blueprint не меняют сервис, если не связаны с ролями, SOP и контролем исполнения.",
+      "source": "Локальные редакторские источники: Service Design / CX",
+      "why_now": "Команды продолжают делать красивые карты пути, но бизнес ждет операционного результата.",
+      "hype_level": "средний",
+      "relevance_forecast": "1-2 месяца",
+      "reach_base": 7.6,
+      "brand_base": 9.4,
+      "tags": [
+        "Service Design",
+        "Customer Experience",
+        "SOP",
+        "Operations"
+      ],
+      "best_formats": [
+        "VC",
+        "LinkedIn"
+      ]
+    },
+    {
+      "id": "hospitality-personalization-vs-standards",
+      "title": "Персонализация в hospitality против стандартов",
+      "description": "Luxury Hospitality требует живого сервиса, но без стандартов персонализация превращается в случайность.",
+      "source": "Локальные редакторские источники: Hospitality",
+      "why_now": "Гостиничный рынок ищет баланс между AI-персонализацией, сервисной дисциплиной и человеческим вниманием.",
+      "hype_level": "средний",
+      "relevance_forecast": "1 месяц",
+      "reach_base": 7.2,
+      "brand_base": 9.1,
+      "tags": [
+        "Luxury Hospitality",
+        "Hospitality",
+        "Customer Experience",
+        "SOP"
+      ],
+      "best_formats": [
+        "LinkedIn",
+        "Telegram"
+      ]
+    },
+    {
+      "id": "process-ownership-handoffs",
+      "title": "Сервис ломается в точках передачи ответственности",
+      "description": "Клиентский опыт часто рушится не в контакте, а между ролями, когда никто не владеет переходом.",
+      "source": "Локальные редакторские источники: Operations / CX",
+      "why_now": "Тема хорошо соединяет Customer Experience, Operations и управленческую диагностику.",
+      "hype_level": "умеренный",
+      "relevance_forecast": "долгоиграющая тема",
+      "reach_base": 7.8,
+      "brand_base": 9.7,
+      "tags": [
+        "Operations",
+        "Customer Experience",
+        "SOP"
+      ],
+      "best_formats": [
+        "LinkedIn",
+        "Сетка",
+        "Telegram"
+      ]
+    }
+  ]
+}
