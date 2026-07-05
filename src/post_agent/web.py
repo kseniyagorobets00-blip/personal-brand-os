@@ -4197,7 +4197,7 @@ def render_knowledge(
       <h2>Загрузить документ</h2>
       <p>Поддерживаются: {escape(supported)}. Документ сохранится локально и попадет в базовый индекс.</p>
       <form method="post" action="/knowledge/upload" enctype="multipart/form-data" onsubmit="const s=this.querySelector('[data-upload-status]'); if (s) s.textContent='Анализируется...';">
-        <input type="file" name="document" accept=".pdf,.docx,.md,.txt" required>
+        <input type="file" name="document" required>
         <button type="submit">Добавить в память</button>
         <span class="state-note" data-upload-status></span>
       </form>
