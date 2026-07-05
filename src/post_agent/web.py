@@ -2092,9 +2092,10 @@ def _ai_status_block(status: object, result: dict[str, object] | None) -> str:
         <p class="eyebrow">AI-анализ</p>
         <h2>{escape(status.message or "AI-анализ еще не запускался.")}</h2>
         {details}
+        <p class="ai-panel-hint">Пересоберёт профиль автора и AI-черновик для сегодняшней публикации. Обычно занимает 30–60 секунд.</p>
       </div>
       <form method="post" action="/daily-brief/ai-refresh">
-        <button type="submit">Обновить AI-анализ</button>
+        <button type="submit" data-busy="Обновляю AI-анализ…">Обновить AI-анализ</button>
       </form>
       {_ai_diagnostics_block(diagnostics)}
     </section>
@@ -5391,6 +5392,30 @@ def _drafts_to_prepare_section(brief: DailyBrief, ai_result: dict[str, object] |
     """
 
 
+def _draft_chain(stage: str, approved_post: object | None = None) -> str:
+    """Show which text is currently 'the main one': Шаблон → AI-черновик → Утверждённый текст.
+    The active step is the one whose text is shown in the card below."""
+    order = ("template", "ai", "approved")
+    labels = {"template": "Шаблон", "ai": "AI-черновик", "approved": "Утверждённый текст"}
+    active_index = order.index(stage)
+    steps = []
+    for index, key in enumerate(order):
+        state = "active" if index == active_index else ("done" if index < active_index else "todo")
+        steps.append(f'<span class="chain-step is-{state}">{escape(labels[key])}</span>')
+    chain = '<span class="chain-sep">→</span>'.join(steps)
+    link = ""
+    if stage == "approved" and approved_post is not None:
+        post_id = escape(str(getattr(approved_post, "id", "")))
+        if post_id:
+            link = f'<a class="chain-link" href="/texts/{post_id}">Открыть в Текстах</a>'
+    return f"""
+      <div class="draft-chain">
+        <div class="chain-steps">{chain}</div>
+        {link}
+      </div>
+    """
+
+
 def _draft_to_prepare_card(
     topic: BriefItem,
     draft: Draft,
@@ -5415,17 +5440,29 @@ def _draft_to_prepare_card(
     if approved_post:
         title = approved_post.title
         draft_text = approved_post.text
+    if approved_post:
+        stage = "approved"
+    elif ai_draft:
+        stage = "ai"
+    else:
+        stage = "template"
     goal = str(getattr(publication, "goal", "")) or topic.action
     summary = str(getattr(publication, "summary", "")) or topic.summary
     materials = _materials_for_topic(topic, brief.related_knowledge)
     refinement_notice = _refinement_notice(refinement)
     tags = "".join(f"<span>{escape(_status_ru(tag))}</span>" for tag in topic.tags)
+    text_label = {
+        "approved": "Утверждённый текст из раздела «Тексты»",
+        "ai": "AI-черновик",
+        "template": "Первый черновик текста (шаблон)",
+    }[stage]
     return f"""
     <article class="card draft-prep-card" id="{escape(key)}">
       <div class="card-head">
         <h3>{escape(title)}</h3>
         <strong>{escape(platform)}</strong>
       </div>
+      {_draft_chain(stage, approved_post)}
       <div class="draft-context-grid">
         <div>
           <p class="label">Цель</p>
@@ -5438,7 +5475,7 @@ def _draft_to_prepare_card(
       </div>
       <p class="label">Краткая структура</p>
       <p>{escape(_draft_structure(platform, summary))}</p>
-      <p class="label">{'Утвержденный текст из раздела «Тексты»' if approved_post else 'Первый черновик текста'}</p>
+      <p class="label">{text_label}</p>
       <pre>{escape(draft_text)}</pre>
       {_thinking_transparency_block(ai_result)}
       {_writing_feedback_block(key, title, draft_text)}
@@ -6751,6 +6788,52 @@ def _styles() -> str:
     .draft-prep-card pre {
       margin-top: 8px;
     }
+    .draft-chain {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 4px 0 6px;
+    }
+    .chain-steps {
+      display: inline-flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chain-step {
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 680;
+      color: var(--muted);
+      background: var(--paper-soft);
+      white-space: nowrap;
+    }
+    .chain-step.is-active {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .chain-step.is-done {
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: var(--line-soft);
+    }
+    .chain-sep { color: var(--muted); font-size: 12px; }
+    .chain-link {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 680;
+      text-decoration: none;
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+      padding: 6px 12px;
+      white-space: nowrap;
+    }
+    .chain-link:hover { border-color: var(--accent); }
     .draft-context-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
