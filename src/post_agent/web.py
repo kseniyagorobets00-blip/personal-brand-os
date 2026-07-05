@@ -2390,6 +2390,10 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <input type="hidden" name="today_recommendation" value="{escape(str(plan.get("today_recommendation", "")))}">
         <input type="hidden" name="content_pillars" value="{escape(list_to_text(plan.get("content_pillars", [])))}">
         <input type="hidden" name="platform_targets" value="{escape(list_to_text(plan.get("platform_targets", [])))}">
+        <div class="form-actions">
+          <button name="plan_action" value="save_focus" type="submit">Сохранить фокус и даты</button>
+        </div>
+        <p class="state-note">Фокус и даты закрепляются сразу — публикации ниже не меняются. По ним потом строится «Создать план по стратегии».</p>
       </section>
       <section class="profile-section">
         <p class="eyebrow">публикации</p>
@@ -3521,6 +3525,13 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
                 "note": value(f"pub_{index}_note"),
             }
         )
+    if action == "save_focus":
+        # Save only the strategic header (period dates + focus). Keep the stored
+        # publications exactly as they are — the small button under «Фокус недели»
+        # must not rewrite or clear the plan below it.
+        stored = _load_content_plan_raw()
+        stored_pubs = stored.get("planned_publications")
+        publications = stored_pubs if isinstance(stored_pubs, list) else publications
     if action == "add_publication":
         new_pub_date = _normalize_plan_date_value(value("new_pub_date"))
         new_publication = {
@@ -3567,6 +3578,8 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             raw["last_action"] = "План утвержден."
         elif action == "add_publication":
             raw["last_action"] = "Публикация добавлена."
+        elif action == "save_focus":
+            raw["last_action"] = "Фокус и даты периода сохранены."
         elif action == "save_strategy":
             raw["last_action"] = "Редакционная стратегия сохранена."
         elif next_index is not None:

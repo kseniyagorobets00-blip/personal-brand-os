@@ -594,6 +594,51 @@ class DailyBriefTests(unittest.TestCase):
         self.assertTrue(saved["planned_publications"][1]["updated_at"])
         self.assertTrue(saved["updated_at"])
 
+    def test_content_plan_save_focus_updates_header_but_keeps_publications(self) -> None:
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "week_start": "2026-06-22",
+                        "week_end": "2026-06-28",
+                        "focus": "Old focus",
+                        "planned_publications": [
+                            {"date": "2026-06-26", "platform": "LinkedIn", "topic": "Stored post", "status": "planned"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            # The form still carries the publication fields (one form), but the
+            # "save focus" button must ignore them and keep the stored plan below.
+            form = {
+                "view": ["list"],
+                "plan_action": ["save_focus"],
+                "week_start": ["2026-06-29"],
+                "week_end": ["2026-07-05"],
+                "focus": ["New focus"],
+                "month_focus": ["Month"],
+                "content_pillars": [""],
+                "platform_targets": [""],
+                "today_recommendation": [""],
+                "pub_0_date": ["2026-06-26"],
+                "pub_0_platform": ["LinkedIn"],
+                "pub_0_topic": ["Edited in form"],
+                "pub_0_status": ["planned"],
+            }
+
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path):
+                location = _save_content_plan_form(form)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(location, "/content-plan?saved=1&status=updated&view=list")
+        self.assertEqual(saved["focus"], "New focus")
+        self.assertEqual(saved["week_start"], "2026-06-29")
+        # Publications are preserved from storage, not rebuilt from the form.
+        self.assertEqual(len(saved["planned_publications"]), 1)
+        self.assertEqual(saved["planned_publications"][0]["topic"], "Stored post")
+
     def test_content_plan_next_stage_advances_publication_status(self) -> None:
         with TemporaryDirectory() as directory:
             plan_path = Path(directory) / "content_plan.json"
