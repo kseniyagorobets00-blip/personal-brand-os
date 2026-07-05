@@ -166,10 +166,17 @@ class AIContextEngine:
 
 
 def _target_publication(content_plan: dict[str, Any]) -> dict[str, object]:
+    """Pick the publication the AI should work on: today's entry, else the first
+    non-terminal one, else the first entry. Single source of truth shared by the
+    context engine and the pipeline."""
     publications = content_plan.get("planned_publications", [])
-    if not isinstance(publications, list):
+    if not isinstance(publications, list) or not publications:
         return {}
+    today = datetime.now().date().isoformat()
     for publication in publications:
-        if isinstance(publication, dict) and str(publication.get("status", "")) in {"in_progress", "drafted", "planned"}:
+        if isinstance(publication, dict) and str(publication.get("date", "")) == today:
             return publication
-    return publications[0] if publications and isinstance(publications[0], dict) else {}
+    for publication in publications:
+        if isinstance(publication, dict) and str(publication.get("status", "")) not in {"published", "skipped", "archived"}:
+            return publication
+    return publications[0] if isinstance(publications[0], dict) else {}

@@ -9,7 +9,7 @@ import threading
 from typing import Any
 import re
 
-from .ai_context import AIContextEngine
+from .ai_context import AIContextEngine, _target_publication
 from .ai_gateway import AIGateway, AIGatewayError, DEFAULT_ENV_PATH, load_ai_config
 from .author_brain import FORBIDDEN_OPENINGS, AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository
@@ -361,20 +361,6 @@ def _revision_prompt(context: dict[str, Any], result: dict[str, Any]) -> str:
 
 def _as_list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
-
-
-def _target_publication(content_plan: dict[str, Any]) -> dict[str, object]:
-    publications = content_plan.get("planned_publications", [])
-    if not isinstance(publications, list) or not publications:
-        return {}
-    today = datetime.now().strftime("%d.%m.%Y")
-    for publication in publications:
-        if isinstance(publication, dict) and str(publication.get("date", "")) == today:
-            return publication
-    for publication in publications:
-        if isinstance(publication, dict) and str(publication.get("status", "")) not in {"published", "skipped", "archived"}:
-            return publication
-    return publications[0] if isinstance(publications[0], dict) else {}
 
 
 def _needs_revision(result: dict[str, Any], platform: str = "") -> bool:
