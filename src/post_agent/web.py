@@ -92,6 +92,25 @@ DEFAULT_EDITORIAL_STRATEGY = {
 
 
 class DailyBriefRequestHandler(BaseHTTPRequestHandler):
+    # A friendly Russian page instead of the default English server error text.
+    error_content_type = "text/html; charset=utf-8"
+    error_message_format = (
+        "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>Что-то пошло не так</title></head>"
+        "<body style=\"font-family: system-ui, -apple-system, sans-serif; background:#15181b;"
+        " color:#e8e6e0; margin:0; min-height:100vh; display:flex; align-items:center;"
+        " justify-content:center;\">"
+        "<div style=\"max-width:440px; padding:32px; text-align:center;\">"
+        "<div style=\"font-size:44px; margin-bottom:14px;\" aria-hidden=\"true\">🙂</div>"
+        "<h1 style=\"font-size:22px; margin:0 0 10px;\">Не получилось открыть страницу</h1>"
+        "<p style=\"color:#9aa09a; margin:0 0 22px; line-height:1.5;\">Возможно, ссылка устарела или"
+        " такой страницы больше нет. Ничего страшного — вернитесь на главную и продолжайте работу.</p>"
+        "<a href=\"/daily-brief\" style=\"display:inline-block; padding:12px 22px; border-radius:999px;"
+        " background:#5aa091; color:#15181b; text-decoration:none; font-weight:700;\">На главную</a>"
+        "<p style=\"color:#5a615c; margin:18px 0 0; font-size:12px;\">Код: %(code)d</p>"
+        "</div></body></html>"
+    )
     service = DailyBriefService()
     author_profile_repository = AuthorProfileRepository()
     writing_dna_repository = WritingDNARepository()
@@ -640,12 +659,42 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         ("Как это связано", "/how-it-works", "how"),
     )
     items = "".join(
-        f"<a class=\"{'active' if key == active else ''}\" href=\"{escape(href)}\">{escape(label)}</a>"
+        "<a class=\"{cls}\" href=\"{href}\"{current}>{label}</a>".format(
+            cls="active" if key == active else "",
+            href=escape(href),
+            current=' aria-current="page"' if key == active else "",
+            label=escape(label),
+        )
         for label, href, key in links
     )
     if extra:
         items += f"<span>{escape(extra)}</span>"
-    return f"<div class=\"meta global-nav\">{items}</div>"
+    nav = f"<nav class=\"meta global-nav\" aria-label=\"Основная навигация\">{items}</nav>"
+    return f"<div class=\"nav-wrap\">{nav}{_cloud_status_chip()}</div>"
+
+
+def _cloud_status_chip() -> str:
+    """A small, reassuring indicator of whether data is saved to the cloud."""
+    try:
+        from .remote_sync import status as sync_status
+
+        state = sync_status()
+    except Exception:  # noqa: BLE001 - the indicator must never break a page
+        return ""
+    if not state.get("enabled"):
+        return (
+            '<p class="cloud-chip cloud-local" role="status">'
+            '<span aria-hidden="true">💾</span> Сохраняется на этом устройстве</p>'
+        )
+    if state.get("ok"):
+        return (
+            '<p class="cloud-chip cloud-ok" role="status">'
+            '<span aria-hidden="true">☁️</span> Данные сохраняются в облако</p>'
+        )
+    return (
+        '<p class="cloud-chip cloud-wait" role="status">'
+        '<span aria-hidden="true">☁️</span> Подключаюсь к облаку…</p>'
+    )
 
 
 def local_network_url(port: int = 8000) -> str:
@@ -719,6 +768,7 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
       <div>
         <p class="eyebrow">AI-директор контента</p>
         <h1>Дневной бриф</h1>
+        <p class="page-hint">Что публиковать сегодня и почему — главный экран на каждый день.</p>
       </div>
       {_global_nav("daily", brief.brief_date.strftime("%d.%m.%Y"))}
     </header>
@@ -827,6 +877,7 @@ def render_author_profile(
       <div>
         <p class="eyebrow">профиль, стиль и обучение</p>
         <h1>Профиль автора</h1>
+        <p class="page-hint">Кто вы как автор: темы, стиль и стратегия, на которые опирается AI.</p>
       </div>
       {_global_nav("profile")}
     </header>
@@ -1168,6 +1219,7 @@ def render_author_brain(profile: dict[str, object], status: object, refreshed: b
       <div>
         <p class="eyebrow">профиль автора</p>
         <h1>Авторская база</h1>
+        <p class="page-hint">Что AI понял о вас из памяти — темы, идеи и кейсы в одном профиле.</p>
       </div>
       {_global_nav("brain", status_state)}
     </header>
@@ -1515,6 +1567,7 @@ def render_learning_center(
       <div>
         <p class="eyebrow">обучение памяти</p>
         <h1>Центр обучения</h1>
+        <p class="page-hint">Здесь вы подтверждаете, что AI запомнит и чему научится.</p>
       </div>
       {_global_nav("learning")}
     </header>
@@ -1676,6 +1729,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
       <div>
         <p class="eyebrow">редактор идей</p>
         <h1>Радар трендов</h1>
+        <p class="page-hint">Свежие темы и сигналы, отобранные под ваши площадки.</p>
       </div>
       {_global_nav("trends")}
     </header>
@@ -2422,6 +2476,22 @@ def _trends_block(items: tuple[BriefItem, ...]) -> str:
     """
 
 
+def _ai_error_note(detail: object, action: str = "сгенерировать текст") -> str:
+    """A calm, human explanation instead of a raw AI/network error string."""
+    detail_text = str(detail or "").strip()
+    extra = (
+        f"<details class=\"error-detail\"><summary>Технические детали</summary>{escape(detail_text)}</details>"
+        if detail_text
+        else ""
+    )
+    return (
+        "<div class=\"state-note error-note\">"
+        f"Не удалось {escape(action)} — AI сейчас не ответил. Попробуйте ещё раз через минуту. "
+        "Если повторяется несколько раз, проверьте баланс и ключ в настройках."
+        f"{extra}</div>"
+    )
+
+
 def _free_day_card(brief: DailyBrief) -> str:
     return f"""
     <section class="today-card free-day">
@@ -2656,7 +2726,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     if plan.get("last_action"):
         notice += f"<div class=\"state-note\">{escape(str(plan.get('last_action')))}</div>"
     if plan.get("ai_error"):
-        notice += f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(plan.get('ai_error')))}</div>"
+        notice += _ai_error_note(plan.get("ai_error"), "составить план")
     publications = plan.get("planned_publications", [])
     rows = "".join(_content_plan_edit_row(item, index) for index, item in enumerate(publications))
     new_index = len(publications) if isinstance(publications, list) else 0
@@ -2677,6 +2747,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
       <div>
         <p class="eyebrow">план публикаций</p>
         <h1>Контент-план</h1>
+        <p class="page-hint">План публикаций по неделям — темы, площадки и форматы.</p>
       </div>
       {_global_nav("content")}
     </header>
@@ -2793,7 +2864,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     item = item if isinstance(item, dict) else {}
     error = ""
     if item.get("ai_error"):
-        error = f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(item.get('ai_error')))}</div>"
+        error = _ai_error_note(item.get("ai_error"), "подобрать тему")
     if item.get("repeat_warning"):
         error += f"<div class=\"state-note repeat-note\">⚠ {escape(str(item.get('repeat_warning')))}</div>"
     updated = f"<div class=\"state-note\">Обновлено: {escape(str(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
@@ -4144,7 +4215,7 @@ def render_knowledge(
     if analysis == "done":
         notices.append("Анализ завершен.")
     if analysis == "error":
-        notices.append("Ошибка анализа.")
+        notices.append("Не удалось разобрать документ автоматически — сам файл сохранён, попробуйте анализ ещё раз позже.")
     if upload_error:
         notices.append(upload_error)
     if deleted:
@@ -4181,6 +4252,7 @@ def render_knowledge(
       <div>
         <p class="eyebrow">долгосрочная память</p>
         <h1>Память</h1>
+        <p class="page-hint">Ваши документы, кейсы и заметки — материал, из которого AI учится.</p>
       </div>
       {_global_nav("knowledge")}
     </header>
@@ -4780,6 +4852,7 @@ def render_idea_vault(
       <div>
         <p class="eyebrow">хранилище идей</p>
         <h1>Идеи</h1>
+        <p class="page-hint">Копилка идей и заготовок для будущих постов.</p>
       </div>
       {_global_nav("ideas")}
     </header>
@@ -5899,7 +5972,7 @@ def _refinement_notice(refinement: dict[str, object]) -> str:
     if not action:
         return ""
     if refinement.get("status") == "error":
-        return f"<div class=\"state-note error-note\">Ошибка обновления: {escape(str(refinement.get('error', 'AI недоступен')))}</div>"
+        return _ai_error_note(refinement.get("error", ""), "обновить черновик")
     return f"<div class=\"state-note\">Обновлено: {escape(action)}.</div>"
 
 
@@ -5992,6 +6065,13 @@ def _styles() -> str:
       letter-spacing: .12em;
     }
     h1, h2, h3, p { margin: 0; }
+    .page-hint {
+      margin-top: 10px;
+      max-width: 460px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
     h1 {
       font-size: clamp(42px, 6vw, 78px);
       line-height: .95;
@@ -6034,6 +6114,29 @@ def _styles() -> str:
       color: white;
       background: var(--accent);
       border-color: var(--accent);
+    }
+    .nav-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0;
+    }
+    .cloud-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin: 8px 0 0;
+      font-size: 12px;
+      font-weight: 640;
+      color: var(--muted);
+    }
+    .cloud-chip.cloud-ok { color: var(--accent); }
+    .cloud-chip.cloud-wait { color: var(--muted); }
+    a:focus-visible, button:focus-visible, summary:focus-visible,
+    input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 6px;
     }
     .open-link {
       display: inline-flex;
@@ -6708,6 +6811,15 @@ def _styles() -> str:
       border-color: #f1c8b8;
       color: var(--risk);
     }
+    .error-detail {
+      margin-top: 8px;
+      font-size: 12px;
+      opacity: .75;
+    }
+    .error-detail summary {
+      cursor: pointer;
+      font-weight: 640;
+    }
     .risk { color: var(--risk); }
     .memory {
       margin-top: 34px;
@@ -7121,6 +7233,7 @@ def _styles() -> str:
       .meta.global-nav::-webkit-scrollbar { display: none; }
       .meta.global-nav a { flex: 0 0 auto; }
       .meta { justify-content: flex-start; }
+      .nav-wrap { align-items: flex-start; width: 100%; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
       .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: 1fr; }
       .calendar-weekdays { display: none; }

@@ -45,6 +45,22 @@ _IGNORED_PARTS = {"__pycache__", ".DS_Store"}
 
 _watcher_started = threading.Event()
 _last_error_log = 0.0
+_last_success_at: float = 0.0
+_last_error_message: str = ""
+_last_error_at: float = 0.0
+
+
+def status() -> dict[str, object]:
+    """A small, UI-friendly snapshot of the cloud-sync state."""
+    if not is_enabled():
+        return {"enabled": False, "ok": False, "last_success_at": None, "error": ""}
+    ok = _last_success_at > 0 and (_last_error_at <= _last_success_at)
+    return {
+        "enabled": True,
+        "ok": ok,
+        "last_success_at": _last_success_at or None,
+        "error": _last_error_message if not ok else "",
+    }
 
 
 def sync_config() -> tuple[str, str] | None:
@@ -140,6 +156,8 @@ def push_file(rel_path: str) -> None:
         ],
         prefer="resolution=merge-duplicates,return=minimal",
     )
+    global _last_success_at
+    _last_success_at = time.time()
 
 
 def delete_remote(rel_path: str) -> None:
@@ -240,7 +258,9 @@ def _request(method: str, query: str, body: object | None = None, prefer: str = 
 
 
 def _log_sync_error(exc: Exception) -> None:
-    global _last_error_log
+    global _last_error_log, _last_error_message, _last_error_at
+    _last_error_message = str(exc)
+    _last_error_at = time.time()
     now = time.monotonic()
     if now - _last_error_log > 60:
         _last_error_log = now
