@@ -494,18 +494,25 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/knowledge/upload":
             upload_error = ""
-            try:
-                filename, content = self._read_multipart_file()
-                if filename and content is not None:
-                    self.knowledge_base.add_document(filename, content)
-                    self._refresh_author_brain_background()
-                else:
-                    upload_error = "Файл не выбран."
-            except ValueError:
-                upload_error = "Не удалось загрузить документ. Поддерживаются PDF, DOCX, Markdown и TXT."
-            except Exception as exc:
-                _save_ai_action_error("knowledge_upload", exc)
-                upload_error = "Не удалось обработать документ. Попробуйте другой файл."
+            max_upload = 15 * 1024 * 1024  # keep a big file from OOM-killing the small free instance
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+            if content_length > max_upload:
+                # Do not read a huge body into memory; close the connection instead of draining it.
+                self.close_connection = True
+                upload_error = "Файл слишком большой. Максимум 15 МБ."
+            else:
+                try:
+                    filename, content = self._read_multipart_file()
+                    if filename and content is not None:
+                        self.knowledge_base.add_document(filename, content)
+                        self._refresh_author_brain_background()
+                    else:
+                        upload_error = "Файл не выбран."
+                except ValueError:
+                    upload_error = "Не удалось загрузить документ. Поддерживаются PDF, DOCX, Markdown и TXT."
+                except Exception as exc:
+                    _save_ai_action_error("knowledge_upload", exc)
+                    upload_error = "Не удалось обработать документ. Попробуйте другой файл."
             self.send_response(303)
             location = "/knowledge?section=documents&uploaded=1&analysis=done" if not upload_error else f"/knowledge?section=documents&analysis=error&upload_error={quote(upload_error)}"
             self.send_header("Location", location)
