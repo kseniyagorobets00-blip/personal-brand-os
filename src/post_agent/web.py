@@ -869,6 +869,43 @@ def _gates_banner(pending_memory: int, pending_lessons: int) -> str:
     </div>"""
 
 
+def _page_shell(
+    *,
+    title: str,
+    eyebrow: str,
+    heading: str,
+    hint: str,
+    active: str,
+    content: str,
+    nav_extra: str = "",
+    head_extra: str = "",
+) -> str:
+    """Single source of truth for the page chrome: <head>, sidebar nav and topbar.
+    `content` is the page body inside <main class="shell"> after the header."""
+    hint_html = f'\n        <p class="page-hint">{escape(hint)}</p>' if hint else ""
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {head_extra}<title>{escape(title)} - Personal Brand OS</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">{escape(eyebrow)}</p>
+        <h1>{escape(heading)}</h1>{hint_html}
+      </div>
+      {_global_nav(active, nav_extra)}
+    </header>
+    {content}
+  </main>
+</body>
+</html>"""
+
+
 def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lessons: int = 0) -> str:
     primary_topic = brief.topics[0] if brief.topics else None
     primary_idea = brief.ideas[0] if brief.ideas else None
@@ -876,26 +913,7 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
     ui_state = _load_ui_state()
     ai_status = load_ai_status()
     ai_result = load_ai_result()
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  {_auto_refresh_meta(ai_status)}
-  <title>Дневной бриф - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">AI-директор контента</p>
-        <h1>Дневной бриф</h1>
-        <p class="page-hint">Что публиковать сегодня и почему — главный экран на каждый день.</p>
-      </div>
-      {_global_nav("daily", brief.brief_date.strftime("%d.%m.%Y"))}
-    </header>
-
+    content = f"""
     {_gates_banner(pending_memory, pending_lessons)}
 
     {_ai_status_block(ai_status, ai_result)}
@@ -909,10 +927,17 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
     {_compact_content_plan_block(brief.content_plan)}
 
     {_trends_block(brief.market_signals)}
-
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Дневной бриф",
+        eyebrow="AI-директор контента",
+        heading="Дневной бриф",
+        hint="Что публиковать сегодня и почему — главный экран на каждый день.",
+        active="daily",
+        nav_extra=brief.brief_date.strftime("%d.%m.%Y"),
+        head_extra=_auto_refresh_meta(ai_status) + "\n  ",
+        content=content,
+    )
 
 
 def render_author_profile(
@@ -973,32 +998,21 @@ def render_author_profile(
         "dna": _writing_dna_panel(dna, profile),
         "strategy": _editorial_strategy_panel(_load_editorial_strategy()),
     }
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Профиль автора - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">профиль, стиль и обучение</p>
-        <h1>Профиль автора</h1>
-        <p class="page-hint">Кто вы как автор: темы, стиль и стратегия, на которые опирается AI.</p>
-      </div>
-      {_global_nav("profile")}
-    </header>
+    content = f"""
     {notice_html}
     <nav class="view-switch">
       {tab_links}
     </nav>
     {panels[active_tab]}
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Профиль автора",
+        eyebrow="профиль, стиль и обучение",
+        heading="Профиль автора",
+        hint="Кто вы как автор: темы, стиль и стратегия, на которые опирается AI.",
+        active="profile",
+        content=content,
+    )
 
 
 def _normalize_author_tab(tab: str) -> str:
@@ -1444,24 +1458,7 @@ def render_learning_center(
     accepted_cards = "".join(_lesson_summary_card(lesson) for lesson in accepted) or '<div class="empty">Подтвержденных правил пока нет.</div>'
     patterns = learning_center.frequent_edit_patterns()
     pattern_cards = "".join(f'<article class="card"><p>{escape(pattern)}</p></article>' for pattern in patterns) or '<div class="empty">Паттерны появятся после нескольких комментариев и решений.</div>'
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Центр обучения - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">обучение памяти</p>
-        <h1>Центр обучения</h1>
-        <p class="page-hint">Здесь вы подтверждаете, что AI запомнит и чему научится.</p>
-      </div>
-      {_global_nav("learning")}
-    </header>
+    content = f"""
     {saved_notice}
     <section class="block">
       <div class="section-title"><div><p class="eyebrow">требует решения</p><h2>Предложенные правила</h2></div><span>{len(candidates)} ожидают решения</span></div>
@@ -1492,9 +1489,15 @@ def render_learning_center(
       <div class="section-title"><div><p class="eyebrow">паттерны</p><h2>Частые правки и привычки автора</h2></div><span>{len(rejected)} отклонено</span></div>
       <div class="card-list">{pattern_cards}</div>
     </section>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Центр обучения",
+        eyebrow="обучение памяти",
+        heading="Центр обучения",
+        hint="Здесь вы подтверждаете, что AI запомнит и чему научится.",
+        active="learning",
+        content=content,
+    )
 
 
 def _refresh_trend_radar_now() -> dict[str, object]:
@@ -1537,24 +1540,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
     empty = '<div class="empty">Радар трендов еще не запускался. Нажмите «Обновить радар».</div>'
     main_card = _main_trend_recommendation(topics[0]) if topics else empty
     cards = "".join(_trend_card(topic) for topic in topics) or empty
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Радар трендов - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">сигналы и тренды</p>
-        <h1>Радар трендов</h1>
-        <p class="page-hint">Свежие темы и сигналы, отобранные под ваши площадки.</p>
-      </div>
-      {_global_nav("trends")}
-    </header>
+    content = f"""
     {saved_notice}
     <section class="block">
       <div class="section-title">
@@ -1589,9 +1575,15 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
       </div>
       {diagnostics}
     </details>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Радар трендов",
+        eyebrow="сигналы и тренды",
+        heading="Радар трендов",
+        hint="Свежие темы и сигналы, отобранные под ваши площадки.",
+        active="trends",
+        content=content,
+    )
 
 
 def _source_diagnostics_table(value: object) -> str:
@@ -2487,24 +2479,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     week_start, week_end = _content_plan_period(plan)
     view = "calendar" if view == "calendar" else "list"
     calendar_block = _content_plan_calendar(publications) if view == "calendar" else ""
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Контент-план - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">план публикаций</p>
-        <h1>Контент-план</h1>
-        <p class="page-hint">План публикаций по неделям — темы, площадки и форматы.</p>
-      </div>
-      {_global_nav("content")}
-    </header>
+    content = f"""
     {notice}
     <div class="view-switch">
       <a class="{'active' if view == 'list' else ''}" href="/content-plan?view=list">Список</a>
@@ -2561,9 +2536,15 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         </div>
       </section>
     </form>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Контент-план",
+        eyebrow="план публикаций",
+        heading="Контент-план",
+        hint="План публикаций по неделям — темы, площадки и форматы.",
+        active="content",
+        content=content,
+    )
 
 
 def render_text_posts_page(repository: TextPostRepository, query: dict[str, list[str]], plan: dict[str, object]) -> str:
@@ -2592,24 +2573,7 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
     notice = "<div class=\"notice\">Сохранено.</div>" if saved else ""
     if deleted:
         notice += "<div class=\"notice\">Удалено.</div>"
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Тексты - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">редакция</p>
-        <h1>Тексты</h1>
-        <p class="page-hint">Рабочее место для запланированных публикаций и архива опубликованных постов.</p>
-      </div>
-      {_global_nav("texts")}
-    </header>
+    content = f"""
     {notice}
     <div class="view-switch">
       <a class="{'active' if tab == 'planned' else ''}" href="/texts?tab=planned">Запланировано</a>
@@ -2641,9 +2605,15 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
       {_pagination('/texts', tab, search, platform, page, page_count, week_start, week_end)}
     </section>
     {_manual_planned_form() if tab == 'planned' else _manual_archive_form()}
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Тексты",
+        eyebrow="редакция",
+        heading="Тексты",
+        hint="Рабочее место для запланированных публикаций и архива опубликованных постов.",
+        active="texts",
+        content=content,
+    )
 
 
 def _generate_post_text(title: str, platform: str, brief: str) -> dict[str, object]:
@@ -2724,24 +2694,7 @@ def render_text_post_detail(post: TextPost, saved: bool = False, generated: bool
             f"<div class=\"brief-lines\">{rows}</div>"
             "</section>"
         )
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(post.title)} - Тексты</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">текст публикации</p>
-        <h1>{escape(post.title)}</h1>
-        <p class="page-hint">{escape(post.platform)} · {escape(_format_text_date(post.publication_date))}</p>
-      </div>
-      {_global_nav("texts")}
-    </header>
+    content = f"""
     {notice}
     <form class="profile-form" method="post" action="/texts/{escape(post.id)}">
       <div class="focus-bar">
@@ -2799,9 +2752,15 @@ def render_text_post_detail(post: TextPost, saved: bool = False, generated: bool
       var fx=document.getElementById('focus-exit');
       if(fx)fx.addEventListener('click',function(){{document.body.classList.remove('focus-on');}});
     }})();</script>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title=post.title,
+        eyebrow="текст публикации",
+        heading=post.title,
+        hint=f"{post.platform} · {_format_text_date(post.publication_date)}",
+        active="texts",
+        content=content,
+    )
 
 
 def _text_post_row(post: TextPost) -> str:
@@ -4329,24 +4288,7 @@ def render_knowledge(
     supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
     section = _knowledge_section(section)
     section_html = _knowledge_section_content(section, documents, docs_html, cases_html)
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Память - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">долгосрочная память</p>
-        <h1>Память</h1>
-        <p class="page-hint">Ваши документы, кейсы и заметки — материал, из которого AI учится.</p>
-      </div>
-      {_global_nav("knowledge")}
-    </header>
+    content = f"""
     {notice_html}
     <section class="memory-categories">
       {_memory_category("documents", "Документы", "PDF, DOCX, Markdown и TXT.", section)}
@@ -4366,9 +4308,15 @@ def render_knowledge(
       </form>
     </section>
     {section_html}
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Память",
+        eyebrow="долгосрочная память",
+        heading="Память",
+        hint="Ваши документы, кейсы и заметки — материал, из которого AI учится.",
+        active="knowledge",
+        content=content,
+    )
 
 
 def render_how_it_works() -> str:
@@ -4399,23 +4347,7 @@ def render_how_it_works() -> str:
       </div>"""
         )
     flow = '<div class="hw-arrow">↓</div>'.join(cards)
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Как это связано - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">карта системы</p>
-        <h1>Как это связано</h1>
-      </div>
-      {_global_nav("how")}
-    </header>
+    content = f"""
     <section class="block">
       <p>Путь от ваших знаний и правил до готовой публикации. Каждый блок показывает, что это, где редактируется и на что влияет.</p>
       <div class="hw-legend">
@@ -4426,9 +4358,15 @@ def render_how_it_works() -> str:
       </div>
       <div class="hw-flow">{flow}</div>
     </section>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Как это связано",
+        eyebrow="карта системы",
+        heading="Как это связано",
+        hint="",
+        active="how",
+        content=content,
+    )
 
 
 def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
@@ -4483,23 +4421,7 @@ def render_bot_rules(rules: dict[str, object], saved: bool = False) -> str:
         for rubric, steps in rubric_rules.items()
     )
     notice = '<div class="notice ok">Правила сохранены. AI будет использовать их при следующей генерации.</div>' if saved else ""
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Правила бота - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">настройки поведения</p>
-        <h1>Правила бота</h1>
-      </div>
-      {_global_nav("bot-rules")}
-    </header>
+    content = f"""
     {notice}
     <section class="block">
       <p>Это внутренние правила, по которым AI думает и пишет от вашего имени. Раньше они были спрятаны в коде — теперь их можно менять здесь. Каждое правило пишите с новой строки. Пустое поле вернётся к значению по умолчанию.</p>
@@ -4526,31 +4448,21 @@ def render_bot_rules(rules: dict[str, object], saved: bool = False) -> str:
         <div class="form-actions"><button type="submit">Сохранить правила</button></div>
       </form>
     </section>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Правила бота",
+        eyebrow="настройки поведения",
+        heading="Правила бота",
+        hint="",
+        active="bot-rules",
+        content=content,
+    )
 
 
 def render_knowledge_document(document: object) -> str:
     metadata = _document_metadata(document)
     chunks = _document_chunks(document)
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(document.title)} - Память</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">документ</p>
-        <h1>{escape(document.title)}</h1>
-      </div>
-      {_global_nav("knowledge")}
-    </header>
+    content = f"""
     <section class="document-view">
       <div class="doc-meta">
         <span>{escape(document.original_filename)}</span>
@@ -4578,9 +4490,15 @@ def render_knowledge_document(document: object) -> str:
         <button class="danger" type="submit">Удалить документ</button>
       </form>
     </section>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title=f"{document.title} - Память",
+        eyebrow="документ",
+        heading=document.title,
+        hint="",
+        active="knowledge",
+        content=content,
+    )
 
 
 def _knowledge_card(document: object) -> str:
@@ -4868,24 +4786,7 @@ def render_idea_vault(
         else "<div class=\"empty\">Пока нет идей. Добавьте вручную, сохраните идею из дневного брифа или из «Радара трендов» — они попадают сюда.</div>"
     )
     author_profile = AuthorBrainRepository().load_profile()
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Идеи - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">хранилище идей</p>
-        <h1>Идеи</h1>
-        <p class="page-hint">Копилка идей и заготовок для будущих постов.</p>
-      </div>
-      {_global_nav("ideas")}
-    </header>
+    content = f"""
     {notice_html}
     {_key_ideas_section(author_profile)}
     <section class="knowledge-upload">
@@ -4908,9 +4809,15 @@ def render_idea_vault(
       </div>
       <div class="knowledge-list">{ideas_html}</div>
     </section>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title="Идеи",
+        eyebrow="хранилище идей",
+        heading="Идеи",
+        hint="Копилка идей и заготовок для будущих постов.",
+        active="ideas",
+        content=content,
+    )
 
 
 def _key_ideas_section(profile: dict[str, object]) -> str:
@@ -4978,23 +4885,7 @@ def render_idea_detail(idea: Idea, planned: str = "") -> str:
         notice = '<div class="notice">Идея добавлена в контент-план (статус «Идея»). Откройте контент-план, чтобы назначить дату и площадку.</div>'
     elif planned == "exists":
         notice = '<div class="notice">Такая тема уже есть в контент-плане — новая строка не добавлена.</div>'
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escape(idea.title)} - Идеи</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">идея</p>
-        <h1>{escape(idea.title)}</h1>
-      </div>
-      {_global_nav("ideas")}
-    </header>
+    content = f"""
     {notice}
     <section class="document-view">
       <div class="doc-meta">
@@ -5018,9 +4909,15 @@ def render_idea_detail(idea: Idea, planned: str = "") -> str:
         </form>
       </div>
     </section>
-  </main>
-</body>
-</html>"""
+"""
+    return _page_shell(
+        title=f"{idea.title} - Идеи",
+        eyebrow="идея",
+        heading=idea.title,
+        hint="",
+        active="ideas",
+        content=content,
+    )
 
 
 def _idea_card(idea: Idea) -> str:
