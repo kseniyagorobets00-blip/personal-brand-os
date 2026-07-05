@@ -761,7 +761,6 @@ def _global_nav(active: str = "", extra: str = "") -> str:
                 ("Профиль автора", "/author-profile", "profile"),
                 ("Правила бота", "/bot-rules", "bot-rules"),
                 ("Обучение", "/learning", "learning"),
-                ("Как это связано", "/how-it-works", "how"),
             ),
         ),
     )
@@ -778,6 +777,12 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         )
         sections += f"<p class=\"nav-group\">{escape(group_label)}</p>{items}"
     extra_html = f"<p class=\"sidebar-extra\">{escape(extra)}</p>" if extra else ""
+    how_link = (
+        "<a class=\"sidebar-foot-link{active}\" href=\"/how-it-works\"{current}>Как это связано</a>".format(
+            active=" active" if active == "how" else "",
+            current=' aria-current="page"' if active == "how" else "",
+        )
+    )
     return (
         "<input type=\"checkbox\" id=\"nav-toggle\" class=\"nav-toggle\" hidden>"
         "<label for=\"nav-toggle\" class=\"burger\" aria-label=\"Открыть меню\">☰</label>"
@@ -785,7 +790,7 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         "<aside class=\"sidebar\">"
         "<a class=\"brand\" href=\"/daily-brief\">Personal Brand OS</a>"
         f"<nav class=\"sidebar-nav\" aria-label=\"Основная навигация\">{sections}</nav>"
-        f"<div class=\"sidebar-foot\">{extra_html}{_cloud_status_chip()}</div>"
+        f"<div class=\"sidebar-foot\">{how_link}{extra_html}{_cloud_status_chip()}</div>"
         "</aside>"
     )
 
@@ -1468,7 +1473,8 @@ def render_learning_center(
     <section class="block">
       <div class="section-title"><div><p class="eyebrow">что уже изучено</p><h2>Подтвержденные правила</h2></div><span>{len(accepted)} активных правил</span></div>
       <details class="knowledge-upload embedded-form">
-        <summary>Добавить правило вручную</summary>
+        <summary>Добавить правило</summary>
+        <p class="brief-hint">Единственное место, где правила добавляются вручную. Обычно правила рождаются из ваших комментариев к черновикам, но можно записать и напрямую.</p>
         <form method="post" action="/author-profile/rules/add">
           <textarea name="rule" rows="4" placeholder="Например: начинать пост с рабочей ситуации, а не с общего тезиса" required></textarea>
           <textarea name="reason" rows="3" placeholder="Почему это важно для моего стиля"></textarea>
@@ -6164,6 +6170,15 @@ def _styles() -> str:
       gap: 8px;
     }
     .sidebar-extra { margin: 0; color: var(--muted); font-size: 12px; font-weight: 640; }
+    .sidebar-foot-link {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 640;
+      text-decoration: none;
+      padding: 2px 0;
+    }
+    .sidebar-foot-link:hover { color: var(--ink); }
+    .sidebar-foot-link.active { color: var(--accent); }
     .burger {
       display: none;
       position: fixed;
