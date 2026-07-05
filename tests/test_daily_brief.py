@@ -13,8 +13,23 @@ from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_bl
 from post_agent.writing_dna import WritingDNARepository
 
 
+def _first_planned_date() -> date:
+    """A date that the committed seed content plan actually has a publication on.
+
+    Keeps the happy-path daily-brief tests deterministic regardless of the real
+    clock (otherwise they fail on any day the plan has no entry — a "free day").
+    """
+    seed_path = Path(__file__).resolve().parents[1] / "data" / "seeds" / "content_plan.json"
+    seed = json.loads(seed_path.read_text(encoding="utf-8"))
+    return date.fromisoformat(str(seed["planned_publications"][0]["date"]))
+
+
+PLANNED_DATE = _first_planned_date()
+
+
 class DailyBriefTests(unittest.TestCase):
-    def test_daily_brief_contains_required_sections(self) -> None:
+    @patch("post_agent.daily_brief.today_moscow", return_value=PLANNED_DATE)
+    def test_daily_brief_contains_required_sections(self, _today) -> None:
         brief = DailyBriefService().build_today()
 
         self.assertGreaterEqual(brief.source_count, 1)
@@ -40,7 +55,8 @@ class DailyBriefTests(unittest.TestCase):
         self.assertNotIn("Основная мысль:", draft_text)
         self.assertNotIn("Краткая структура:", draft_text)
 
-    def test_daily_brief_html_renders_user_visible_blocks(self) -> None:
+    @patch("post_agent.daily_brief.today_moscow", return_value=PLANNED_DATE)
+    def test_daily_brief_html_renders_user_visible_blocks(self, _today) -> None:
         brief = DailyBriefService().build_today()
         html = render_daily_brief(brief)
 
@@ -90,11 +106,42 @@ class DailyBriefTests(unittest.TestCase):
         self.assertNotIn("Что предлагает AI", html)
         self.assertNotIn("Требует подтверждения", html)
 
-    def test_daily_brief_uses_content_plan_as_publication_source(self) -> None:
+    @patch("post_agent.daily_brief.today_moscow", return_value=PLANNED_DATE)
+    def test_daily_brief_uses_content_plan_as_publication_source(self, _today) -> None:
         brief = DailyBriefService().build_today()
 
         self.assertTrue(brief.topics)
         self.assertTrue(all("из контент-плана" in item.tags for item in brief.topics))
+
+    def test_daily_brief_shows_free_day_when_no_publication_today(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "sources.json").write_text('{"sources": [], "ideas": [], "approval_items": []}', encoding="utf-8")
+            future = (date.today() + timedelta(days=5)).isoformat()
+            (root / "content_plan.json").write_text(
+                json.dumps(
+                    {
+                        "week": "test",
+                        "focus": "f",
+                        "month_focus": "m",
+                        "content_pillars": ["AI"],
+                        "platform_targets": ["LinkedIn"],
+                        "today_recommendation": "r",
+                        "planned_publications": [
+                            {"date": future, "day": "x", "platform": "LinkedIn", "topic": "Будущая тема", "pillar": "AI", "status": "planned", "goal": "g", "summary": "s", "note": ""}
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            brief = DailyBriefService(repository=SeedRepository(root / "sources.json", root / "content_plan.json")).build_today()
+
+            self.assertFalse(brief.topics)
+            html = render_daily_brief(brief)
+            self.assertIn("Свободный день", html)
+            # no misleading "create a draft" call to action on a day with no plan
+            self.assertNotIn("Создать черновик", html)
 
     def test_daily_brief_shows_all_today_publications_from_content_plan(self) -> None:
         today = date.today().strftime("%d.%m.%Y")
@@ -210,7 +257,8 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(result["text"], "Старый текст")
         self.assertEqual(result["error"], "AI не успел ответить. Попробуйте еще раз.")
 
-    def test_daily_brief_explains_plan_fit(self) -> None:
+    @patch("post_agent.daily_brief.today_moscow", return_value=PLANNED_DATE)
+    def test_daily_brief_explains_plan_fit(self, _today) -> None:
         brief = DailyBriefService().build_today()
 
         self.assertIn("план", brief.executive_summary.lower())
@@ -225,7 +273,8 @@ class DailyBriefTests(unittest.TestCase):
         self.assertFalse(_text_matches_platform(english, "Telegram"))
         self.assertTrue(_text_matches_platform(russian, "Сетка"))
 
-    def test_daily_brief_exports_standalone_html(self) -> None:
+    @patch("post_agent.daily_brief.today_moscow", return_value=PLANNED_DATE)
+    def test_daily_brief_exports_standalone_html(self, _today) -> None:
         with TemporaryDirectory() as directory:
             path = export_daily_brief(f"{directory}/daily-brief.html")
 

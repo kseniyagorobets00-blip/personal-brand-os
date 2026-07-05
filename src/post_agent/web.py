@@ -2428,6 +2428,31 @@ def _trends_block(items: tuple[BriefItem, ...]) -> str:
     """
 
 
+def _free_day_card(brief: DailyBrief) -> str:
+    return f"""
+    <section class="today-card free-day">
+      <div class="today-main">
+        <p class="eyebrow">сегодня</p>
+        <h2>Свободный день</h2>
+        <h3>На сегодня в контент-плане нет запланированной публикации</h3>
+      </div>
+      <div class="today-details">
+        <div>
+          <p class="label">Что это значит</p>
+          <p>Сегодня по плану публиковать ничего не нужно — это нормально, план идёт не каждый день.</p>
+        </div>
+        <div>
+          <p class="label">Если хочется что-то сделать</p>
+          <p>Можно открыть контент-план и добавить публикацию или заглянуть в «Идеи».</p>
+        </div>
+      </div>
+      <div class="today-actions">
+        <a class="primary-action" href="/content-plan">Открыть контент-план</a>
+        <a class="secondary" href="/ideas">Идеи</a>
+      </div>
+    </section>"""
+
+
 def _today_card(
     brief: DailyBrief,
     topic: BriefItem | None,
@@ -2435,6 +2460,8 @@ def _today_card(
     recommendation: BriefItem | None,
     ai_result: dict[str, object] | None = None,
 ) -> str:
+    if not brief.topics:
+        return _free_day_card(brief)
     title = _today_title(brief.topics)
     item_key = _item_key(title)
     platform = _today_platforms(brief.topics)
