@@ -3317,29 +3317,43 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     updated = f"<div class=\"state-note\">Обновлено: {escape(str(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
     status = _normalize_publication_status(str(item.get("status", "")))
+    topic_text = str(item.get("topic", "")).strip() or "Без темы"
+    platform_text = str(item.get("platform", "")).strip() or "Площадка не выбрана"
+    date_text = _format_text_date(str(item.get("date", "")))
+    day_label = escape(day) if day else date_text
+    highlight = " has-alert" if (item.get("ai_error") or item.get("repeat_warning")) else ""
     return f"""
-    <article class="plan-item edit-row" id="publication-{index}">
-      {_date_input(f"pub_{index}_date", "Дата", str(item.get("date", "")))}
-      <label>День недели<span>{escape(day or "Будет определен по дате")}</span></label>
-      {_select(f"pub_{index}_platform", "Площадка", str(item.get("platform", "")), CONTENT_PLATFORMS)}
-      {_input(f"pub_{index}_topic", "Тема", item.get("topic", ""))}
-      {_input(f"pub_{index}_goal", "Цель", item.get("goal", ""))}
-      {_select(f"pub_{index}_pillar", "Рубрика", _publication_rubric(item), RUBRICS)}
-      {_select(f"pub_{index}_format", "Формат публикации", _publication_format(item), PUBLICATION_FORMATS)}
-      <input type="hidden" name="pub_{index}_status" value="{escape(status)}">
-      {_status_badge(status)}
-      <input type="hidden" name="pub_{index}_summary" value="{escape(str(item.get("summary", item.get("note", ""))))}">
-      {_textarea(f"pub_{index}_note", "Заметка / ТЗ", item.get("note", ""))}
-      <p class="mode-hint">Полный текст поста готовится в разделе «Тексты» — здесь только тема и ТЗ.</p>
-      {updated}
-      {error}
-      <div class="form-actions">
-        <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/ТЗ</button>
-        <button class="ghost" name="plan_action" value="next_pub_{index}" type="submit">Следующий этап</button>
-        <button class="ghost" name="plan_action" value="change_pub_{index}" type="submit">Изменить</button>
-        <button class="ghost" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
+    <details class="plan-row{highlight}" id="publication-{index}">
+      <summary class="plan-row-head">
+        <span class="plan-row-date">{day_label} · {escape(date_text)}</span>
+        <span class="plan-row-platform">{escape(platform_text)}</span>
+        <span class="plan-row-topic">{escape(topic_text)}</span>
+        {_status_badge(status)}
+      </summary>
+      <div class="plan-row-body">
+        <div class="plan-fields">
+          {_date_input(f"pub_{index}_date", "Дата", str(item.get("date", "")))}
+          <label>День недели<span>{escape(day or "Будет определен по дате")}</span></label>
+          {_select(f"pub_{index}_platform", "Площадка", str(item.get("platform", "")), CONTENT_PLATFORMS)}
+          {_input(f"pub_{index}_topic", "Тема", item.get("topic", ""))}
+          {_input(f"pub_{index}_goal", "Цель", item.get("goal", ""))}
+          {_select(f"pub_{index}_pillar", "Рубрика", _publication_rubric(item), RUBRICS)}
+          {_select(f"pub_{index}_format", "Формат публикации", _publication_format(item), PUBLICATION_FORMATS)}
+        </div>
+        <input type="hidden" name="pub_{index}_status" value="{escape(status)}">
+        <input type="hidden" name="pub_{index}_summary" value="{escape(str(item.get("summary", item.get("note", ""))))}">
+        {_textarea(f"pub_{index}_note", "Заметка / ТЗ", item.get("note", ""))}
+        <p class="mode-hint">Полный текст поста готовится в разделе «Тексты» — здесь только тема и ТЗ.</p>
+        {updated}
+        {error}
+        <div class="form-actions">
+          <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/ТЗ</button>
+          <button class="ghost" name="plan_action" value="next_pub_{index}" type="submit">Следующий этап</button>
+          <button class="ghost" name="plan_action" value="change_pub_{index}" type="submit">Изменить</button>
+          <button class="ghost danger-text" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
+        </div>
       </div>
-    </article>
+    </details>
     """
 
 
@@ -7501,7 +7515,64 @@ def _styles() -> str:
     }
     .plan-edit-list {
       display: grid;
+      gap: 10px;
+    }
+    .plan-row {
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-sm);
+      background: var(--paper-soft);
+      overflow: hidden;
+    }
+    .plan-row.has-alert { border-color: rgba(240, 96, 74, .45); }
+    .plan-row > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
       gap: 14px;
+      padding: 14px 16px;
+    }
+    .plan-row > summary::-webkit-details-marker { display: none; }
+    .plan-row-date {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 680;
+      white-space: nowrap;
+      flex: 0 0 auto;
+      min-width: 150px;
+    }
+    .plan-row-platform {
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .plan-row-topic {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--ink);
+    }
+    .plan-row .status-badge { flex: 0 0 auto; align-self: center; }
+    .plan-row > summary::after {
+      content: "▾";
+      color: var(--muted);
+      flex: 0 0 auto;
+      transition: transform .2s ease;
+    }
+    .plan-row[open] > summary::after { transform: rotate(180deg); }
+    .plan-row-body {
+      padding: 6px 16px 18px;
+      border-top: 1px solid var(--line-soft);
+    }
+    .plan-fields {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 16px 0;
     }
     .view-switch {
       display: inline-flex;
@@ -7969,7 +8040,7 @@ def _styles() -> str:
       .calendar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .calendar-day.muted { display: none; }
       .today-card { grid-template-columns: 1fr; }
-      .draft-grid, .approval-grid, .plan-list, .form-grid, .edit-row, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .draft-grid, .approval-grid, .plan-list, .form-grid, .edit-row, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter, .plan-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .plan-meta-grid { grid-template-columns: 1fr; }
       .knowledge-card { display: grid; }
     }
@@ -7979,7 +8050,10 @@ def _styles() -> str:
       .topbar { display: grid; }
       .meta { justify-content: flex-start; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
-      .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter { grid-template-columns: 1fr; }
+      .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter, .plan-fields { grid-template-columns: 1fr; }
+      .plan-row-head { flex-wrap: wrap; gap: 6px 12px; }
+      .plan-row-date { min-width: 0; }
+      .plan-row-topic { flex-basis: 100%; white-space: normal; }
       .calendar-weekdays { display: none; }
       .calendar-grid { grid-template-columns: 1fr; }
       .calendar-day { min-height: auto; }
