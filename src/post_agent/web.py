@@ -5913,6 +5913,7 @@ def _styles() -> str:
       --bg: #f7f6f2;
       --paper: #fffefa;
       --paper-soft: #fbfaf6;
+      --paper-rgb: 255, 254, 250;
       --ink: #20231f;
       --muted: #747a72;
       --line: #e4e0d7;
@@ -5920,6 +5921,22 @@ def _styles() -> str:
       --accent: #315f56;
       --accent-soft: #eef5f2;
       --risk: #8c4637;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #15181b;
+        --paper: #1c2024;
+        --paper-soft: #20252a;
+        --paper-rgb: 44, 50, 56;
+        --ink: #e8e6e0;
+        --muted: #9aa09a;
+        --line: #333a3f;
+        --line-soft: #2a3034;
+        --accent: #5aa091;
+        --accent-soft: #1e2b28;
+        --risk: #d98a72;
+      }
     }
     * { box-sizing: border-box; }
     html { overflow-x: hidden; }
@@ -5986,7 +6003,7 @@ def _styles() -> str:
       border: 1px solid var(--line);
       border-radius: 999px;
       padding: 7px 11px;
-      background: rgba(255,255,255,.45);
+      background: rgba(var(--paper-rgb),.45);
       font-weight: 680;
     }
     .global-nav {
@@ -6006,7 +6023,7 @@ def _styles() -> str:
       border: 1px solid var(--line);
       border-radius: 999px;
       padding: 7px 11px;
-      background: rgba(255,255,255,.45);
+      background: rgba(var(--paper-rgb),.45);
     }
     .summary {
       max-width: 880px;
@@ -6026,7 +6043,7 @@ def _styles() -> str:
     }
     .summary-card {
       min-height: 190px;
-      background: rgba(255, 254, 250, .86);
+      background: rgba(var(--paper-rgb), .86);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 20px;
@@ -6075,7 +6092,7 @@ def _styles() -> str:
       gap: 28px;
       margin: 34px 0 26px;
       padding: 28px;
-      background: rgba(255, 254, 250, .9);
+      background: rgba(var(--paper-rgb), .9);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       box-shadow: 0 14px 38px rgba(45, 42, 35, .04);
@@ -6127,7 +6144,7 @@ def _styles() -> str:
       align-items: flex-start;
       border: 1px solid var(--line-soft);
       border-radius: 8px;
-      background: rgba(255, 254, 250, .68);
+      background: rgba(var(--paper-rgb), .68);
       padding: 14px;
     }
     .today-publication span {
@@ -6203,7 +6220,7 @@ def _styles() -> str:
       padding: 18px 20px;
       border: 1px solid var(--line-soft);
       border-radius: 8px;
-      background: rgba(255, 254, 250, .78);
+      background: rgba(var(--paper-rgb), .78);
       flex-wrap: wrap;
     }
     .ai-panel h2 {
@@ -6283,7 +6300,7 @@ def _styles() -> str:
       padding: 16px;
       border: 1px solid var(--line-soft);
       border-radius: 8px;
-      background: rgba(255, 254, 250, .72);
+      background: rgba(var(--paper-rgb), .72);
     }
     .trend-item p {
       color: var(--muted);
@@ -6337,7 +6354,7 @@ def _styles() -> str:
       gap: 14px;
     }
     .card, .draft, .approval, .memory {
-      background: rgba(255, 254, 250, .86);
+      background: rgba(var(--paper-rgb), .86);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 20px;
@@ -6345,7 +6362,7 @@ def _styles() -> str:
       min-width: 0;
     }
     .content-plan {
-      background: rgba(255, 254, 250, .72);
+      background: rgba(var(--paper-rgb), .72);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 22px;
@@ -6695,7 +6712,7 @@ def _styles() -> str:
     }
     .knowledge-upload {
       margin: 32px 0;
-      background: rgba(255, 254, 250, .86);
+      background: rgba(var(--paper-rgb), .86);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 22px;
@@ -6708,7 +6725,7 @@ def _styles() -> str:
       margin: 30px 0;
     }
     .memory-category {
-      background: rgba(255, 254, 250, .72);
+      background: rgba(var(--paper-rgb), .72);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 16px;
@@ -6737,7 +6754,7 @@ def _styles() -> str:
       padding: 4px;
       border: 1px solid var(--line-soft);
       border-radius: 999px;
-      background: rgba(255, 254, 250, .72);
+      background: rgba(var(--paper-rgb), .72);
     }
     .view-switch a {
       color: var(--muted);
@@ -6763,7 +6780,7 @@ def _styles() -> str:
       padding: 16px;
       border: 1px solid var(--line-soft);
       border-radius: 8px;
-      background: rgba(255, 254, 250, .72);
+      background: rgba(var(--paper-rgb), .72);
     }
     .period-picker input {
       min-width: 180px;
@@ -6792,7 +6809,7 @@ def _styles() -> str:
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 10px;
-      background: rgba(255, 254, 250, .72);
+      background: rgba(var(--paper-rgb), .72);
       min-width: 0;
     }
     .calendar-day.muted {
@@ -6953,7 +6970,7 @@ def _styles() -> str:
       gap: 12px;
     }
     .knowledge-card, .document-view {
-      background: rgba(255, 254, 250, .86);
+      background: rgba(var(--paper-rgb), .86);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 18px;
@@ -7001,14 +7018,15 @@ def _styles() -> str:
       border: 1px dashed var(--line);
       border-radius: 8px;
       padding: 24px;
-      background: rgba(255,255,255,.35);
+      background: rgba(var(--paper-rgb),.35);
+      text-align: center;
     }
     .danger, .danger-text {
       color: var(--risk);
       border-color: rgba(140, 70, 55, .3);
     }
     .profile-section {
-      background: rgba(255, 254, 250, .86);
+      background: rgba(var(--paper-rgb), .86);
       border: 1px solid var(--line-soft);
       border-radius: 8px;
       padding: 22px;
@@ -7069,6 +7087,18 @@ def _styles() -> str:
       .shell { width: min(100% - 28px, 1120px); padding-top: 28px; }
       .topbar, .section-title { align-items: flex-start; }
       .topbar { display: grid; }
+      /* one-row horizontal scroll instead of the 8-item nav wrapping to 3 rows */
+      .meta.global-nav {
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-width: 100%;
+        padding-bottom: 4px;
+        scrollbar-width: none;
+      }
+      .meta.global-nav::-webkit-scrollbar { display: none; }
+      .meta.global-nav a { flex: 0 0 auto; }
       .meta { justify-content: flex-start; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
       .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: 1fr; }
@@ -7090,5 +7120,12 @@ def _styles() -> str:
       .approval-actions, .refine, .form-actions, .today-actions, .topic-actions { display: grid; grid-template-columns: 1fr; }
       .approval-actions button, .refine button, .form-actions button, .form-actions a, .today-actions button, .today-actions a, .topic-actions button, .ai-panel button { width: 100%; justify-content: center; text-align: center; }
       .summary-card { min-height: auto; }
+    }
+    /* Dark-mode overrides for the few warm-tint surfaces; placed last so source order wins. */
+    @media (prefers-color-scheme: dark) {
+      .ai-error, .ai-not_configured { background: rgba(217,138,114,.12); }
+      .status-idea { color: #e0c06a; background: rgba(224,192,90,.14); }
+      .status-in_progress { color: #e0a76a; background: rgba(224,167,106,.14); }
+      .error-note { background: rgba(217,138,114,.12); border-color: rgba(217,138,114,.35); }
     }
     """
