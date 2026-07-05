@@ -4208,25 +4208,6 @@ def render_knowledge(
 </html>"""
 
 
-def _thinking_mode_rows(modes: object) -> str:
-    items = [str(mode) for mode in modes] if isinstance(modes, list) else []
-    rows = "".join(
-        f"""
-      <div class="mode-row">
-        <span class="mode-index">{index}</span>
-        <input type="text" name="thinking_mode_item" value="{escape(mode)}" aria-label="Режим мышления {index}">
-      </div>"""
-        for index, mode in enumerate(items, start=1)
-    )
-    # one empty slot to add a new mode
-    rows += """
-      <div class="mode-row">
-        <span class="mode-index">+</span>
-        <input type="text" name="thinking_mode_item" value="" placeholder="Новый режим">
-      </div>"""
-    return rows
-
-
 def render_how_it_works() -> str:
     stages = [
         ("🟢", "Знания", "Память", "/knowledge", "Документы и кейсы, которые вы загружаете.", "Питают Граф знаний и Author Brain."),
@@ -4299,7 +4280,14 @@ def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
         elif key.startswith("rubric__"):
             steps = [line.strip() for line in (values[0] if values else "").splitlines() if line.strip()]
             rubric_rules[key[len("rubric__"):]] = steps
-    thinking_modes = [item.strip() for item in data.get("thinking_mode_item", []) if item.strip()]
+    if "thinking_mode_item" in data:
+        thinking_modes = [item.strip() for item in data.get("thinking_mode_item", []) if item.strip()]
+    else:
+        # The editing UI was removed; keep whatever modes are already stored so a save doesn't reset them.
+        from .bot_rules import load_bot_rules
+
+        stored = load_bot_rules().get("thinking_modes", [])
+        thinking_modes = [str(item) for item in stored] if isinstance(stored, list) else []
     return {
         "thinking_rules": first("thinking_rules"),
         "forbidden_openings": first("forbidden_openings"),
@@ -4371,10 +4359,6 @@ def render_bot_rules(rules: dict[str, object], saved: bool = False) -> str:
 
         <div class="section-title"><div><p class="eyebrow">приоритет тем</p><h2>Правило веса главных тем</h2></div></div>
         {_textarea("theme_weight_rule", "Как вес темы влияет на приоритет", str(rules.get("theme_weight_rule", "")))}
-
-        <div class="section-title"><div><p class="eyebrow">режимы мышления</p><h2>Режимы мышления</h2></div></div>
-        <p class="mode-hint">Каждый режим редактируется отдельно. Очистите поле, чтобы удалить режим; заполните пустое поле внизу, чтобы добавить новый.</p>
-        <div class="mode-list">{_thinking_mode_rows(rules.get("thinking_modes", []))}</div>
 
         <div class="form-actions"><button type="submit">Сохранить правила</button></div>
       </form>
