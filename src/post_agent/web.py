@@ -2790,7 +2790,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         </div>
         <div class="state-note">Период: {escape(_format_week_range(week_start, week_end))}</div>
         {_textarea("focus", "Фокус недели", plan.get("focus", ""))}
-        {_textarea("today_recommendation", "Что подготовить сегодня", plan.get("today_recommendation", ""))}
+        <input type="hidden" name="today_recommendation" value="{escape(str(plan.get("today_recommendation", "")))}">
         {_textarea("content_pillars", "Опорные темы", list_to_text(plan.get("content_pillars", [])))}
         {_textarea("platform_targets", "Площадки", list_to_text(plan.get("platform_targets", [])))}
       </section>

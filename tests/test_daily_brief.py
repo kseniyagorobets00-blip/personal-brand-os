@@ -210,7 +210,9 @@ class DailyBriefTests(unittest.TestCase):
             self.assertNotIn("Создать черновик", html)
 
     def test_daily_brief_shows_all_today_publications_from_content_plan(self) -> None:
-        today = date.today().strftime("%d.%m.%Y")
+        # Use the app's own notion of "today" (Moscow time), not the machine clock,
+        # so the test doesn't flake around the UTC/Moscow date boundary.
+        today = today_moscow().strftime("%d.%m.%Y")
         with TemporaryDirectory() as directory:
             root = Path(directory)
             sources_path = root / "sources.json"
