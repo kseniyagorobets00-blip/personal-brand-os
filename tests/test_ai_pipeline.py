@@ -3,12 +3,24 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from post_agent.ai_gateway import AIGatewayConfig, load_ai_config
-from post_agent.ai_pipeline import AIPipeline, load_ai_result, load_ai_status
+from post_agent.ai_pipeline import AIPipeline, _needs_revision, load_ai_result, load_ai_status
 from post_agent.daily_brief import DailyBriefService
 from post_agent.web import render_daily_brief
 
 
 class AIPipelineTests(unittest.TestCase):
+    def test_draft_language_triggers_revision(self) -> None:
+        english = "Among the available angles, the strongest fit today is the CX operations thesis about ownership and handoffs."
+        russian = "Сегодня заметила: сервис ломается не в контакте с гостем, а на стыке ролей, где никто не владеет переходом."
+        good = {"draft": russian, "author_fit_score": "9"}
+        bad = {"draft": english, "author_fit_score": "9"}
+        # Russian platform must reject an English draft, accept a Russian one.
+        self.assertTrue(_needs_revision(bad, "VC"))
+        self.assertFalse(_needs_revision(good, "VC"))
+        # LinkedIn expects English, so a Russian draft must be revised.
+        self.assertTrue(_needs_revision(good, "LinkedIn"))
+        self.assertFalse(_needs_revision(bad, "LinkedIn"))
+
     def test_env_config_loads_from_file(self) -> None:
         with TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"

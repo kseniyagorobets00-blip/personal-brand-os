@@ -113,7 +113,8 @@ class AIPipeline:
             context = self._build_context()
             response = self.gateway.complete_json(_system_prompt(), _user_prompt(context))
             result = self._normalize_response(response)
-            if _needs_revision(result):
+            target_platform = str((context.get("target_publication") or {}).get("platform", ""))
+            if _needs_revision(result, target_platform):
                 revised = self.gateway.complete_json(_revision_system_prompt(), _revision_prompt(context, result))
                 result = self._normalize_response({**response, **revised})
             result["thinking_engine"] = context.get("thinking_engine", {})
@@ -346,8 +347,11 @@ def _revision_system_prompt() -> str:
 
 
 def _revision_prompt(context: dict[str, Any], result: dict[str, Any]) -> str:
+    platform = str((context.get("target_publication") or {}).get("platform", ""))
+    language = "английском" if platform == "LinkedIn" else "русском"
     return (
-        "Текущий draft слабый или содержит запрещенное вступление/служебные маркеры. "
+        "Текущий draft слабый, содержит запрещенное вступление/служебные маркеры или написан не на том языке. "
+        f"Язык площадки {platform or 'публикации'} — draft должен быть полностью на {language} языке. "
         "Перепиши draft одной улучшенной версией. Сохрани смысл и используй author_brain. "
         "Верни JSON с полями draft, thinking_mode, author_fit_score, author_fit_notes.\n\n"
         f"Author Brain:\n{json.dumps(context.get('author_brain', {}), ensure_ascii=False, indent=2)}\n\n"
@@ -373,7 +377,7 @@ def _target_publication(content_plan: dict[str, Any]) -> dict[str, object]:
     return publications[0] if isinstance(publications[0], dict) else {}
 
 
-def _needs_revision(result: dict[str, Any]) -> bool:
+def _needs_revision(result: dict[str, Any], platform: str = "") -> bool:
     draft = str(result.get("draft", ""))
     if not draft:
         return False
@@ -381,8 +385,23 @@ def _needs_revision(result: dict[str, Any]) -> bool:
         return True
     if _contains_forbidden_marker(draft):
         return True
+    if platform and _draft_language_mismatch(draft, platform):
+        return True
     score = _score_as_int(result.get("author_fit_score", ""))
     return score is not None and score < 8
+
+
+def _draft_language_mismatch(draft: str, platform: str) -> bool:
+    """Deterministic language guard: LinkedIn must be English, other platforms Russian."""
+    cyrillic = len(re.findall(r"[А-Яа-яЁё]", draft))
+    latin = len(re.findall(r"[A-Za-z]", draft))
+    if platform == "LinkedIn":
+        # English expected: a predominantly Russian draft is wrong.
+        return cyrillic > 0 and cyrillic > latin
+    # Russian platforms: a predominantly English draft is wrong (short English terms are fine).
+    if cyrillic:
+        return latin > cyrillic * 1.4
+    return latin >= 40
 
 
 def _starts_with_forbidden_opening(text: str) -> bool:
