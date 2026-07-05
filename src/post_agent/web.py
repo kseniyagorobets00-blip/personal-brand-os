@@ -247,6 +247,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                     saved=query_params.get("saved", ["0"])[0] == "1",
                     generated=query_params.get("generated", ["0"])[0] == "1",
                     gen_error=query_params.get("gen_error", [""])[0],
+                    revised=query_params.get("revised", ["0"])[0] == "1",
+                    revise_error=query_params.get("revise_error", [""])[0],
                 )
             )
             return
@@ -427,6 +429,25 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                     location = f"/texts/{post_id}?generated=1"
                 else:
                     location = f"/texts/{post_id}?gen_error={quote(str(result.get('error', 'AI недоступен'))[:200])}"
+            elif action == "revise":
+                title = data.get("title", [""])[0]
+                platform = data.get("platform", [""])[0]
+                current_text = data.get("text", [""])[0]
+                instruction = data.get("edit_instruction", [""])[0]
+                result = _revise_post_text(current_text, instruction, title or post.title, platform or post.platform)
+                new_text = str(result.get("text", "")).strip() or current_text
+                self.text_posts.update(
+                    post_id=post_id,
+                    title=title,
+                    platform=platform,
+                    publication_date=data.get("publication_date", [""])[0],
+                    text=new_text,
+                    status=data.get("status", ["draft"])[0],
+                )
+                if result.get("text"):
+                    location = f"/texts/{post_id}?revised=1"
+                else:
+                    location = f"/texts/{post_id}?revise_error={quote(str(result.get('error', 'AI недоступен'))[:200])}"
             else:
                 self.text_posts.update(
                     post_id=post_id,
@@ -2645,8 +2666,9 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
     platform = query.get("platform", [""])[0].strip()
     page = _positive_int(query.get("page", ["1"])[0], 1)
     week_start, week_end = _content_plan_period(plan)
+    period_active = any(query.get(key, [""])[0].strip() for key in ("month", "week_start", "week_end"))
     posts = repository.list_posts(tab=tab, query=search, platform=platform)
-    if tab == "planned":
+    if tab == "planned" and period_active:
         posts = _filter_text_posts_by_period(posts, week_start, week_end)
     per_page = 10
     page_count = max(1, (len(posts) + per_page - 1) // per_page)
@@ -2688,7 +2710,7 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
         <div>
           <p class="eyebrow">{'запланированные тексты' if tab == 'planned' else 'архив публикаций'}</p>
           <h2>{'Запланировано' if tab == 'planned' else 'Архив'}</h2>
-          {'<p class="page-hint">Период: ' + escape(_format_week_range(week_start, week_end)) + '</p>' if tab == 'planned' else ''}
+          {('<p class="page-hint">Период: ' + escape(_format_week_range(week_start, week_end)) + '</p>' if period_active else '<p class="page-hint">Показаны все запланированные тексты из контент-плана. Выберите период выше, чтобы отфильтровать.</p>') if tab == 'planned' else ''}
         </div>
         <span>{len(posts)} всего</span>
       </div>
@@ -2752,15 +2774,78 @@ def _generate_post_text(title: str, platform: str, brief: str) -> dict[str, obje
         return {"error": f"Не удалось сгенерировать текст: {exc}"}
 
 
-def render_text_post_detail(post: TextPost, saved: bool = False, generated: bool = False, gen_error: str = "") -> str:
+def _revise_post_text(current_text: str, instruction: str, title: str, platform: str) -> dict[str, object]:
+    """Revise the author's existing post text according to precise edit comments.
+
+    Unlike generation, this keeps the author's text and applies exactly what the
+    instruction asks — it does not rewrite the post from scratch."""
+    current_text = current_text.strip()
+    instruction = instruction.strip()
+    if not instruction:
+        return {"error": "Напишите, что именно поменять в тексте."}
+    if not current_text:
+        return {"error": "Сначала напишите или сгенерируйте текст, затем попросите AI внести правки."}
+    try:
+        gateway = AIGateway()
+        if not gateway.is_configured():
+            raise AIGatewayError("ProxyAPI не настроен.")
+        norm_platform = _normalize_platform(platform)
+        language = _language_for_platform(norm_platform)
+        context = DailyBriefRequestHandler.ai_context_engine.build(
+            {"topic": title, "platform": platform, "summary": instruction},
+            include_local_sources=True,
+        )
+        response = _complete_json_with_retry(
+            gateway,
+            system_prompt=(
+                "Ты AI-редактор для Personal Brand OS. Тебе дают ГОТОВЫЙ текст поста автора и "
+                "точные правки от автора. Внеси ИМЕННО эти правки, сохрани авторский текст, тон и "
+                "структуру там, где правки их не затрагивают. Не переписывай пост с нуля, не добавляй "
+                "пояснений от себя, соблюдай Writing DNA и правила площадки. Ответь строго JSON с полем draft."
+            ),
+            user_prompt=(
+                f"Площадка: {norm_platform}\n"
+                f"Язык: {language}. {_language_policy_for_platform(norm_platform)}\n"
+                f"Тема: {title}\n\n"
+                f"ТЕКУЩИЙ ТЕКСТ ПОСТА:\n{current_text}\n\n"
+                f"ПРАВКИ АВТОРА (примени точно и только их):\n{instruction}\n\n"
+                f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
+                "Верни строго JSON: {\"draft\": \"полный обновлённый текст поста\"}."
+            ),
+            action="text_post_revise",
+        )
+        draft = str(response.get("draft") or response.get("text") or "").strip()
+        if not draft:
+            return {"error": "AI вернул пустой ответ. Попробуйте ещё раз."}
+        return {"text": draft}
+    except AIGatewayError as exc:
+        _save_ai_action_error("text_post_revise", exc)
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - surface any failure as a friendly message
+        _save_ai_action_error("text_post_revise", exc)
+        return {"error": f"Не удалось внести правки: {exc}"}
+
+
+def render_text_post_detail(
+    post: TextPost,
+    saved: bool = False,
+    generated: bool = False,
+    gen_error: str = "",
+    revised: bool = False,
+    revise_error: str = "",
+) -> str:
     back_tab = post.tab
     notice = ""
     if saved:
         notice += "<div class=\"notice\">Сохранено.</div>"
     if generated:
         notice += "<div class=\"notice\">Текст сгенерирован. Проверьте и при необходимости отредактируйте.</div>"
+    if revised:
+        notice += "<div class=\"notice\">Правки внесены. Проверьте результат и при необходимости уточните комментарий.</div>"
     if gen_error:
         notice += _ai_error_note(gen_error, "сгенерировать текст")
+    if revise_error:
+        notice += _ai_error_note(revise_error, "внести правки")
     archive_action = (
         '<button class="ghost" name="action" value="archive" type="submit">Перенести в архив</button>'
         if post.tab == "planned"
@@ -2814,6 +2899,15 @@ def render_text_post_detail(post: TextPost, saved: bool = False, generated: bool
             <button id="focus-enter" class="ghost" type="button">✎ Режим фокуса</button>
             <button id="copy-text" class="ghost" type="button">Скопировать текст</button>
           </div>
+        </div>
+        <div class="ai-revise">
+          <label class="editor-label">
+            <span>Правки для AI</span>
+            <textarea id="edit-instruction" name="edit_instruction" rows="3" placeholder="Напишите точные правки: например «сократи вступление, убери клише, добавь пример из гостиничного сервиса, сделай финал сильнее»"></textarea>
+          </label>
+          <p class="brief-hint">AI перепишет текущий текст, применив именно эти комментарии, и сохранит ваш стиль.</p>
+          <button name="action" value="revise" type="submit" class="secondary"
+            onclick="var i=document.getElementById('edit-instruction'); if(!i||!i.value.trim()){{alert('Напишите, что поменять в тексте.');return false;}} this.textContent='Вношу правки…';">✍️ Внести правки по комментарию</button>
         </div>
         <div class="form-actions">
           <button name="action" value="save" type="submit">Сохранить</button>
@@ -2936,6 +3030,8 @@ def _filter_text_posts_by_period(posts: list[TextPost], start: str, end: str) ->
     for post in posts:
         parsed = parse_plan_date(post.publication_date)
         if not parsed:
+            # Keep undated posts visible so plan items without a date are never lost.
+            result.append(post)
             continue
         if parsed_start and parsed < parsed_start:
             continue
@@ -7336,6 +7432,19 @@ def _styles() -> str:
       margin: 0;
     }
     .editor-bar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .ai-revise {
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin: 14px 0 4px;
+      background: var(--surface-soft, rgba(0,0,0,0.02));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .ai-revise textarea { min-height: 68px; }
+    .ai-revise .brief-hint { margin: 0; }
+    .ai-revise button { align-self: flex-start; }
     .text-brief {
       border: 1px solid var(--line-soft);
       border-left: 3px solid var(--accent);
