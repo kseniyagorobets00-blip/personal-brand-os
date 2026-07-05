@@ -4068,6 +4068,25 @@ def render_knowledge(
 </html>"""
 
 
+def _thinking_mode_rows(modes: object) -> str:
+    items = [str(mode) for mode in modes] if isinstance(modes, list) else []
+    rows = "".join(
+        f"""
+      <div class="mode-row">
+        <span class="mode-index">{index}</span>
+        <input type="text" name="thinking_mode_item" value="{escape(mode)}" aria-label="Режим мышления {index}">
+      </div>"""
+        for index, mode in enumerate(items, start=1)
+    )
+    # one empty slot to add a new mode
+    rows += """
+      <div class="mode-row">
+        <span class="mode-index">+</span>
+        <input type="text" name="thinking_mode_item" value="" placeholder="Новый режим">
+      </div>"""
+    return rows
+
+
 def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
     def first(key: str) -> str:
         return data.get(key, [""])[0]
@@ -4076,12 +4095,13 @@ def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
     for key, values in data.items():
         if key.startswith("platform__"):
             platform_rules[key[len("platform__"):]] = values[0] if values else ""
+    thinking_modes = [item.strip() for item in data.get("thinking_mode_item", []) if item.strip()]
     return {
         "thinking_rules": first("thinking_rules"),
         "forbidden_openings": first("forbidden_openings"),
         "anti_repeat_rules": first("anti_repeat_rules"),
         "theme_weight_rule": first("theme_weight_rule"),
-        "thinking_modes": first("thinking_modes"),
+        "thinking_modes": thinking_modes,
         "platform_rules": platform_rules,
     }
 
@@ -4137,7 +4157,8 @@ def render_bot_rules(rules: dict[str, object], saved: bool = False) -> str:
         {_textarea("theme_weight_rule", "Как вес темы влияет на приоритет", str(rules.get("theme_weight_rule", "")))}
 
         <div class="section-title"><div><p class="eyebrow">режимы мышления</p><h2>Режимы мышления</h2></div></div>
-        {_textarea("thinking_modes", "Доступные режимы (по одному на строку)", _lines("thinking_modes"))}
+        <p class="mode-hint">Каждый режим редактируется отдельно. Очистите поле, чтобы удалить режим; заполните пустое поле внизу, чтобы добавить новый.</p>
+        <div class="mode-list">{_thinking_mode_rows(rules.get("thinking_modes", []))}</div>
 
         <div class="form-actions"><button type="submit">Сохранить правила</button></div>
       </form>
@@ -6642,6 +6663,37 @@ def _styles() -> str:
     .edit-row {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .mode-hint {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin: 4px 0 12px;
+    }
+    .mode-list {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .mode-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .mode-index {
+      flex: 0 0 auto;
+      width: 28px;
+      height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      background: var(--surface-2, rgba(120,120,120,0.12));
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 680;
+    }
+    .mode-row input {
+      flex: 1 1 auto;
     }
     .knowledge-upload p {
       color: var(--muted);
