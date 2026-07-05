@@ -4809,40 +4809,33 @@ def render_knowledge_document(document: object) -> str:
     )
 
 
+def _truncate_text(value: str, limit: int) -> str:
+    value = " ".join(str(value).split())
+    if len(value) <= limit:
+        return value
+    return value[: limit - 1].rstrip() + "…"
+
+
 def _knowledge_card(document: object) -> str:
     metadata = _document_metadata(document)
-    document_type = str(metadata.get("document_type", "document"))
     summary = str(metadata.get("summary") or getattr(document, "excerpt", ""))
-    topics = _meta_list(metadata, "topics")
-    competencies = _meta_list(metadata, "competencies") or _meta_list(metadata, "skills")
-    projects = _meta_list(metadata, "projects")
-    companies = _meta_list(metadata, "companies")
-    language = str(metadata.get("language", ""))
+    summary_short = _truncate_text(summary, 140)
     return f"""
     <article class="knowledge-card">
       <div>
         <h3><a href="/knowledge/{escape(document.id)}">{escape(document.title)}</a></h3>
-        <p><b>Тип:</b> {escape(document_type)}</p>
-        <p><b>Краткое описание:</b> {escape(summary)}</p>
-        {_meta_row("Темы", topics)}
-        {_meta_row("Компетенции", competencies)}
-        {_meta_row("Проекты", projects)}
-        {_meta_row("Компании", companies)}
-        <p><b>Язык:</b> {escape(language or "—")}</p>
+        {f'<p>{escape(summary_short)}</p>' if summary_short else ''}
         <div class="doc-meta">
           <span>{escape(document.extension)}</span>
           <span>{document.word_count} слов</span>
-          <span>{escape(document.uploaded_at)}</span>
-        </div>
-        <div class="doc-actions">
-          <a class="open-link" href="/knowledge/{escape(document.id)}#markdown">Подробнее</a>
-          <a class="open-link" href="/knowledge/{escape(document.id)}#ai-analysis">AI-анализ</a>
-          <a class="open-link" href="/knowledge/{escape(document.id)}#chunks">Chunks</a>
         </div>
       </div>
-      <form method="post" action="/knowledge/delete/{escape(document.id)}">
-        <button class="ghost danger-text" type="submit">Удалить</button>
-      </form>
+      <div class="card-actions">
+        <a class="open-link" href="/knowledge/{escape(document.id)}">Открыть</a>
+        <form method="post" action="/knowledge/delete/{escape(document.id)}">
+          <button class="ghost danger-text" type="submit">Удалить</button>
+        </form>
+      </div>
     </article>
     """
 
@@ -4865,18 +4858,6 @@ def _document_chunks(document: object) -> list[dict[str, object]]:
     if isinstance(analysis, dict) and isinstance(analysis.get("chunks"), list):
         return [chunk for chunk in analysis["chunks"] if isinstance(chunk, dict)]
     return []
-
-
-def _meta_list(metadata: dict[str, object], key: str) -> list[str]:
-    value = metadata.get(key, [])
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if str(item).strip()]
-
-
-def _meta_row(label: str, values: list[str]) -> str:
-    text = " • ".join(values) if values else "—"
-    return f"<p><b>{escape(label)}:</b> {escape(text)}</p>"
 
 
 def _metadata_panel(metadata: dict[str, object]) -> str:

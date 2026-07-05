@@ -270,9 +270,9 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("Принципы", library_html)
         self.assertIn("Истории", library_html)
         self.assertIn("note", library_html)
-        self.assertIn("AI-анализ", library_html)
-        self.assertIn("Chunks", library_html)
-        self.assertIn("Тип:", library_html)
+        # The document card is now concise; full details (type, AI analysis, chunks)
+        # live on the document detail page, reachable via "Открыть".
+        self.assertIn("Открыть", library_html)
         self.assertIn("Service Design note", document_html)
         self.assertIn("Markdown", document_html)
         self.assertIn("document_type", document_html)
