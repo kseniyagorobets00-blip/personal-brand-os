@@ -313,17 +313,18 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             payload = self.rfile.read(length).decode("utf-8")
             data = parse_qs(payload)
+            # The DNA tab is one form now: it carries both author-profile style
+            # fields and Writing DNA generation rules, saved together.
             self.author_profile_repository.save_raw(_author_profile_form_to_raw(data))
+            self.writing_dna_repository.save_raw(writing_dna_form_to_raw(data))
             self.send_response(303)
             self.send_header("Location", "/author-profile?tab=dna&saved=1")
             self.end_headers()
             return
         if path == "/writing-dna":
-            length = int(self.headers.get("Content-Length", "0"))
-            data = parse_qs(self.rfile.read(length).decode("utf-8"))
-            self.writing_dna_repository.save_raw(writing_dna_form_to_raw(data))
+            # Backward compatibility: DNA is saved via /author-profile now.
             self.send_response(303)
-            self.send_header("Location", "/author-profile?tab=dna&dna_saved=1")
+            self.send_header("Location", "/author-profile?tab=dna")
             self.end_headers()
             return
         if path == "/bot-rules":
@@ -1144,10 +1145,7 @@ def _writing_dna_panel(dna: dict[str, object], profile: dict[str, object]) -> st
           {_textarea("professional_terms", "Профессиональная терминология", list_to_text(vocabulary.get("professional_terms", [])))}
           {_textarea("what_not_to_write", "Чего не писать", list_to_text(what_not_to_write))}
           {_textarea("examples_and_stories", "Примеры хорошего текста", _stories_to_text(examples_and_stories))}
-          <div class="form-actions"><button type="submit">Сохранить профиль автора</button></div>
         </section>
-      </form>
-      <form class="profile-form" method="post" action="/writing-dna">
         <section class="profile-section">
           <p class="eyebrow">правила генерации</p>
           {_textarea("main_goal", "Главная цель письма", dna.get("main_goal", ""))}
@@ -1162,7 +1160,10 @@ def _writing_dna_panel(dna: dict[str, object], profile: dict[str, object]) -> st
           {_textarea("draft_rule", "Правило первого черновика", dna.get("draft_rule", ""))}
           {_textarea("self_check", "Самопроверка", list_to_text(dna.get("self_check", [])))}
           {_textarea("anti_template_rule", "Не превращать в шаблон", dna.get("anti_template_rule", ""))}
-          <div class="form-actions"><button type="submit">Сохранить ДНК письма</button></div>
+        </section>
+        <section class="profile-section">
+          <p class="eyebrow">сохранение</p>
+          <div class="form-actions"><button type="submit">Сохранить профиль автора</button></div>
         </section>
       </form>
     </section>
