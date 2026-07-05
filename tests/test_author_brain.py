@@ -14,7 +14,7 @@ class AuthorBrainTests(unittest.TestCase):
             def is_configured(self):
                 return True
 
-            def complete_json(self, system, user):
+            def complete_json(self, system, user, **kwargs):
                 return {
                     "companies": ["Мой Отель"],
                     "roles": ["Операционный директор"],

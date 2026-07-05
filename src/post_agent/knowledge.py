@@ -461,7 +461,7 @@ def build_ai_document_analysis(title: str, text: str, gateway: object | None = N
         gw = gateway or AIGateway()
         if not gw.is_configured():
             return {}
-        response = gw.complete_json(_AI_DOC_SYSTEM, _ai_doc_user_prompt(title, text))
+        response = gw.complete_json(_AI_DOC_SYSTEM, _ai_doc_user_prompt(title, text), action="knowledge_document")
     except Exception:
         return {}
     if not isinstance(response, dict):

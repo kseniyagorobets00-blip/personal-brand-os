@@ -15,7 +15,7 @@ class KnowledgeBaseTests(unittest.TestCase):
             def is_configured(self):
                 return True
 
-            def complete_json(self, system, user):
+            def complete_json(self, system, user, **kwargs):
                 return {
                     "summary": "Резюме операционного директора",
                     "companies": ["Мой Отель"],
@@ -48,7 +48,7 @@ class KnowledgeBaseTests(unittest.TestCase):
             def is_configured(self):
                 return False
 
-            def complete_json(self, system, user):
+            def complete_json(self, system, user, **kwargs):
                 raise AssertionError("must not be called when AI is off")
 
         with TemporaryDirectory() as directory:

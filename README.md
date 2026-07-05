@@ -74,7 +74,13 @@ AI generation runs through ProxyAPI. Create a `.env` file in the project root:
 PROXY_API_KEY=your_key
 PROXY_API_BASE_URL=https://api.proxyapi.ru/openai/v1
 AI_MODEL=gpt-4o-mini
+AI_PREMIUM_MODEL=gpt-5.4-nano
 ```
+
+`AI_MODEL` (default `gpt-4o-mini`) is used for most tasks: trend radar, text edits,
+document parsing, brief refinements. `AI_PREMIUM_MODEL` is reserved for deep work only:
+Daily Brief draft generation and full content-plan rebuild. If you still have a single
+`AI_MODEL=gpt-5.4-nano`, the app auto-splits it into mini + premium on load.
 
 Without these values the app still works and degrades gracefully: templates and
 local analysis are used instead of live generation.

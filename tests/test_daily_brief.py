@@ -290,7 +290,7 @@ class DailyBriefTests(unittest.TestCase):
             def is_configured(self) -> bool:
                 return True
 
-            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
+            def complete_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict[str, str]:
                 return {"title": "AI-заголовок", "text": "AI-версия текста"}
 
         with patch("post_agent.web.AIGateway", return_value=FakeGateway()):
@@ -308,7 +308,7 @@ class DailyBriefTests(unittest.TestCase):
             def is_configured(self) -> bool:
                 return True
 
-            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
+            def complete_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict[str, str]:
                 self.calls += 1
                 raise AIGatewayError("timed out")
 
@@ -494,7 +494,7 @@ class DailyBriefTests(unittest.TestCase):
 
     def test_content_plan_generate_publication_updates_only_selected_item(self) -> None:
         class Gateway:
-            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
+            def complete_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict[str, str]:
                 return {
                     "publication": {
                         "topic": "Generated topic",
@@ -585,7 +585,7 @@ class DailyBriefTests(unittest.TestCase):
                 self.calls = 0
                 self.prompts: list[str] = []
 
-            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, str]:
+            def complete_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict[str, str]:
                 self.calls += 1
                 self.prompts.append(user_prompt)
                 if self.calls == 1:
@@ -634,7 +634,7 @@ class DailyBriefTests(unittest.TestCase):
 
     def test_content_plan_generate_full_plan_uses_editorial_strategy(self) -> None:
         class Gateway:
-            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, object]:
+            def complete_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict[str, object]:
                 return {
                     "content_plan": {
                         "focus": "Generated focus",
@@ -718,7 +718,7 @@ class DailyBriefTests(unittest.TestCase):
 
     def test_content_plan_strategy_respects_calendar_weekdays(self) -> None:
         class Gateway:
-            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, object]:
+            def complete_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict[str, object]:
                 return {
                     "content_plan": {
                         "planned_publications": [

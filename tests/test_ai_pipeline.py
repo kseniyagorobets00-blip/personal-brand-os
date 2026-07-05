@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from post_agent.ai_gateway import AIGatewayConfig, load_ai_config
+from post_agent.ai_gateway import AIGatewayConfig, load_ai_config, resolve_model_for_action
 from post_agent.ai_pipeline import AIPipeline, _needs_revision, load_ai_result, load_ai_status
 from post_agent.daily_brief import DailyBriefService
 from post_agent.web import render_daily_brief
@@ -36,6 +36,24 @@ class AIPipelineTests(unittest.TestCase):
         self.assertEqual(config.model, "test-model")
         self.assertTrue(config.is_configured)
 
+    def test_legacy_premium_only_env_splits_into_mini_and_premium(self) -> None:
+        with TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "PROXY_API_KEY=test-key\nPROXY_API_BASE_URL=https://example.test/v1\nAI_MODEL=gpt-5.4-nano\n",
+                encoding="utf-8",
+            )
+            config = load_ai_config(env_path)
+        self.assertEqual(config.model, "gpt-4o-mini")
+        self.assertEqual(config.premium_model, "gpt-5.4-nano")
+
+    def test_premium_model_used_only_for_deep_actions(self) -> None:
+        config = AIGatewayConfig("k", "https://example.test/v1", "gpt-4o-mini", "gpt-5.4-nano")
+        self.assertEqual(resolve_model_for_action(config, "text_post_generate"), "gpt-4o-mini")
+        self.assertEqual(resolve_model_for_action(config, "trend_radar_synthesize"), "gpt-4o-mini")
+        self.assertEqual(resolve_model_for_action(config, "ai_pipeline_draft"), "gpt-5.4-nano")
+        self.assertEqual(resolve_model_for_action(config, "content_plan_full"), "gpt-5.4-nano")
+
     def test_pipeline_without_proxyapi_does_not_crash(self) -> None:
         with TemporaryDirectory() as directory:
             result_path = Path(directory) / "daily_brief_ai.json"
@@ -44,7 +62,7 @@ class AIPipelineTests(unittest.TestCase):
                 result_path=result_path,
                 status_path=status_path,
             )
-            pipeline.gateway.config = AIGatewayConfig("", "", "")
+            pipeline.gateway.config = AIGatewayConfig("", "", "", "")
 
             result = pipeline.run()
             status = load_ai_status(status_path)
@@ -58,7 +76,10 @@ class AIPipelineTests(unittest.TestCase):
             def is_configured(self) -> bool:
                 return True
 
-            def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, object]:
+            def model_for(self, action=None):
+                return "gpt-5.4-nano"
+
+            def complete_json(self, system_prompt: str, user_prompt: str, **kwargs) -> dict[str, object]:
                 self.user_prompt = user_prompt
                 return {
                     "main_topic": "AI тема дня",

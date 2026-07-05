@@ -2381,7 +2381,8 @@ def _ai_diagnostics_block(diagnostics: dict[str, object]) -> str:
         ("Рабочая папка", diagnostics.get("cwd", "")),
         (".env загружен", "да" if diagnostics.get("env_loaded") else "нет"),
         ("ProxyAPI настроен", "да" if diagnostics.get("proxy_configured") else "нет"),
-        ("Модель", diagnostics.get("model", "")),
+        ("Модель (основная)", diagnostics.get("model", "")),
+        ("Модель (глубокий анализ)", diagnostics.get("premium_model", "")),
         ("Последняя ошибка AI-анализа", diagnostics.get("last_error", "") or "нет"),
         ("Последняя техническая ошибка AI-действия", diagnostics.get("last_action_error", "") or "нет"),
     )
@@ -6159,6 +6160,7 @@ def _apply_feedback_with_ai(title: str, text: str, feedback: str) -> dict[str, o
                 f"AI Context Engine:\n{json.dumps(context, ensure_ascii=False)}\n\n"
                 "Rewrite the draft in Russian as a complete publication. Return JSON: {\"title\":\"...\", \"text\":\"...\"}."
             ),
+            action="draft_feedback",
         )
         return {
             "action": "Комментарий AI",
@@ -6189,7 +6191,7 @@ def _complete_json_with_retry(
     last_error: Exception | None = None
     for attempt in range(2):
         try:
-            return gateway.complete_json(system_prompt=system_prompt, user_prompt=user_prompt)
+            return gateway.complete_json(system_prompt=system_prompt, user_prompt=user_prompt, action=action)
         except AIGatewayError as exc:
             last_error = exc
             if attempt == 1:

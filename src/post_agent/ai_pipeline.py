@@ -111,11 +111,15 @@ class AIPipeline:
                 return None
 
             context = self._build_context()
-            response = self.gateway.complete_json(_system_prompt(), _user_prompt(context))
+            response = self.gateway.complete_json(_system_prompt(), _user_prompt(context), action="ai_pipeline_draft")
             result = self._normalize_response(response)
             target_platform = str((context.get("target_publication") or {}).get("platform", ""))
             if _needs_revision(result, target_platform):
-                revised = self.gateway.complete_json(_revision_system_prompt(), _revision_prompt(context, result))
+                revised = self.gateway.complete_json(
+                    _revision_system_prompt(),
+                    _revision_prompt(context, result),
+                    action="ai_pipeline_revision",
+                )
                 result = self._normalize_response({**response, **revised})
             result["thinking_engine"] = context.get("thinking_engine", {})
             result["thinking_transparency"] = (context.get("thinking_engine", {}) or {}).get("transparency", [])
@@ -169,7 +173,7 @@ class AIPipeline:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         return {
             "generated_at": now,
-            "model": load_ai_config().model,
+            "model": self.gateway.model_for("ai_pipeline_draft"),
             "main_topic": str(response.get("main_topic", response.get("daily_recommendation", ""))),
             "publication_goal": str(response.get("publication_goal", "")),
             "main_idea": str(response.get("main_idea", "")),
@@ -267,6 +271,7 @@ def ai_diagnostics(status_path: Path = DEFAULT_AI_STATUS_PATH) -> dict[str, obje
         "env_loaded": DEFAULT_ENV_PATH.exists(),
         "proxy_configured": config.is_configured,
         "model": config.model,
+        "premium_model": config.premium_model,
         "last_error": status.error,
         "last_action_error": _last_action_error(),
     }

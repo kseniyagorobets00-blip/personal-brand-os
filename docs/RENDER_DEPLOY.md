@@ -39,7 +39,8 @@ Add these in Render dashboard:
 APP_ENV=production
 PROXY_API_KEY=your_proxyapi_key
 PROXY_API_BASE_URL=https://api.proxyapi.ru/openai/v1
-AI_MODEL=gpt-5.4-nano
+AI_MODEL=gpt-4o-mini
+AI_PREMIUM_MODEL=gpt-5.4-nano
 TREND_RADAR_CACHE_TTL_MINUTES=30
 SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 SUPABASE_SERVICE_KEY=your_service_role_key

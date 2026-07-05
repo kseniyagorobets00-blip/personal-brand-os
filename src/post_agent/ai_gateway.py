@@ -11,12 +11,26 @@ from urllib import error, request
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_PATH = ROOT / ".env"
 
+# Default workhorse — cheap, good enough for structured JSON and edits.
+DEFAULT_MODEL = "gpt-4o-mini"
+# Deep reasoning — only for tasks where mini often fails (full draft, full plan).
+DEFAULT_PREMIUM_MODEL = "gpt-5.4-nano"
+
+# Actions that need the premium model. Everything else uses AI_MODEL (mini).
+PREMIUM_ACTIONS = frozenset(
+    {
+        "ai_pipeline_draft",  # Daily Brief: full author draft from rich context
+        "content_plan_full",  # Generate/rebuild the whole week content plan
+    }
+)
+
 
 @dataclass(frozen=True)
 class AIGatewayConfig:
     api_key: str
     base_url: str
     model: str
+    premium_model: str
 
     @property
     def is_configured(self) -> bool:
@@ -36,12 +50,23 @@ class AIGateway:
     def is_configured(self) -> bool:
         return self.config.is_configured
 
-    def complete_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+    def model_for(self, action: str | None = None) -> str:
+        return resolve_model_for_action(self.config, action)
+
+    def complete_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        *,
+        action: str | None = None,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         if not self.config.is_configured:
             raise AIGatewayError("ProxyAPI не настроен.")
 
+        chosen_model = model or resolve_model_for_action(self.config, action)
         payload = {
-            "model": self.config.model,
+            "model": chosen_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -93,13 +118,35 @@ class AIGateway:
         return parsed
 
 
+def resolve_model_for_action(config: AIGatewayConfig, action: str | None = None) -> str:
+    if action and action in PREMIUM_ACTIONS:
+        return config.premium_model or config.model
+    return config.model
+
+
 def load_ai_config(env_path: Path = DEFAULT_ENV_PATH) -> AIGatewayConfig:
     values = _read_env_file(env_path)
+    model = values.get("AI_MODEL", os.environ.get("AI_MODEL", DEFAULT_MODEL)).strip() or DEFAULT_MODEL
+    premium = values.get("AI_PREMIUM_MODEL", os.environ.get("AI_PREMIUM_MODEL", "")).strip()
+    # Legacy: single AI_MODEL pointed at an expensive model — split into mini + premium.
+    if not premium and _looks_premium_model(model):
+        premium = model
+        model = DEFAULT_MODEL
+    if not premium:
+        premium = model
     return AIGatewayConfig(
         api_key=values.get("PROXY_API_KEY", os.environ.get("PROXY_API_KEY", "")).strip(),
         base_url=values.get("PROXY_API_BASE_URL", os.environ.get("PROXY_API_BASE_URL", "")).strip(),
-        model=values.get("AI_MODEL", os.environ.get("AI_MODEL", "")).strip(),
+        model=model,
+        premium_model=premium,
     )
+
+
+def _looks_premium_model(name: str) -> bool:
+    lowered = name.lower()
+    if "mini" in lowered:
+        return False
+    return any(marker in lowered for marker in ("5.4", "5-4", "o1", "opus", "nano"))
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
