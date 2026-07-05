@@ -131,8 +131,7 @@ class AIPipelineTests(unittest.TestCase):
         self.assertIn("ProxyAPI настроен", html)
         self.assertIn("Последняя ошибка AI-анализа", html)
         self.assertIn("AI-анализ", html)
-        self.assertIn("Тренды", html)
-        self.assertIn("Демонстрационные данные", html)
+        self.assertIn("Тренды и сигналы", html)
         self.assertIn("Локальные данные", html)
 
 

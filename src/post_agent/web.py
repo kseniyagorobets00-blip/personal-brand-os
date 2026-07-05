@@ -862,13 +862,13 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
 
     {_today_card(brief, primary_topic, primary_idea, primary_recommendation, ai_result)}
 
-    {_compact_content_plan_block(brief.content_plan)}
+    {_decisions_section(brief, ui_state)}
 
     {_drafts_to_prepare_section(brief, ai_result)}
 
-    {_trends_block(brief.market_signals)}
+    {_compact_content_plan_block(brief.content_plan)}
 
-    {_decisions_section(brief, ui_state)}
+    {_trends_block(brief.market_signals)}
 
   </main>
 </body>
@@ -2533,16 +2533,16 @@ def _trends_block(items: tuple[BriefItem, ...]) -> str:
         for item in items[:3]
     )
     return f"""
-    <section class="block trends-block">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">тренды</p>
-          <h2>Тренды</h2>
-        </div>
-        <span>Демонстрационные данные</span>
+    <details class="block trends-block secondary-details">
+      <summary>
+        <span class="s-eyebrow">контекст</span>
+        <span class="s-title">Тренды и сигналы</span>
+        <span class="s-hint">Фон для тем — можно посмотреть по желанию</span>
+      </summary>
+      <div class="secondary-body">
+        <div class="trend-list">{cards}</div>
       </div>
-      <div class="trend-list">{cards}</div>
-    </section>
+    </details>
     """
 
 
@@ -2633,18 +2633,29 @@ def _today_card(
           <p>{escape(goal)}</p>
         </div>
         <div>
-          <p class="label">Почему именно сегодня</p>
-          <p>{escape(why_today)}</p>
-        </div>
-        <div>
-          <p class="label">Почему агент рекомендует этот пост</p>
-          <p>{escape(why_agent)}</p>
-        </div>
-        <div>
           <p class="label">Главная идея</p>
           <p>{escape(idea_text)}</p>
         </div>
       </div>
+      <details class="today-why secondary-details">
+        <summary>
+          <span class="s-eyebrow">объяснение</span>
+          <span class="s-title">Почему AI это предлагает</span>
+          <span class="s-hint">Логика выбора темы</span>
+        </summary>
+        <div class="secondary-body">
+          <div class="today-details">
+            <div>
+              <p class="label">Почему именно сегодня</p>
+              <p>{escape(why_today)}</p>
+            </div>
+            <div>
+              <p class="label">Почему агент рекомендует этот пост</p>
+              <p>{escape(why_agent)}</p>
+            </div>
+          </div>
+        </div>
+      </details>
       <div class="today-publications">{publication_rows}</div>
       {refinement_notice}
       <div class="today-actions">
@@ -6903,6 +6914,43 @@ def _styles() -> str:
     }
     .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .block { min-width: 0; margin-top: 34px; }
+    .secondary-details {
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius);
+      background: var(--paper);
+      overflow: hidden;
+    }
+    .secondary-details > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      padding: 20px 22px;
+    }
+    .secondary-details > summary::-webkit-details-marker { display: none; }
+    .secondary-details > summary::after {
+      content: "▾";
+      margin-left: auto;
+      color: var(--muted);
+      transition: transform .2s ease;
+    }
+    .secondary-details[open] > summary::after { transform: rotate(180deg); }
+    .secondary-details > summary .s-eyebrow {
+      flex-basis: 100%;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .secondary-details > summary .s-title { font-size: 18px; font-weight: 680; color: var(--ink); }
+    .secondary-details > summary .s-hint { color: var(--muted); font-size: 13px; }
+    .secondary-body { padding: 0 22px 22px; }
+    .today-why { grid-column: 1 / -1; }
+    .today-why > summary { padding: 16px 18px; }
+    .today-why .secondary-body { padding: 0 18px 18px; }
     .section-title {
       display: flex;
       justify-content: space-between;
