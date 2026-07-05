@@ -291,7 +291,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             if not idea:
                 self.send_error(404, "Not Found")
                 return
-            self._send_html(render_idea_detail(idea))
+            query = parse_qs(urlparse(self.path).query)
+            self._send_html(render_idea_detail(idea, planned=query.get("planned", [""])[0]))
             return
         if path.startswith("/knowledge/"):
             document_id = path.rsplit("/", 1)[-1]
@@ -656,6 +657,14 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             _save_key_ideas_form(data, self.author_brain_repository)
             self.send_response(303)
             self.send_header("Location", "/ideas?updated=1#key-ideas")
+            self.end_headers()
+            return
+        if path.startswith("/ideas/plan/"):
+            idea_id = path.rsplit("/", 1)[-1]
+            idea = self.idea_vault.get_idea(idea_id)
+            added = _add_idea_to_content_plan(idea) if idea else False
+            self.send_response(303)
+            self.send_header("Location", f"/ideas/{idea_id}?planned={'1' if added else 'exists'}")
             self.end_headers()
             return
         if path.startswith("/ideas/status/"):
@@ -3898,6 +3907,41 @@ def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _add_idea_to_content_plan(idea: Idea) -> bool:
+    """Promote a vault idea into the content plan as a new 'idea' publication.
+    Returns False if the idea is empty or its topic already exists in the plan."""
+    raw = _load_content_plan_raw()
+    publications = raw.get("planned_publications", [])
+    if not isinstance(publications, list):
+        publications = []
+    title = idea.title.strip()
+    if not title:
+        return False
+    if any(isinstance(item, dict) and str(item.get("topic", "")).strip() == title for item in publications):
+        return False
+    platform = _normalize_platform(idea.platforms[0]) if idea.platforms else "LinkedIn"
+    rubric = "Наблюдение"
+    today = today_moscow().isoformat()
+    publications.append(
+        {
+            "date": today,
+            "day": weekday_name_for_date(today),
+            "platform": platform,
+            "topic": title,
+            "goal": _localized_goal(platform, "Развить идею из хранилища в полноценную публикацию."),
+            "format": "пост",
+            "pillar": rubric,
+            "rubric": rubric,
+            "status": "idea",
+            "summary": idea.description.strip(),
+            "note": f"Идея добавлена в план из хранилища идей (источник: {idea.source}).",
+        }
+    )
+    raw["planned_publications"] = publications
+    DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
 def _action_index(action: str, prefix: str) -> int | None:
     if not action.startswith(prefix):
         return None
@@ -4814,7 +4858,7 @@ def render_idea_vault(
     ideas_html = (
         "".join(_idea_card(idea) for idea in ideas)
         if ideas
-        else "<div class=\"empty\">Пока нет идей. Добавьте вручную или сохраните идею из дневного брифа.</div>"
+        else "<div class=\"empty\">Пока нет идей. Добавьте вручную, сохраните идею из дневного брифа или из «Радара трендов» — они попадают сюда.</div>"
     )
     author_profile = AuthorBrainRepository().load_profile()
     return f"""<!doctype html>
@@ -4850,8 +4894,8 @@ def render_idea_vault(
     <section class="block">
       <div class="section-title">
         <div>
-          <p class="eyebrow">идеи</p>
-          <h2>Идеи</h2>
+          <p class="eyebrow">хранилище</p>
+          <h2>Свободные идеи</h2>
         </div>
         <span>{len(ideas)} в хранилище</span>
       </div>
@@ -4873,10 +4917,11 @@ def _key_ideas_section(profile: dict[str, object]) -> str:
     <section class="block" id="key-ideas">
       <div class="section-title">
         <div>
-          <p class="eyebrow">авторская база</p>
-          <h2>Ключевые идеи</h2>
+          <p class="eyebrow">из профиля автора</p>
+          <h2>Ключевые идеи автора</h2>
         </div>
       </div>
+      <p class="page-hint">Это опорные убеждения из профиля автора — не то же самое, что свободные идеи ниже. AI опирается на них при генерации. Их также можно редактировать в разделе «Профиль автора».</p>
       <form class="profile-form" method="post" action="/ideas/key-ideas">
         <div class="card-list">{rows}</div>
         <section class="profile-section">
@@ -4915,12 +4960,17 @@ def _editable_key_idea_row(item: dict[str, object], index: int) -> str:
     """
 
 
-def render_idea_detail(idea: Idea) -> str:
+def render_idea_detail(idea: Idea, planned: str = "") -> str:
     status_options = "".join(
         f"<option value=\"{escape(status)}\" {'selected' if status == idea.status else ''}>{escape(_status_ru(status))}</option>"
         for status in IDEA_STATUSES
     )
     platforms = ", ".join(idea.platforms)
+    notice = ""
+    if planned == "1":
+        notice = '<div class="notice">Идея добавлена в контент-план (статус «Идея»). Откройте контент-план, чтобы назначить дату и площадку.</div>'
+    elif planned == "exists":
+        notice = '<div class="notice">Такая тема уже есть в контент-плане — новая строка не добавлена.</div>'
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -4938,6 +4988,7 @@ def render_idea_detail(idea: Idea) -> str:
       </div>
       {_global_nav("ideas")}
     </header>
+    {notice}
     <section class="document-view">
       <div class="doc-meta">
         <span>{escape(_status_ru(idea.status))}</span>
@@ -4947,9 +4998,13 @@ def render_idea_detail(idea: Idea) -> str:
       </div>
       <pre>{escape(idea.description)}</pre>
       <div class="form-actions">
+        <form method="post" action="/ideas/plan/{escape(idea.id)}">
+          <button type="submit" data-busy="Добавляю…">Добавить в контент-план</button>
+        </form>
+        <a class="open-link" href="/content-plan">Открыть контент-план</a>
         <form method="post" action="/ideas/status/{escape(idea.id)}">
           <select name="status">{status_options}</select>
-          <button type="submit">Обновить статус</button>
+          <button class="secondary" type="submit">Обновить статус</button>
         </form>
         <form method="post" action="/ideas/delete/{escape(idea.id)}">
           <button class="danger" type="submit">Удалить идею</button>
@@ -4975,7 +5030,12 @@ def _idea_card(idea: Idea) -> str:
           <span>{escape(idea.created_at)}</span>
         </div>
       </div>
-      <a class="open-link" href="/ideas/{escape(idea.id)}">Открыть</a>
+      <div class="doc-actions">
+        <form method="post" action="/ideas/plan/{escape(idea.id)}">
+          <button class="ghost" type="submit" data-busy="Добавляю…">В контент-план</button>
+        </form>
+        <a class="open-link" href="/ideas/{escape(idea.id)}">Открыть</a>
+      </div>
     </article>
     """
 

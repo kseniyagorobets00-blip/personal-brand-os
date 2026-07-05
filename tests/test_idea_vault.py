@@ -1,9 +1,11 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from post_agent.idea_vault import IdeaVault
-from post_agent.web import render_idea_detail, render_idea_vault
+from post_agent.web import _add_idea_to_content_plan, render_idea_detail, render_idea_vault
 
 
 class IdeaVaultTests(unittest.TestCase):
@@ -53,6 +55,37 @@ class IdeaVaultTests(unittest.TestCase):
         self.assertIn("Новая", list_html)
         self.assertIn("Обновить статус", detail_html)
         self.assertIn("Удалить идею", detail_html)
+        self.assertIn("Добавить в контент-план", detail_html)
+        self.assertIn(f"/ideas/plan/{idea.id}", detail_html)
+
+    def test_idea_is_added_to_content_plan_once(self) -> None:
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "week_start": "2026-07-06",
+                        "week_end": "2026-07-12",
+                        "planned_publications": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            vault = IdeaVault(Path(directory) / "ideas.json")
+            idea = vault.add_idea("CX держится на операциях", "Развить через SOP.", platforms=("LinkedIn",))
+
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path):
+                first = _add_idea_to_content_plan(idea)
+                second = _add_idea_to_content_plan(idea)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(first)
+        self.assertFalse(second)
+        publications = saved["planned_publications"]
+        self.assertEqual(len(publications), 1)
+        self.assertEqual(publications[0]["topic"], "CX держится на операциях")
+        self.assertEqual(publications[0]["platform"], "LinkedIn")
+        self.assertEqual(publications[0]["status"], "idea")
 
 
 if __name__ == "__main__":
