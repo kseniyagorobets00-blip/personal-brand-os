@@ -9,7 +9,7 @@ from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, refresh_stale_content_plan, today_moscow, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, _text_matches_platform, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault, render_writing_dna
+from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, _text_matches_platform, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -379,17 +379,6 @@ class DailyBriefTests(unittest.TestCase):
         self.assertNotIn("/writing-dna", tab_bar)
         self.assertNotIn("tab=rules", tab_bar)
         self.assertNotIn("/author-brain", tab_bar)
-
-    def test_writing_dna_page_renders_editable_sections(self) -> None:
-        dna = WritingDNARepository().load_raw()
-        html = render_writing_dna(dna)
-
-        self.assertIn("Writing DNA", html)
-        self.assertIn("Как рождаются публикации", html)
-        # Forbidden openings now live in a single place ("Правила бота"); the DNA page points there.
-        self.assertNotIn("Запрещенные AI-вступления", html)
-        self.assertIn("Запрещённые начала текста теперь редактируются", html)
-        self.assertIn("Сохранить Writing DNA", html)
 
     def test_content_plan_page_renders_editable_plan(self) -> None:
         html = render_content_plan_page(

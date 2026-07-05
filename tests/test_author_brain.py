@@ -5,7 +5,6 @@ from tempfile import TemporaryDirectory
 from post_agent.author_brain import AuthorBrain, AuthorBrainRepository, FORBIDDEN_OPENINGS
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.knowledge import KnowledgeBase
-from post_agent.web import render_author_brain
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -126,16 +125,6 @@ class AuthorBrainTests(unittest.TestCase):
 
             self.assertEqual(merged["main_themes"][0]["name"], "ручная тема")
             self.assertEqual(merged["key_ideas"][0]["idea"], "ручная идея")
-
-    def test_author_brain_page_renders_refresh_button(self) -> None:
-        with TemporaryDirectory() as directory:
-            repository = AuthorBrainRepository(Path(directory) / "profile.json", Path(directory) / "status.json")
-            html = render_author_brain(repository.empty_profile(), repository.load_status())
-
-            self.assertIn("Авторская база", html)
-            self.assertIn("/author-brain/refresh", html)
-            self.assertIn("Обновить профиль автора", html)
-
 
 if __name__ == "__main__":
     unittest.main()

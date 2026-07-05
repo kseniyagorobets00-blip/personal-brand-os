@@ -1093,27 +1093,6 @@ def _editable_theme_row(item: dict[str, object], index: int) -> str:
     """
 
 
-def _editable_idea_row(item: dict[str, object], index: int) -> str:
-    markers = [f"риск повтора: {_repeat_risk_label(str(item.get('repeat_risk', 'medium')))}"]
-    if str(item.get("source", "")).strip():
-        markers.append("ручная база" if str(item.get("source")) == "manual" else str(item.get("source")))
-    return f"""
-      <article class="card">
-        <h3>{escape(_display_ru(str(item.get("idea", ""))))}</h3>
-        <div class="tags">{_chips(markers)}</div>
-        <details class="inline-editor">
-          <summary>Редактировать</summary>
-          <div class="edit-row">
-            {_textarea(f"idea_{index}_text", "Идея", _display_ru(str(item.get("idea", ""))))}
-            {_textarea(f"idea_{index}_belief", "Как AI должен это понимать", _display_ru(str(item.get("belief", ""))))}
-            {_select(f"idea_{index}_repeat_risk", "Риск повтора", str(item.get("repeat_risk", "medium")), ("low", "medium", "high"))}
-            <button class="ghost" name="author_base_action" value="delete_idea_{index}" type="submit">Удалить идею</button>
-          </div>
-        </details>
-      </article>
-    """
-
-
 def _writing_dna_panel(dna: dict[str, object], profile: dict[str, object]) -> str:
     tone = profile.get("tone", {})
     structure = profile.get("structure", {})
@@ -1176,60 +1155,6 @@ def _writing_dna_panel(dna: dict[str, object], profile: dict[str, object]) -> st
     """
 
 
-def _rules_panel(learning_center: LearningCenter) -> str:
-    accepted = learning_center.list_lessons("accepted")
-    accepted_cards = "".join(_accepted_rule_card(lesson) for lesson in accepted) or '<div class="empty">Пока нет правил, которые система уже учитывает.</div>'
-    return f"""
-    <section class="block" id="rules">
-      <div class="section-title"><div><p class="eyebrow">память поведения</p><h2>Правила</h2></div></div>
-      <section class="block">
-        <div class="section-title"><div><p class="eyebrow">учитывается системой</p><h2>Правила, которые система уже учитывает</h2></div><span>{len(accepted)}</span></div>
-        <details class="knowledge-upload embedded-form">
-          <summary>Добавить правило</summary>
-          <form method="post" action="/author-profile/rules/add">
-            <textarea name="rule" rows="4" placeholder="Например: начинать пост с рабочей ситуации, а не с общего тезиса" required></textarea>
-            <textarea name="reason" rows="3" placeholder="Почему это важно для моего стиля"></textarea>
-            <button type="submit">Сохранить правило</button>
-          </form>
-        </details>
-        <div class="card-list">{accepted_cards}</div>
-      </section>
-    </section>
-    """
-
-
-def _learning_settings_panel(profile: dict[str, object]) -> str:
-    platform_fit = profile.get("platform_fit", {})
-    if not isinstance(platform_fit, dict):
-        platform_fit = {}
-    anti_repetition = profile.get("anti_repetition", {})
-    if not isinstance(anti_repetition, dict):
-        anti_repetition = {}
-    platform_cards = "".join(
-        _editable_platform_fit_card(platform, str(platform_fit.get(platform, "")))
-        for platform in CONTENT_PLATFORMS
-    )
-    anti_card = _editable_anti_repetition_card(anti_repetition)
-    return f"""
-      <form class="profile-form" method="post" action="/author-profile/learning-settings">
-        <section class="grid two">
-          <section class="profile-section">
-            <div class="section-title"><div><p class="eyebrow">как AI выбирает площадку</p><h2>Площадки</h2></div></div>
-            <div class="card-list">{platform_cards}</div>
-          </section>
-          <section class="profile-section">
-            <div class="section-title"><div><p class="eyebrow">как AI избегает повторов</p><h2>Антиповторы</h2></div></div>
-            <div class="card-list">{anti_card}</div>
-          </section>
-        </section>
-        <section class="profile-section">
-          <p class="eyebrow">сохранение</p>
-          <div class="form-actions"><button type="submit">Сохранить настройки обучения</button></div>
-        </section>
-      </form>
-    """
-
-
 def _editable_platform_fit_card(platform: str, value: str) -> str:
     return f"""
       <article class="card">
@@ -1289,93 +1214,6 @@ def _status_message(message: str) -> str:
         "Author Brain refresh is already running.": "Обновление профиля автора уже выполняется",
         "Author Brain refresh failed. Last saved profile is still available.": "Обновление авторской базы не удалось. Используется последняя сохраненная версия.",
     }.get(message, message or "Авторская база еще не обновлялась")
-
-
-def render_author_brain(profile: dict[str, object], status: object, refreshed: bool = False) -> str:
-    notice = "<div class=\"notice\">Обновление профиля автора запущено. Пока оно идет, используется последняя сохраненная версия.</div>" if refreshed else ""
-    status_state = escape(str(getattr(status, "state", "")))
-    status_message = escape(_status_message(str(getattr(status, "message", ""))))
-    status_updated = escape(str(getattr(status, "updated_at", "")))
-    status_error = escape(str(getattr(status, "error", "")))
-    source_counts = profile.get("source_counts", {})
-    if not isinstance(source_counts, dict):
-        source_counts = {}
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Авторская база - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">профиль автора</p>
-        <h1>Авторская база</h1>
-        <p class="page-hint">Что AI понял о вас из памяти — темы, идеи и кейсы в одном профиле.</p>
-      </div>
-      {_global_nav("brain", status_state)}
-    </header>
-    {notice}
-    <section class="ai-panel ai-{status_state}">
-      <div>
-        <strong>{status_message}</strong>
-        <p>Обновлено: {status_updated or escape(str(profile.get("updated_at", "")))}</p>
-        {_small_error(status_error)}
-      </div>
-      <form method="post" action="/author-brain/refresh">
-        <button type="submit">Обновить профиль автора</button>
-      </form>
-    </section>
-    <section class="stat-row">
-      <div class="stat-card">
-        <span>Документы</span>
-        <strong>{escape(str(source_counts.get("documents", 0)))}</strong>
-      </div>
-      <div class="stat-card">
-        <span>Кейсы</span>
-        <strong>{escape(str(source_counts.get("cases", 0)))}</strong>
-      </div>
-      <div class="stat-card">
-        <span>Идеи</span>
-        <strong>{escape(str(source_counts.get("ideas", 0)))}</strong>
-      </div>
-    </section>
-    <section class="grid two">
-      {_profile_list_section("Главные темы", profile.get("main_themes", []), _theme_item)}
-      {_profile_list_section("Ключевые идеи", profile.get("key_ideas", []), _idea_item)}
-    </section>
-    <section class="block">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">кейсы</p>
-          <h2>Кейсы автора</h2>
-        </div>
-      </div>
-      <div class="card-list">{_profile_items(profile.get("cases", []), _case_item)}</div>
-    </section>
-    <section class="grid two">
-      {_simple_list_section("Стиль мышления", profile.get("thinking_style", []))}
-      {_simple_list_section("Сильные стороны", profile.get("strengths", []))}
-    </section>
-    <section class="grid two">
-      {_platform_fit_section(profile.get("platform_fit", {}))}
-      {_anti_repetition_section(profile.get("anti_repetition", {}))}
-    </section>
-    <section class="block">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">обновления</p>
-          <h2>Последние обновления</h2>
-        </div>
-      </div>
-      <div class="card-list">{_profile_items(profile.get("recent_updates", []), _update_item)}</div>
-    </section>
-  </main>
-</body>
-</html>"""
 
 
 def _small_error(value: str) -> str:
@@ -1574,63 +1412,6 @@ def _update_item(item: dict[str, object]) -> str:
     </article>"""
 
 
-def render_writing_dna(dna: dict[str, object], saved: bool = False) -> str:
-    saved_notice = "<div class=\"notice\">Writing DNA сохранен. Новые черновики будут учитывать эти правила мышления и письма.</div>" if saved else ""
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Writing DNA - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">как автор думает и пишет</p>
-        <h1>Writing DNA</h1>
-      </div>
-      {_global_nav("dna")}
-    </header>
-    {saved_notice}
-    <form class="profile-form" method="post" action="/writing-dna">
-      <section class="profile-section">
-        <p class="eyebrow">главная цель</p>
-        {_textarea("main_goal", "Что должен чувствовать читатель", dna.get("main_goal", ""))}
-        {_textarea("origin_of_posts", "Как рождаются публикации", dna.get("origin_of_posts", ""))}
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">истории и память</p>
-        {_textarea("story_rule", "Правило историй", dna.get("story_rule", ""))}
-        {_textarea("memory_usage", "Использование памяти", dna.get("memory_usage", ""))}
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">голос</p>
-        {_textarea("tone", "Тон", dna.get("tone", ""))}
-        {_textarea("paragraphs", "Абзацы", dna.get("paragraphs", ""))}
-        {_textarea("allowed_phrases", "Допустимые живые конструкции", list_to_text(dna.get("allowed_phrases", [])))}
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">логика рассуждения</p>
-        {_textarea("argumentation_patterns", "Паттерны аргументации", list_to_text(dna.get("argumentation_patterns", [])))}
-        <p class="pointer-note">Запрещённые начала текста теперь редактируются на вкладке <a href="/bot-rules">«Правила бота»</a> — единый источник для AI.</p>
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">первый черновик</p>
-        {_textarea("draft_rule", "Правило первого черновика", dna.get("draft_rule", ""))}
-        {_textarea("self_check", "Самопроверка AI", list_to_text(dna.get("self_check", [])))}
-        {_textarea("anti_template_rule", "Не превращать в шаблон", dna.get("anti_template_rule", ""))}
-      </section>
-      <div class="form-actions">
-        <button type="submit">Сохранить Writing DNA</button>
-      </div>
-    </form>
-  </main>
-</body>
-</html>"""
-
-
 def render_learning_center(
     learning_center: LearningCenter,
     memory_inbox: MemoryInbox,
@@ -1723,76 +1504,6 @@ def _refresh_trend_radar_now() -> dict[str, object]:
         graph_links=DailyBriefRequestHandler.knowledge_graph.related_to(pillar_query),
         ai_context=ai_context,
     )
-
-
-def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: bool = False) -> str:
-    topics = cache.get("topics", [])
-    if not isinstance(topics, list):
-        topics = []
-    generated_at = str(cache.get("generated_at", ""))
-    expires_at = str(cache.get("expires_at", ""))
-    sources = cache.get("sources", [])
-    source_text = ", ".join(str(item) for item in sources) if isinstance(sources, list) else ""
-    source_status = str(cache.get("source_status", ""))
-    diagnostics = _source_diagnostics_table(cache.get("source_diagnostics", []))
-    saved_notice = "<div class=\"notice\">Trend Radar обновлен.</div>" if saved else ""
-    status = "Нужно обновить" if stale else "Готов к редакционному выбору"
-    main_card = _main_trend_recommendation(topics[0]) if topics else '<div class="empty">Trend Radar еще не запускался. Нажмите «Обновить радар».</div>'
-    cards = "".join(_trend_card(topic) for topic in topics) or '<div class="empty">Trend Radar еще не запускался. Нажмите «Обновить радар».</div>'
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trend Radar - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">редактор идей</p>
-        <h1>Trend Radar</h1>
-      </div>
-      {_global_nav("trends")}
-    </header>
-    {saved_notice}
-    <section class="today-card">
-      <div class="today-main">
-        <p class="eyebrow">сегодня AI рекомендует</p>
-        <h2>Trend Radar выбирает тему для редакционного решения</h2>
-      </div>
-      {main_card}
-      <div class="today-actions">
-        <form method="post" action="/trend-radar/refresh">
-          <button type="submit">Обновить радар</button>
-        </form>
-      </div>
-    </section>
-    <section class="block">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">темы с потенциалом</p>
-          <h2>Рекомендации Trend Radar</h2>
-        </div>
-        <span>{len(topics)} тем</span>
-      </div>
-      <div class="card-list trend-radar-list">{cards}</div>
-    </section>
-    <details class="block strategy-rules">
-      <summary>Техническая информация</summary>
-      <div class="draft-context-grid">
-        <div><p class="label">Статус</p><p>{escape(status)}</p></div>
-        <div><p class="label">Последнее обновление</p><p>{escape(generated_at or "еще не запускался")}</p></div>
-        <div><p class="label">Кэш до</p><p>{escape(expires_at or "не задан")}</p></div>
-        <div><p class="label">Источники</p><p>{escape(source_text or "локальные источники продукта")}</p></div>
-        <div><p class="label">Доступ внешних источников</p><p>{escape(source_status or "Внешние источники недоступны, используется локальный анализ.")}</p></div>
-      </div>
-      {diagnostics}
-    </details>
-  </main>
-</body>
-</html>"""
 
 
 def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: bool = False) -> str:
@@ -2360,46 +2071,11 @@ def _memory_inbox_card(item: object) -> str:
     """
 
 
-def _summary_card(title: str, value: str, note: str, value_limit: int = 86, note_limit: int = 120) -> str:
-    compact_value = _short_text(value, value_limit)
-    compact_note = _short_text(note, note_limit)
-    full = compact_value != " ".join(str(value).split()) or compact_note != " ".join(str(note).split())
-    toggle = """
-      <summary><span class="expand-open">Развернуть</span><span class="expand-close">Свернуть</span></summary>
-    """ if full else ""
-    full_block = f"""
-      <div class="summary-full">
-        <h2>{escape(str(value))}</h2>
-        <p>{escape(str(note))}</p>
-      </div>
-    """ if full else ""
-    return f"""
-    <details class="summary-card">
-      <p class="eyebrow">{escape(title)}</p>
-      <div class="summary-compact">
-        <h2>{escape(compact_value)}</h2>
-        <p>{escape(compact_note)}</p>
-      </div>
-      {toggle}
-      {full_block}
-    </details>
-    """
-
-
 def _short_text(text: str, limit: int) -> str:
     compact = " ".join(str(text).split())
     if len(compact) <= limit:
         return compact
     return compact[: max(0, limit - 1)].rstrip(" .,;:") + "…"
-
-
-def _workflow_note(title: str, text: str) -> str:
-    return f"""
-    <section class="workflow-note">
-      <p class="eyebrow">{escape(title)}</p>
-      <p>{escape(text)}</p>
-    </section>
-    """
 
 
 def _ai_status_block(status: object, result: dict[str, object] | None) -> str:
@@ -2482,49 +2158,6 @@ def _global_script() -> str:
         "btn.disabled=true;},0);"
         "});})();</script>"
     )
-
-
-def _ai_result_block(result: dict[str, object] | None) -> str:
-    if not result:
-        return """
-        <section class="block">
-          <div class="empty">Сохраненного AI-анализа пока нет. Настройте ProxyAPI и нажмите «Обновить AI-анализ».</div>
-        </section>
-        """
-    materials = result.get("recommended_materials", [])
-    ideas = result.get("ideas", [])
-    materials_html = _ai_list(materials)
-    ideas_html = _ai_list(ideas)
-    return f"""
-    <section class="block ai-result">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">сохраненный AI-анализ</p>
-          <h2>Что предлагает AI</h2>
-        </div>
-        <span>{escape(str(result.get("generated_at", "")))}</span>
-      </div>
-      <div class="ai-result-grid">
-        <article class="card">
-          <p class="label">Главная рекомендация дня</p>
-          <h3>{escape(str(result.get("daily_recommendation", "")))}</h3>
-          <p>{escape(str(result.get("choice_reason", "")))}</p>
-        </article>
-        <article class="card">
-          <p class="label">Рекомендуемые материалы</p>
-          {materials_html}
-        </article>
-        <article class="card">
-          <p class="label">Идеи</p>
-          {ideas_html}
-        </article>
-        <article class="draft">
-          <p class="label">AI-черновик</p>
-          <pre>{escape(str(result.get("draft", "")))}</pre>
-        </article>
-      </div>
-    </section>
-    """
 
 
 def _ai_list(items: object) -> str:
@@ -3349,7 +2982,6 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         <div class="form-actions">
           <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/ТЗ</button>
           <button class="ghost" name="plan_action" value="next_pub_{index}" type="submit">Следующий этап</button>
-          <button class="ghost" name="plan_action" value="change_pub_{index}" type="submit">Изменить</button>
           <button class="ghost danger-text" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
         </div>
       </div>
@@ -4019,15 +3651,13 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         raw = _generate_content_plan_with_ai(raw, strategy)
     else:
         generate_index = _action_index(action, "generate_pub_")
-        change_index = _action_index(action, "change_pub_")
-        target_index = generate_index if generate_index is not None else change_index
-        if target_index is not None and target_index < len(publications):
-            raw["planned_publications"][target_index] = _generate_content_plan_publication_with_ai(raw, publications[target_index])
+        if generate_index is not None and generate_index < len(publications):
+            raw["planned_publications"][generate_index] = _generate_content_plan_publication_with_ai(raw, publications[generate_index])
             raw["updated_at"] = _now_iso()
-            if raw["planned_publications"][target_index].get("ai_error"):
-                raw["last_action"] = f"AI не обновил публикацию #{target_index + 1}."
+            if raw["planned_publications"][generate_index].get("ai_error"):
+                raw["last_action"] = f"AI не обновил публикацию #{generate_index + 1}."
             else:
-                raw["last_action"] = f"Обновлена публикация #{target_index + 1}."
+                raw["last_action"] = f"Обновлена публикация #{generate_index + 1}."
         elif action == "approve":
             raw["last_action"] = "План утвержден."
         elif action == "add_publication":
@@ -4039,8 +3669,6 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     anchor = ""
     target_index = _action_index(action, "generate_pub_")
-    if target_index is None:
-        target_index = _action_index(action, "change_pub_")
     if target_index is None:
         target_index = _action_index(action, "next_pub_")
     if target_index is not None:
@@ -4226,47 +3854,6 @@ def _int_value(value: str, default: int = 0) -> int:
 
 def _normalize_repeat_risk(value: str) -> str:
     return value if value in {"low", "medium", "high"} else "medium"
-
-
-def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
-    raw = _load_content_plan_raw()
-    publications = raw.get("planned_publications", [])
-    if not isinstance(publications, list):
-        publications = []
-    title = str(topic.get("title", "")).strip()
-    if not title:
-        return
-    if any(isinstance(item, dict) and str(item.get("topic", "")).strip() == title for item in publications):
-        return
-    formats = topic.get("best_formats", [])
-    platform = str(formats[0]) if isinstance(formats, list) and formats else "LinkedIn"
-    rubrics = topic.get("best_rubrics", [])
-    rubric = _normalize_rubric(str(rubrics[0])) if isinstance(rubrics, list) and rubrics else "Наблюдение"
-    localized_title = _editorial_topic_from_signal(title, _normalize_platform(platform), rubric)
-    today = today_moscow().strftime("%d.%m.%Y")
-    publications.append(
-        {
-            "date": today,
-            "day": weekday_name_for_date(today),
-            "platform": _normalize_platform(platform),
-            "topic": localized_title,
-            "goal": _localized_goal(_normalize_platform(platform), "Проверить тренд как потенциально сильную публикацию дня."),
-            "format": "пост",
-            "pillar": rubric,
-            "rubric": rubric,
-            "status": "idea",
-            "summary": _localized_summary(_normalize_platform(platform), topic, ""),
-            "note": _trend_selection_note(_normalize_platform(platform), rubric, topic, str(topic.get("ai_reason", ""))),
-            "used_trend": title,
-            "trend_score": str(topic.get("trend_score", "")),
-            "brand_fit_score": str(topic.get("brand_fit_score", "")),
-            "content_potential": str(topic.get("content_potential", "")),
-            "repeat_risk": str(topic.get("repeat_risk", "")),
-            "why_ai_chose": _why_ai_chose_topic(_normalize_platform(platform), rubric, topic),
-        }
-    )
-    raw["planned_publications"] = publications
-    DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
@@ -4648,16 +4235,6 @@ def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:
         "repeat_risk": str(item.get("repeat_risk", "")).strip(),
         "why_ai_chose": str(item.get("why_ai_chose", "")).strip(),
     }
-
-
-def _apply_week_dates_to_publications(publications: list[dict[str, str]], week_start: str) -> list[dict[str, str]]:
-    parsed_start = parse_plan_date(week_start)
-    if not parsed_start:
-        return publications
-    for index, item in enumerate(publications):
-        item["date"] = _normalize_plan_date_value(str(item.get("date", ""))) or (parsed_start + timedelta(days=index)).isoformat()
-        item["day"] = weekday_name_for_date(item["date"])
-    return publications
 
 
 def render_knowledge(
@@ -5215,67 +4792,6 @@ def _case_card(case: object) -> str:
       <form method="post" action="/knowledge/cases/delete/{escape(case.id)}">
         <button class="ghost danger-text" type="submit">Удалить</button>
       </form>
-    </article>
-    """
-
-
-def _knowledge_search_card(result: KnowledgeSearchResult) -> str:
-    return f"""
-    <article class="knowledge-card">
-      <div>
-        <h3><a href="/knowledge/{escape(result.document.id)}">{escape(result.document.title)}</a></h3>
-        <p>{escape(result.reason)}</p>
-        <div class="action">Почему рекомендован: {escape(result.reason)}</div>
-        <div class="doc-meta">
-          <span>{escape(result.document.extension)}</span>
-          <span>оценка {result.score}</span>
-        </div>
-      </div>
-      <a class="open-link" href="/knowledge/{escape(result.document.id)}">Открыть</a>
-    </article>
-    """
-
-
-def _related_knowledge_block(items: tuple[RelatedKnowledge, ...]) -> str:
-    if not items:
-        return """
-        <section class="block">
-          <div class="section-title">
-            <div>
-              <p class="eyebrow">память</p>
-              <h2>Полезные материалы</h2>
-            </div>
-            <span>0 найдено</span>
-          </div>
-          <div class="empty">Загрузите документы в память, чтобы агент начал связывать их с дневным брифом.</div>
-        </section>
-        """
-    cards = "".join(_related_knowledge_card(item) for item in items)
-    return f"""
-    <section class="block">
-      <div class="section-title">
-        <div>
-              <p class="eyebrow">память</p>
-              <h2>Полезные материалы</h2>
-        </div>
-        <span>{len(items)} найдено</span>
-      </div>
-      <div class="knowledge-list">{cards}</div>
-    </section>
-    """
-
-
-def _related_knowledge_card(item: RelatedKnowledge) -> str:
-    return f"""
-    <article class="knowledge-card">
-      <div>
-        <h3>{escape(item.title)}</h3>
-        <p>{escape(item.reason)}</p>
-        <div class="doc-meta">
-          <span>оценка {item.score}</span>
-        </div>
-      </div>
-      <a class="open-link" href="/knowledge/{escape(item.document_id)}">Открыть</a>
     </article>
     """
 
@@ -5851,27 +5367,6 @@ def _textarea(name: str, label: str, value: object) -> str:
     """
 
 
-def _status_select(name: str, label: str, selected: str) -> str:
-    return _select(name, label, _normalize_publication_status(selected), PUBLICATION_STATUSES)
-
-
-def _section(title: str, items: tuple[BriefItem, ...], kind: str) -> str:
-    return f"""
-    <section class="block">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">{escape(kind)}</p>
-          <h2>{escape(title)}</h2>
-        </div>
-        <span>{len(items)} найдено</span>
-      </div>
-      <div class="card-list">
-        {"".join(_brief_card(item) for item in items)}
-      </div>
-    </section>
-    """
-
-
 def _drafts_to_prepare_section(brief: DailyBrief, ai_result: dict[str, object] | None = None) -> str:
     TextPostRepository().sync_from_content_plan(_load_content_plan_raw())
     cards = "".join(
@@ -6062,52 +5557,6 @@ def _materials_for_topic(topic: BriefItem, materials: tuple[RelatedKnowledge, ..
     """
 
 
-def _content_plan_block(plan: ContentPlan) -> str:
-    publications = "".join(
-        f"""
-        <article class="plan-item">
-          <div>
-            <span class="plan-day">{escape(item.day)} · {escape(item.platform)}</span>
-            <h3>{escape(item.topic)}</h3>
-            <p>{escape(item.note)}</p>
-          </div>
-          <span class="plan-status">{escape(_status_ru(item.status))}</span>
-        </article>
-        """
-        for item in plan.planned_publications
-    )
-    pillars = "".join(f"<span>{escape(pillar)}</span>" for pillar in plan.content_pillars)
-    platforms = "".join(f"<span>{escape(platform)}</span>" for platform in plan.platform_targets)
-    return f"""
-    <section class="content-plan">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">контент-план</p>
-          <h2>План недели</h2>
-        </div>
-        <span>{escape(plan.week)}</span>
-      </div>
-      <div class="plan-focus">
-        <p>{escape(plan.focus)}</p>
-      </div>
-      <div class="plan-meta-grid">
-        <div>
-          <p class="label">Опорные темы</p>
-          <div class="tags">{pillars}</div>
-        </div>
-        <div>
-          <p class="label">Площадки</p>
-          <div class="tags">{platforms}</div>
-        </div>
-      </div>
-      <div class="plan-list">{publications}</div>
-      <div class="today-reco">
-        <b>Сегодня:</b> {escape(plan.today_recommendation)}
-      </div>
-    </section>
-    """
-
-
 def _brief_card(item: BriefItem) -> str:
     ui_state = _load_ui_state()
     key = _item_key(item.title)
@@ -6141,46 +5590,6 @@ def _brief_card(item: BriefItem) -> str:
     """
 
 
-def _draft_card(draft: Draft, ui_state: dict[str, object] | None = None) -> str:
-    ui_state = ui_state or _load_ui_state()
-    key = _item_key(f"{draft.platform}-{draft.title}")
-    refinement = _refinement_entry(ui_state, key)
-    action = _refinement_action(refinement)
-    title = str(refinement.get("title") or _refined_title(draft.title, action))
-    text = str(refinement.get("text") or _refined_text(draft.text, action))
-    refinement_notice = _refinement_notice(refinement)
-    return f"""
-    <article class="draft" id="{escape(key)}">
-      <div class="draft-meta">
-        <span>{escape(draft.platform)}</span>
-        <span>{escape(_status_ru(draft.status))}</span>
-      </div>
-      <h3>{escape(title)}</h3>
-      <p class="why">{escape(draft.angle)}</p>
-      {refinement_notice}
-      <pre>{escape(text)}</pre>
-      {_refinement_bar(key, draft.title, draft.text, "draft")}
-    </article>
-    """
-
-
-def _ai_draft_card(ai_result: dict[str, object] | None) -> str:
-    if not ai_result or not ai_result.get("draft"):
-        return ""
-    title = str(ai_result.get("main_topic") or ai_result.get("daily_recommendation") or "AI-черновик")
-    key = _item_key(f"ai-{title}")
-    return f"""
-    <article class="draft" id="{escape(key)}">
-      <div class="draft-meta">
-        <span>AI</span>
-        <span>сохраненный результат</span>
-      </div>
-      <h3>{escape(title)}</h3>
-      <p class="why">Черновик создан через AI Gateway и сохранен локально.</p>
-      <pre>{escape(str(ai_result.get("draft", "")))}</pre>
-      {_refinement_bar(key, title, str(ai_result.get("draft", "")), "draft")}
-    </article>
-    """
 
 
 def _decisions_section(brief: DailyBrief, ui_state: dict[str, object]) -> str:
@@ -6442,10 +5851,6 @@ def _refinement_entry(state: dict[str, object], item_key: str) -> dict[str, obje
     if isinstance(item, dict):
         return item
     return {}
-
-
-def _refinement_for(state: dict[str, object], item_key: str) -> str:
-    return _refinement_action(_refinement_entry(state, item_key))
 
 
 def _refinement_action(refinement: dict[str, object]) -> str:
