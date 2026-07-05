@@ -117,8 +117,9 @@ class AuthorBrain:
 
     def build_profile(self) -> dict[str, object]:
         corpus = self._corpus()
-        themes = self._main_themes(corpus)
-        cases = self._structured_cases()
+        ai_facts = self._ai_document_facts()
+        themes = self._merge_ai_themes(self._main_themes(corpus), ai_facts["themes"])
+        cases = self._merge_ai_cases(self._structured_cases(), ai_facts["cases"])
         key_ideas = self._key_ideas(corpus)
         return {
             "version": AUTHOR_BRAIN_VERSION,
@@ -126,6 +127,13 @@ class AuthorBrain:
             "status": "ready",
             "main_themes": themes,
             "theme_weight_rule": str(self._rules().get("theme_weight_rule", THEME_WEIGHT_RULE)),
+            "background": {
+                "companies": ai_facts["companies"],
+                "roles": ai_facts["roles"],
+                "skills": ai_facts["skills"],
+                "projects": ai_facts["projects"],
+                "achievements": ai_facts["achievements"],
+            },
             "key_ideas": key_ideas,
             "cases": cases,
             "content_angles": self._content_angles(corpus),
@@ -381,6 +389,76 @@ class AuthorBrain:
         parts.append(json.dumps(self.author_profile, ensure_ascii=False))
         parts.append(json.dumps(self.writing_dna, ensure_ascii=False))
         return "\n".join(str(part) for part in parts if str(part).strip())
+
+    def _ai_document_facts(self) -> dict[str, object]:
+        """Aggregate AI-extracted facts from uploaded documents into the author's model."""
+        companies: list[str] = []
+        roles: list[str] = []
+        skills: list[str] = []
+        projects: list[str] = []
+        achievements: list[str] = []
+        themes: list[str] = []
+        cases: list[dict[str, object]] = []
+        for document in self.documents:
+            analysis = getattr(document, "analysis", {}) or {}
+            ai = analysis.get("ai") if isinstance(analysis, dict) else None
+            if not isinstance(ai, dict):
+                continue
+            companies += _as_str_list(ai.get("companies"))
+            roles += _as_str_list(ai.get("roles"))
+            skills += _as_str_list(ai.get("skills"))
+            projects += _as_str_list(ai.get("projects"))
+            achievements += _as_str_list(ai.get("achievements"))
+            themes += _as_str_list(ai.get("themes"))
+            if isinstance(ai.get("cases"), list):
+                for case in ai["cases"]:
+                    if isinstance(case, dict) and any(str(value).strip() for value in case.values()):
+                        cases.append(case)
+
+        def _dedup(values: list[str]) -> list[str]:
+            return list(dict.fromkeys(value for value in values if value))
+
+        return {
+            "companies": _dedup(companies),
+            "roles": _dedup(roles),
+            "skills": _dedup(skills),
+            "projects": _dedup(projects),
+            "achievements": _dedup(achievements),
+            "themes": _dedup(themes),
+            "cases": cases,
+        }
+
+    def _merge_ai_themes(self, themes: list[dict[str, object]], ai_themes: list[str]) -> list[dict[str, object]]:
+        existing = {str(theme["name"]).lower(): theme for theme in themes}
+        for name in ai_themes:
+            key = name.lower()
+            if key in existing:
+                existing[key]["score"] = min(100, int(existing[key].get("score", 60)) + 10)
+                evidence = existing[key].setdefault("evidence", [])
+                if isinstance(evidence, list) and "из загруженного документа" not in evidence:
+                    evidence.append("из загруженного документа")
+            else:
+                theme = {"name": name, "score": 80, "evidence": ["из загруженного документа"], "risk": ""}
+                themes.append(theme)
+                existing[key] = theme
+        return sorted(themes, key=lambda item: int(item.get("score", 0)), reverse=True)
+
+    def _merge_ai_cases(self, cases: list[dict[str, object]], ai_cases: list[dict[str, object]]) -> list[dict[str, object]]:
+        for case in ai_cases:
+            cases.append(
+                {
+                    "company": "",
+                    "project": str(case.get("title", "")),
+                    "problem": str(case.get("problem", "")),
+                    "actions": str(case.get("action", "")),
+                    "result": str(case.get("result", "")),
+                    "business_effect": str(case.get("result", "")),
+                    "themes": [],
+                    "platform_fit": [],
+                    "usage_risk": "из загруженного документа",
+                }
+            )
+        return cases
 
     def _main_themes(self, corpus: str) -> list[dict[str, object]]:
         lowered = corpus.lower()

@@ -10,6 +10,39 @@ from post_agent.writing_dna import WritingDNARepository
 
 
 class AuthorBrainTests(unittest.TestCase):
+    def test_ai_document_facts_feed_the_author_brain(self) -> None:
+        class MockGateway:
+            def is_configured(self):
+                return True
+
+            def complete_json(self, system, user):
+                return {
+                    "companies": ["Мой Отель"],
+                    "roles": ["Операционный директор"],
+                    "skills": ["Operations", "CX"],
+                    "cases": [{"title": "Отток", "problem": "высокий отток", "action": "SOP", "result": "-30%"}],
+                    "achievements": ["выручка +25%"],
+                    "themes": ["Luxury Hospitality"],
+                }
+
+        with TemporaryDirectory() as directory:
+            base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
+            document = base.add_document("resume.md", "# Резюме\nОперационный директор.".encode("utf-8"))
+            base.enrich_document_with_ai(document.id, gateway=MockGateway())
+
+            brain = AuthorBrain(
+                author_profile={},
+                writing_dna={},
+                documents=base.list_documents(),
+                cases=[],
+                ideas=[],
+            ).build_profile()
+
+        self.assertIn("Мой Отель", brain["background"]["companies"])
+        self.assertIn("выручка +25%", brain["background"]["achievements"])
+        self.assertTrue(any(theme["name"] == "Luxury Hospitality" for theme in brain["main_themes"]))
+        self.assertTrue(any(case.get("result") == "-30%" for case in brain["cases"]))
+
     def test_author_brain_uses_knowledge_case_notes(self) -> None:
         knowledge = KnowledgeBase()
         knowledge.ensure_seed_documents()
