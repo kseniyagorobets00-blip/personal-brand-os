@@ -6151,7 +6151,7 @@ def _styles() -> str:
       gap: 18px;
     }
     .today-details p:last-child {
-      color: #303630;
+      color: var(--ink);
     }
     .today-publications {
       grid-column: 1 / -1;
@@ -7144,6 +7144,7 @@ def _styles() -> str:
     }
     /* Dark-mode overrides for the few warm-tint surfaces; placed last so source order wins. */
     @media (prefers-color-scheme: dark) {
+      .ai-running { background: rgba(240,190,90,.12); }
       .ai-error, .ai-not_configured { background: rgba(217,138,114,.12); }
       .status-idea { color: #e0c06a; background: rgba(224,192,90,.14); }
       .status-in_progress { color: #e0a76a; background: rgba(224,167,106,.14); }
