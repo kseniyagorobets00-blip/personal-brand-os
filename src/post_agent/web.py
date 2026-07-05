@@ -2361,7 +2361,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     new_index = len(publications) if isinstance(publications, list) else 0
     week_start, week_end = _content_plan_period(plan)
     view = "calendar" if view == "calendar" else "list"
-    calendar_block = _content_plan_calendar(publications) if view == "calendar" else ""
+    calendar_block = _content_plan_calendar(publications, week_start, week_end) if view == "calendar" else ""
     content = f"""
     {notice}
     <div class="view-switch">
@@ -2377,7 +2377,6 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
           {_date_input("week_start", "Дата начала недели", week_start)}
           {_date_input("week_end", "Дата конца недели", week_end)}
         </div>
-        <div class="state-note">Период: {escape(_format_week_range(week_start, week_end))}</div>
         {_textarea("focus", "Фокус недели", _clean_focus_value(plan.get("focus", "")))}
         <input type="hidden" name="today_recommendation" value="{escape(str(plan.get("today_recommendation", "")))}">
         <input type="hidden" name="content_pillars" value="{escape(list_to_text(plan.get("content_pillars", [])))}">
@@ -2385,7 +2384,6 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <div class="form-actions">
           <button name="plan_action" value="save_focus" type="submit">Сохранить фокус и даты</button>
         </div>
-        <p class="brief-hint">Фокус и даты закрепляются сразу, публикации ниже не меняются. По ним потом строится «Создать план по стратегии».</p>
       </section>
       <section class="profile-section">
         <p class="eyebrow">публикации</p>
@@ -2927,47 +2925,52 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     """
 
 
-def _content_plan_calendar(publications: object) -> str:
+def _content_plan_calendar(publications: object, week_start: str = "", week_end: str = "") -> str:
     items = publications if isinstance(publications, list) else []
-    dates = [
-        parse_plan_date(str(item.get("date", "")))
-        for item in items
-        if isinstance(item, dict)
-    ]
-    dates = [item for item in dates if item is not None]
-    base = dates[0] if dates else today_moscow()
-    first_weekday, days_in_month = monthrange(base.year, base.month)
-    by_day: dict[int, list[tuple[int, dict[str, object]]]] = {}
+    # The plan is week-scoped: show only the current week so published posts from
+    # earlier weeks (they keep their past dates) never accumulate in the calendar.
+    start = parse_plan_date(week_start)
+    end = parse_plan_date(week_end)
+    if not start:
+        dates = [d for d in (parse_plan_date(str(i.get("date", ""))) for i in items if isinstance(i, dict)) if d]
+        start = min(dates) if dates else today_moscow()
+    if not end or end < start:
+        end = start + timedelta(days=6)
+    if (end - start).days > 13:
+        end = start + timedelta(days=6)
+    by_day: dict[str, list[tuple[int, dict[str, object]]]] = {}
+    count = 0
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             continue
         parsed = parse_plan_date(str(item.get("date", "")))
-        if parsed and parsed.year == base.year and parsed.month == base.month:
-            by_day.setdefault(parsed.day, []).append((index, item))
-    blanks = "".join('<div class="calendar-day muted"></div>' for _ in range(first_weekday))
+        if parsed and start <= parsed <= end:
+            by_day.setdefault(parsed.isoformat(), []).append((index, item))
+            count += 1
+    weekday_labels = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
     days = []
-    for day_number in range(1, days_in_month + 1):
-        day_items = "".join(_calendar_publication(index, item) for index, item in by_day.get(day_number, []))
+    current = start
+    while current <= end:
+        day_items = "".join(_calendar_publication(index, item) for index, item in by_day.get(current.isoformat(), []))
         days.append(
             f"""
             <div class="calendar-day">
-              <strong>{day_number}</strong>
-              {day_items}
+              <strong>{weekday_labels[current.weekday()]}, {current.strftime('%d.%m')}</strong>
+              {day_items or '<span class="calendar-empty">—</span>'}
             </div>
             """
         )
-    weekdays = "".join(f"<span>{label}</span>" for label in ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"))
+        current += timedelta(days=1)
     return f"""
     <section class="block calendar-block">
       <div class="section-title">
         <div>
-          <p class="eyebrow">календарь</p>
-          <h2>{base.strftime('%m.%Y')}</h2>
+          <p class="eyebrow">календарь недели</p>
+          <h2>{start.strftime('%d.%m')} — {end.strftime('%d.%m.%Y')}</h2>
         </div>
-        <span>{len(items)} публикаций</span>
+        <span>{count} публикаций</span>
       </div>
-      <div class="calendar-weekdays">{weekdays}</div>
-      <div class="calendar-grid">{blanks}{''.join(days)}</div>
+      <div class="calendar-grid week">{''.join(days)}</div>
     </section>
     """
 
@@ -7066,6 +7069,18 @@ def _styles() -> str:
     .calendar-day.muted {
       background: transparent;
       border-style: dashed;
+    }
+    .calendar-day > strong {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      letter-spacing: .02em;
+    }
+    .calendar-empty {
+      color: var(--line);
+      font-size: 13px;
     }
     .calendar-date {
       display: block;

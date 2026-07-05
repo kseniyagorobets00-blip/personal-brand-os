@@ -496,9 +496,9 @@ class DailyBriefTests(unittest.TestCase):
     def test_content_plan_calendar_view_groups_same_day_publications(self) -> None:
         html = render_content_plan_page(
             {
-                "week": "25-30 июня",
+                "week_start": "2026-06-22",
+                "week_end": "2026-06-28",
                 "focus": "CX через Operations",
-                "month_focus": "Operations, CX, AI",
                 "content_pillars": ["Operations", "Customer Experience"],
                 "platform_targets": ["LinkedIn", "Telegram"],
                 "today_recommendation": "Подготовить пост",
@@ -515,6 +515,29 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("#publication-1", html)
         self.assertIn("Первая тема", html)
         self.assertIn("Вторая тема", html)
+
+    def test_calendar_shows_only_the_current_week_not_past_published(self) -> None:
+        # Published posts keep their past dates; they must not accumulate in the
+        # week calendar. Only publications inside [week_start, week_end] appear.
+        html = render_content_plan_page(
+            {
+                "week_start": "2026-06-22",
+                "week_end": "2026-06-28",
+                "planned_publications": [
+                    {"date": "2026-06-24", "platform": "LinkedIn", "topic": "Эта неделя", "status": "planned"},
+                    {"date": "2026-06-10", "platform": "Telegram", "topic": "Старый опубликованный", "status": "published"},
+                    {"date": "2026-06-01", "platform": "VC", "topic": "Ещё старее", "status": "published"},
+                ],
+            },
+            view="calendar",
+        )
+
+        # Isolate the calendar grid — the editable list below it is a separate block.
+        calendar = html.split('class="block calendar-block"', 1)[1].split("</section>", 1)[0]
+        self.assertIn("Эта неделя", calendar)
+        self.assertNotIn("Старый опубликованный", calendar)
+        self.assertNotIn("Ещё старее", calendar)
+        self.assertIn("1 публикаций", calendar)
 
         self.assertIn('<details class="calendar-publication">', html)
 
