@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import re
 import socket
+import threading
 from urllib.parse import parse_qs, quote, urlparse
 
 from .ai_gateway import AIGateway, AIGatewayError
@@ -210,13 +211,24 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/trend-radar":
             query = parse_qs(urlparse(self.path).query)
-            if self.trend_radar.is_stale():
+            cache = self.trend_radar.get_cached()
+            has_data = bool(cache.get("topics"))
+            stale = self.trend_radar.is_stale()
+            refreshing = _trend_refresh_in_progress()
+            if stale and not has_data:
+                # Nothing to show yet — do a one-time synchronous build so the page isn't empty.
                 _refresh_trend_radar_now()
+                cache = self.trend_radar.get_cached()
+                stale = self.trend_radar.is_stale()
+            elif stale or query.get("refreshing", ["0"])[0] == "1":
+                # Serve cached data immediately and refresh in the background.
+                refreshing = _start_trend_radar_refresh_background() or _trend_refresh_in_progress()
             self._send_html(
                 render_trend_radar(
-                    self.trend_radar.get_cached(),
+                    cache,
                     saved=query.get("saved", ["0"])[0] == "1",
-                    stale=self.trend_radar.is_stale(),
+                    stale=stale,
+                    refreshing=refreshing,
                 )
             )
             return
@@ -533,9 +545,9 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/trend-radar/refresh":
-            _refresh_trend_radar_now()
+            _start_trend_radar_refresh_background()
             self.send_response(303)
-            self.send_header("Location", "/trend-radar?saved=1")
+            self.send_header("Location", "/trend-radar?refreshing=1")
             self.end_headers()
             return
         if path == "/trend-radar/action":
@@ -1599,6 +1611,34 @@ def _ai_synthesize_trends(
     return [item for item in trends if isinstance(item, dict)]
 
 
+_TREND_REFRESH_LOCK = threading.Lock()
+
+
+def _trend_refresh_in_progress() -> bool:
+    return _TREND_REFRESH_LOCK.locked()
+
+
+def _start_trend_radar_refresh_background() -> bool:
+    """Kick off a trend-radar refresh in a daemon thread so the page never blocks.
+
+    Returns True if a new refresh was started, False if one is already running."""
+    if _TREND_REFRESH_LOCK.locked():
+        return False
+
+    def run() -> None:
+        if not _TREND_REFRESH_LOCK.acquire(blocking=False):
+            return
+        try:
+            _refresh_trend_radar_now()
+        except Exception:  # noqa: BLE001 - background refresh must never crash the server
+            pass
+        finally:
+            _TREND_REFRESH_LOCK.release()
+
+    threading.Thread(target=run, name="trend-radar-refresh", daemon=True).start()
+    return True
+
+
 def _refresh_trend_radar_now() -> dict[str, object]:
     DailyBriefRequestHandler.knowledge_base.ensure_seed_documents()
     author_brain = AuthorBrain(
@@ -1625,7 +1665,12 @@ def _refresh_trend_radar_now() -> dict[str, object]:
     )
 
 
-def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: bool = False) -> str:
+def render_trend_radar(
+    cache: dict[str, object],
+    saved: bool = False,
+    stale: bool = False,
+    refreshing: bool = False,
+) -> str:
     topics = cache.get("topics", [])
     if not isinstance(topics, list):
         topics = []
@@ -1636,7 +1681,18 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
     source_status = str(cache.get("source_status", ""))
     diagnostics = _source_diagnostics_table(cache.get("source_diagnostics", []))
     saved_notice = '<div class="notice">Радар трендов обновлен.</div>' if saved else ""
-    status = "Нужно обновить" if stale else "Готов к редакционному выбору"
+    refreshing_notice = (
+        '<div class="notice trend-refreshing">'
+        '<span class="spinner" aria-hidden="true"></span>'
+        'AI анализирует свежие сигналы мировых СМИ в фоне (~40 сек). '
+        'Пока показаны данные из последнего кэша — страница обновится сама.'
+        '</div>'
+        if refreshing
+        else ""
+    )
+    # Auto-reload while a background refresh is running so fresh trends appear without a manual click.
+    head_extra = '<meta http-equiv="refresh" content="15">\n  ' if refreshing else ""
+    status = "Обновляется в фоне" if refreshing else ("Нужно обновить" if stale else "Готов к редакционному выбору")
     empty = '<div class="empty">Радар трендов еще не запускался. Нажмите «Обновить радар».</div>'
     main_card = _main_trend_recommendation(topics[0]) if topics else empty
     cards = "".join(_trend_card(topic) for topic in topics) or empty
@@ -1651,8 +1707,14 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
         mode_badge = f'<div class="trend-mode trend-mode-ai">{escape(mode_text)}</div>'
     else:
         mode_badge = '<div class="trend-mode trend-mode-local">Локальный анализ: внешние СМИ или AI недоступны, показаны редакционные заготовки.</div>'
+    refresh_button = (
+        '<button type="submit" disabled>Обновляется…</button>'
+        if refreshing
+        else '<button type="submit">Обновить радар</button>'
+    )
     content = f"""
     {saved_notice}
+    {refreshing_notice}
     {mode_badge}
     <section class="block">
       <div class="section-title">
@@ -1661,7 +1723,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
           <h2>Лучшая тема для редакционного решения</h2>
         </div>
         <form method="post" action="/trend-radar/refresh">
-          <button type="submit">Обновить радар</button>
+          {refresh_button}
         </form>
       </div>
       {main_card}
@@ -1695,6 +1757,7 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
         hint="Свежие темы и сигналы, отобранные под ваши площадки.",
         active="trends",
         content=content,
+        head_extra=head_extra,
     )
 
 
@@ -6548,6 +6611,21 @@ def _styles() -> str:
       border-color: rgba(255, 196, 94, 0.30);
       color: #f4d9a6;
     }
+    .trend-refreshing {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .spinner {
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: currentColor;
+      animation: spin 0.8s linear infinite;
+      flex: 0 0 auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .trend-card .topic-actions form {
       margin: 0;
     }

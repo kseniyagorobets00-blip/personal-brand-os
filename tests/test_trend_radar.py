@@ -283,6 +283,34 @@ class TrendRadarTests(unittest.TestCase):
 
         self.assertTrue(result.rows)
 
+    def test_background_refresh_is_single_flight(self) -> None:
+        import threading as _threading
+
+        from post_agent import web
+
+        release = _threading.Event()
+        started = _threading.Event()
+
+        def fake_refresh() -> dict:
+            started.set()
+            release.wait(timeout=5)
+            return {}
+
+        with patch.object(web, "_refresh_trend_radar_now", side_effect=fake_refresh):
+            first = web._start_trend_radar_refresh_background()
+            self.assertTrue(started.wait(timeout=5))
+            self.assertTrue(first)
+            self.assertTrue(web._trend_refresh_in_progress())
+            # A second call while one is running must not start another refresh.
+            self.assertFalse(web._start_trend_radar_refresh_background())
+            release.set()
+        # Give the daemon thread a moment to release the lock.
+        for _ in range(50):
+            if not web._trend_refresh_in_progress():
+                break
+            _threading.Event().wait(0.02)
+        self.assertFalse(web._trend_refresh_in_progress())
+
 
 if __name__ == "__main__":
     unittest.main()
