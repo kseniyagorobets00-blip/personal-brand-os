@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html import unescape
@@ -108,6 +109,7 @@ class TrendRadar:
         author_brain: dict[str, object] | None = None,
         graph_links: list[dict[str, str]] | None = None,
         ai_context: dict[str, object] | None = None,
+        synthesizer: object | None = None,
     ) -> dict[str, object]:
         source_status: list[str] = []
         source_diagnostics: list[dict[str, object]] = []
@@ -115,18 +117,39 @@ class TrendRadar:
         if ai_context:
             content_plan = _dict_from(ai_context.get("content_plan")) or content_plan
             author_brain = _dict_from(ai_context.get("author_brain")) or author_brain
-        topics = [
-            self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [])
-            if author_brain is None
-            else self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [], author_brain)
-            for source in sources
-        ]
+        external_count = sum(
+            int(item.get("fetched_count", 0) or 0)
+            for item in source_diagnostics
+            if item.get("status") == "ok"
+        )
+        analysis_mode = "local"
+        topics: list[TrendTopic] = []
+        if synthesizer is not None and sources:
+            ai_topics = self._synthesize_ai_topics(
+                synthesizer, sources, content_plan, documents, cases, ideas, graph_links or [], author_brain or {}
+            )
+            if ai_topics:
+                topics = ai_topics
+                analysis_mode = "ai"
+                if external_count > 0:
+                    source_status.append("AI проанализировал свежие сигналы мировых СМИ и выделил глобальные тренды.")
+                else:
+                    source_status.append("AI выделил глобальные тренды из доступных источников (внешние СМИ сейчас недоступны).")
+        if not topics:
+            topics = [
+                self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [])
+                if author_brain is None
+                else self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [], author_brain)
+                for source in sources
+            ]
         grouped = self._group_similar_topics(topics)
         filtered = sorted(grouped, key=lambda item: item.trend_score, reverse=True)[:12]
         generated_at = datetime.now(timezone.utc)
         cache = {
             "generated_at": generated_at.isoformat(timespec="seconds"),
             "expires_at": (generated_at + timedelta(minutes=self.ttl_minutes)).isoformat(timespec="seconds"),
+            "analysis_mode": analysis_mode,
+            "external_signal_count": external_count,
             "sources": sorted({source for topic in filtered for source in topic.sources}),
             "source_status": " ".join(source_status) if source_status else "Используется локальный анализ.",
             "fetched_sources": sorted({str(item.get("name", "")) for item in source_diagnostics if int(item.get("fetched_count", 0) or 0) > 0}),
@@ -289,6 +312,178 @@ class TrendRadar:
             best_rubrics=tuple(rubric_matches),
             sources=tuple(_as_list(source.get("sources", [])) or [str(source.get("source", "Локальные редакторские источники"))]),
             detected_at=str(source.get("detected_at") or datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            why_trend=why_trend,
+            author_brain_topics=tuple(author_topics),
+            repeat_risk=repeat_risk,
+            recommendation=recommendation,
+            ai_explanation=explanation,
+            status="new",
+            created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+
+    def _synthesize_ai_topics(
+        self,
+        synthesizer: object,
+        sources: list[dict[str, object]],
+        content_plan: dict[str, object],
+        documents: list[object],
+        cases: list[object],
+        ideas: list[object],
+        graph_links: list[dict[str, str]],
+        author_brain: dict[str, object],
+    ) -> list[TrendTopic]:
+        signals = [
+            {
+                "title": str(source.get("title", "")),
+                "summary": str(source.get("description", ""))[:400],
+                "source": str(source.get("source", "")),
+                "url": str(source.get("url", "")),
+                "category": str(source.get("category", "")),
+            }
+            for source in sources
+            if str(source.get("title", "")).strip()
+        ]
+        if not signals:
+            return []
+        try:
+            raw_trends = synthesizer(signals, author_brain, content_plan) or []
+        except Exception:  # noqa: BLE001 - synthesis must fail closed to the rule-based path
+            return []
+        topics: list[TrendTopic] = []
+        for trend in raw_trends:
+            if isinstance(trend, dict) and str(trend.get("title", "")).strip():
+                topics.append(
+                    self._build_ai_topic(trend, content_plan, documents, cases, ideas, graph_links, author_brain)
+                )
+        return topics
+
+    def _build_ai_topic(
+        self,
+        trend: dict[str, object],
+        content_plan: dict[str, object],
+        documents: list[object],
+        cases: list[object],
+        ideas: list[object],
+        graph_links: list[dict[str, str]],
+        author_brain: dict[str, object],
+    ) -> TrendTopic:
+        title = str(trend.get("title", "")).strip()
+        category = str(trend.get("category", "")).strip() or _category({"title": title, "description": str(trend.get("trend_essence", ""))})
+        trend_essence = str(trend.get("trend_essence", "")).strip() or _trend_essence(title, category)
+        main_idea = str(trend.get("main_idea", "")).strip() or _main_trend_idea(title, category)
+        description = str(trend.get("description", "")).strip() or trend_essence[:600]
+        author_angle = str(trend.get("author_angle", "")).strip() or _author_angle(title, category)
+        audience_importance = str(trend.get("audience_importance", "")).strip() or _audience_importance(category)
+        expertise_connection = str(trend.get("expertise_connection", "")).strip() or _expertise_connection(category)
+        why_now = str(trend.get("why_now", "")).strip()
+        why_trend = str(trend.get("why_trend", "")).strip() or "Тема повторяется в нескольких мировых источниках и пересекается с экспертной территорией автора."
+        why_important = str(trend.get("why_important", "")).strip() or "Тема даёт авторский угол о связи глобального сигнала с операционной зрелостью, сервисом и управлением."
+        hype_level = str(trend.get("hype_level", "")).strip() or "средний"
+        relevance_forecast = str(trend.get("relevance_forecast", "")).strip() or "1-2 недели"
+
+        supporting = _supporting_sources(trend.get("supporting_sources"))
+        source_names = [name for name, _ in supporting] or _as_list(trend.get("sources", []))
+        source_url = next((url for _, url in supporting if url), "")
+        source_label = ", ".join(source_names) if source_names else "Мировые СМИ (AI-анализ)"
+
+        publication_ideas = _clean_publication_ideas(trend.get("publication_ideas")) or _publication_ideas(title, category)
+
+        content_text = " ".join((title, trend_essence, main_idea, description, category))
+        pseudo_source: dict[str, object] = {
+            "title": title,
+            "description": description,
+            "why_now": why_now,
+            "category": category,
+            "source": source_label,
+            "sources": source_names,
+            "best_formats": _as_list(trend.get("best_formats", [])),
+            "best_rubrics": _as_list(trend.get("best_rubrics", [])),
+        }
+
+        knowledge_matches = _matching_documents(content_text, documents, category, author_brain)
+        case_insights = _matching_case_insights(content_text, cases, category, author_brain)
+        case_matches = [item["title"] for item in case_insights]
+        idea_bonus = _idea_bonus(content_text, ideas)
+        graph_bonus = min(0.6, len(graph_links) * 0.1)
+        brain_bonus = _author_brain_bonus(content_text, author_brain)
+        plan_bonus = _plan_fit_bonus(content_text, content_plan)
+        repeat_risk = _repeat_risk(content_text, content_plan, ideas)
+        rubric_matches = _rubrics(pseudo_source, content_plan)
+        author_topics = _author_brain_topics(content_text, author_brain)
+        direction_bonus = _brand_direction_bonus(content_text, category, author_brain)
+
+        hype_reach = {"высокий": 8.6, "high": 8.6, "средний": 7.2, "medium": 7.2, "проверить": 6.8}.get(hype_level.lower(), 7.0)
+        reach = min(10.0, hype_reach + idea_bonus)
+        repeat_penalty = 0.7 if repeat_risk == "высокий" else 0.25 if repeat_risk == "средний" else 0.0
+        brand_base = max(6.5, 7.4 if direction_bonus >= 0.9 else 6.5)
+        brand = min(10.0, brand_base + plan_bonus + len(knowledge_matches) * 0.35 + len(case_matches) * 0.55 + graph_bonus + brain_bonus + direction_bonus - repeat_penalty)
+        editorial_fit = _editorial_strategy_score(pseudo_source, content_plan, rubric_matches)
+        content_potential = min(10.0, reach + len(case_matches) * 0.35 + len(knowledge_matches) * 0.2 + (0.4 if rubric_matches else 0.0))
+        trend_relevance = _clamp_score(trend.get("trend_relevance"), default=round(min(10.0, 7.4 + min(2.0, len(source_names) * 0.4)), 1))
+        repeat_score = {"низкий": 10.0, "средний": 6.0, "высокий": 2.0}.get(repeat_risk, 7.0)
+        component_scores = {
+            "trend_relevance": round(trend_relevance, 1),
+            "brand_fit": round(brand, 1),
+            "editorial_strategy_fit": round(editorial_fit, 1),
+            "content_potential": round(content_potential, 1),
+            "repeat_safety": round(repeat_score, 1),
+        }
+        trend_score = round(
+            trend_relevance * 0.30
+            + brand * 0.25
+            + editorial_fit * 0.20
+            + content_potential * 0.15
+            + repeat_score * 0.10,
+            1,
+        )
+        recommendation = _recommendation(trend_score, brand, repeat_risk)
+        ai_reason = _reason(title, plan_bonus, knowledge_matches, case_matches, brain_bonus)
+        explanation = {
+            "trend": why_trend,
+            "trend_score": trend_score,
+            "content_potential": round(content_potential, 1),
+            "month_focus": str(content_plan.get("month_focus", "")),
+            "week_focus": str(content_plan.get("focus", "")),
+            "documents": knowledge_matches,
+            "cases": case_matches,
+            "platform_fit": _platform_fit_reason(pseudo_source, content_plan),
+            "author_fit": ai_reason,
+            "repeat_risk": repeat_risk,
+            "author_angle": author_angle,
+            "original_title": str(trend.get("original_title", "")) or title,
+            "analysis": "AI-анализ мировых СМИ",
+        }
+        return TrendTopic(
+            id=str(trend.get("id") or _slug(title)),
+            title=title,
+            original_title=str(trend.get("original_title", "")) or title,
+            description=description,
+            trend_essence=trend_essence,
+            main_idea=main_idea,
+            audience_importance=audience_importance,
+            author_angle=author_angle,
+            expertise_connection=expertise_connection,
+            publication_ideas=publication_ideas,
+            source=source_label,
+            source_url=source_url,
+            why_now=why_now,
+            why_important=why_important,
+            category=category,
+            hype_level=hype_level,
+            relevance_forecast=relevance_forecast,
+            reach_score=round(reach, 1),
+            brand_fit_score=round(brand, 1),
+            content_potential=round(content_potential, 1),
+            trend_score=trend_score,
+            component_scores=component_scores,
+            ai_reason=ai_reason,
+            matching_cases=tuple(case_matches),
+            case_insights=tuple(case_insights),
+            knowledge_materials=tuple(knowledge_matches),
+            best_formats=tuple(_formats(pseudo_source, content_plan)),
+            best_rubrics=tuple(rubric_matches),
+            sources=tuple(source_names or [source_label]),
+            detected_at=str(trend.get("detected_at") or datetime.now(timezone.utc).isoformat(timespec="seconds")),
             why_trend=why_trend,
             author_brain_topics=tuple(author_topics),
             repeat_risk=repeat_risk,
@@ -1065,11 +1260,12 @@ class ExternalFeedSourceProvider:
         {"name": "Lean Enterprise Institute", "category": "Operations", "url": "https://www.lean.org/feed/"},
     )
 
-    def __init__(self, feeds: tuple[dict[str, object], ...] | None = None, timeout_seconds: float = 1.2) -> None:
+    def __init__(self, feeds: tuple[dict[str, object], ...] | None = None, timeout_seconds: float = 6.0) -> None:
         raw_feeds = os.environ.get("TREND_RADAR_RSS_FEEDS", "")
         configured = tuple({"name": item.strip(), "category": "External", "url": item.strip()} for item in raw_feeds.split(",") if item.strip())
         self.feeds = feeds or configured or self.DEFAULT_FEEDS
-        self.timeout_seconds = timeout_seconds
+        self.timeout_seconds = _env_float("TREND_RADAR_RSS_TIMEOUT_SECONDS", timeout_seconds)
+        self.max_workers = max(1, _env_int("TREND_RADAR_RSS_WORKERS", 10))
         disabled = {"0", "false", "no", "off"}
         self.enabled = os.environ.get("TREND_RADAR_ENABLE_RSS", "").strip().lower() not in disabled
 
@@ -1079,41 +1275,50 @@ class ExternalFeedSourceProvider:
             source_status.append("Внешние RSS-источники подключаемы, но сейчас выключены; используется локальный анализ.")
             source_diagnostics.append({"name": "External RSS", "status": "disabled", "fetched_count": 0, "error": "TREND_RADAR_ENABLE_RSS disables RSS."})
             return []
-        items: list[dict[str, object]] = []
+        live_feeds = [feed for feed in self.feeds if not feed.get("stub") and str(feed.get("url", "")).strip()]
         for feed in self.feeds:
-            name = str(feed.get("name", ""))
             if feed.get("stub"):
+                name = str(feed.get("name", ""))
                 source_status.append(f"{name}: provider-заглушка, RSS недоступен.")
                 source_diagnostics.append({"name": name, "status": "unavailable", "fetched_count": 0, "error": "provider stub"})
-                continue
-            url = str(feed.get("url", "")).strip()
-            if not url:
-                continue
-            try:
-                request = Request(url, headers={"User-Agent": "PersonalBrandOS-TrendRadar/3.0"})
-                with urlopen(request, timeout=self.timeout_seconds) as response:
-                    status_code = getattr(response, "status", 0)
-                    content_type = response.headers.get("content-type", "")
-                    payload = response.read()
-                parsed = _parse_feed_items(payload, feed)
+
+        items: list[dict[str, object]] = []
+        if live_feeds:
+            with ThreadPoolExecutor(max_workers=min(self.max_workers, len(live_feeds))) as executor:
+                results = executor.map(self._fetch_one, live_feeds)
+            for parsed, diagnostic, status_message in results:
                 items.extend(parsed)
-                source_diagnostics.append(
-                    {
-                        "name": name,
-                        "url": url,
-                        "status": "ok",
-                        "http_status": status_code,
-                        "content_type": content_type,
-                        "fetched_count": len(parsed),
-                        "error": "",
-                    }
-                )
-            except (OSError, URLError, ET.ParseError, TimeoutError) as exc:
-                source_status.append(f"{name}: недоступен ({exc})")
-                source_diagnostics.append({"name": name, "url": url, "status": "error", "fetched_count": 0, "error": str(exc)})
+                source_diagnostics.append(diagnostic)
+                if status_message:
+                    source_status.append(status_message)
         if items:
-            source_status.append(f"Внешние RSS-источники: получено {len(items)} сигналов.")
+            ok_feeds = sum(1 for d in source_diagnostics if d.get("status") == "ok" and int(d.get("fetched_count", 0) or 0) > 0)
+            source_status.append(f"Внешние источники СМИ: получено {len(items)} сигналов из {ok_feeds} лент.")
         return items
+
+    def _fetch_one(self, feed: dict[str, object]) -> tuple[list[dict[str, object]], dict[str, object], str]:
+        name = str(feed.get("name", ""))
+        url = str(feed.get("url", "")).strip()
+        try:
+            request = Request(url, headers={"User-Agent": "PersonalBrandOS-TrendRadar/3.0"})
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                status_code = getattr(response, "status", 0)
+                content_type = response.headers.get("content-type", "")
+                payload = response.read()
+            parsed = _parse_feed_items(payload, feed)
+            diagnostic = {
+                "name": name,
+                "url": url,
+                "status": "ok",
+                "http_status": status_code,
+                "content_type": content_type,
+                "fetched_count": len(parsed),
+                "error": "",
+            }
+            return parsed, diagnostic, ""
+        except (OSError, URLError, ET.ParseError, TimeoutError, ValueError) as exc:
+            diagnostic = {"name": name, "url": url, "status": "error", "fetched_count": 0, "error": str(exc)}
+            return [], diagnostic, f"{name}: недоступен ({exc})"
 
 
 def _parse_feed_items(payload: bytes, feed: dict[str, object]) -> list[dict[str, object]]:
@@ -1182,6 +1387,50 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, str(default)))
     except ValueError:
         return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+
+
+def _clamp_score(value: object, default: float) -> float:
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return round(default, 1)
+    return round(max(0.0, min(10.0, number)), 1)
+
+
+def _supporting_sources(value: object) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    if not isinstance(value, list):
+        return result
+    for item in value:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("source") or "").strip()
+            url = str(item.get("url") or "").strip()
+        else:
+            name, url = str(item).strip(), ""
+        if name or url:
+            result.append((name or url, url))
+    return result
+
+
+PUBLICATION_IDEA_PLATFORMS = ("LinkedIn", "Telegram", "VC", "Сетка")
+
+
+def _clean_publication_ideas(value: object) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    ideas: dict[str, str] = {}
+    for platform in PUBLICATION_IDEA_PLATFORMS:
+        text = str(value.get(platform, "")).strip()
+        if text:
+            ideas[platform] = text
+    return ideas
 
 
 DEFAULT_TREND_SOURCES = {

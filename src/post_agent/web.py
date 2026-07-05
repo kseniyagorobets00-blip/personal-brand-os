@@ -1500,6 +1500,84 @@ def render_learning_center(
     )
 
 
+def _ai_synthesize_trends(
+    signals: list[dict[str, object]],
+    author_brain: dict[str, object],
+    content_plan: dict[str, object],
+) -> list[dict[str, object]]:
+    """Cluster fresh real-world media signals into global editorial trends via AI.
+
+    Returns a list of trend dicts, or an empty list on any failure so the radar
+    falls back to the deterministic rule-based path."""
+    gateway = AIGateway()
+    if not gateway.is_configured() or not signals:
+        return []
+    profile = author_brain.get("profile", author_brain) if isinstance(author_brain, dict) else {}
+    themes = []
+    if isinstance(profile, dict):
+        for theme in profile.get("main_themes", [])[:10] if isinstance(profile.get("main_themes"), list) else []:
+            themes.append(theme.get("name", "") if isinstance(theme, dict) else str(theme))
+    pillars = content_plan.get("content_pillars", [])
+    author_context = {
+        "main_themes": [t for t in themes if t],
+        "week_focus": str(content_plan.get("focus", "")),
+        "month_focus": str(content_plan.get("month_focus", "")),
+        "content_pillars": [str(p) for p in pillars] if isinstance(pillars, list) else [],
+        "expertise": "Operations, Customer Experience, Hospitality, AI в бизнесе, управленческие системы",
+    }
+    trimmed_signals = [
+        {
+            "title": str(s.get("title", ""))[:200],
+            "summary": str(s.get("summary", ""))[:300],
+            "source": str(s.get("source", "")),
+            "url": str(s.get("url", "")),
+        }
+        for s in signals[:40]
+    ]
+    try:
+        response = _complete_json_with_retry(
+            gateway,
+            system_prompt=(
+                "Ты AI-аналитик трендов и Chief Content Officer для эксперта по операциям, "
+                "клиентскому опыту, гостеприимству, AI в бизнесе и управленческим системам. "
+                "Тебе дают свежие заголовки и аннотации из мировых СМИ и отраслевых источников. "
+                "Твоя задача — не пересказывать отдельные новости, а СИНТЕЗИРОВАТЬ глобальные тренды: "
+                "объединять похожие сигналы в 6-10 крупных тем, релевантных экспертной территории автора, "
+                "и для каждой дать авторский редакционный угол. Отвечай строго JSON."
+            ),
+            user_prompt=(
+                "СВЕЖИЕ СИГНАЛЫ ИЗ СМИ (JSON):\n"
+                f"{json.dumps(trimmed_signals, ensure_ascii=False)}\n\n"
+                "КОНТЕКСТ АВТОРА (JSON):\n"
+                f"{json.dumps(author_context, ensure_ascii=False)}\n\n"
+                "Верни строго JSON вида: {\"trends\": [ {\n"
+                "  \"title\": \"редакционная формулировка глобального тренда (не заголовок новости)\",\n"
+                "  \"category\": \"AI|Operations|Customer Experience|Hospitality|Management\",\n"
+                "  \"trend_essence\": \"о чём на самом деле этот тренд, 1-2 предложения\",\n"
+                "  \"main_idea\": \"главная мысль\",\n"
+                "  \"audience_importance\": \"почему это важно аудитории автора\",\n"
+                "  \"author_angle\": \"уникальный авторский угол подачи\",\n"
+                "  \"expertise_connection\": \"связь с экспертизой автора\",\n"
+                "  \"why_now\": \"почему тренд актуален сейчас\",\n"
+                "  \"why_trend\": \"почему это именно тренд, а не разовая новость\",\n"
+                "  \"why_important\": \"чем ценен для бренда автора\",\n"
+                "  \"hype_level\": \"высокий|средний|низкий\",\n"
+                "  \"relevance_forecast\": \"насколько долго тема будет актуальна\",\n"
+                "  \"trend_relevance\": число 0-10,\n"
+                "  \"supporting_sources\": [{\"name\": \"источник\", \"url\": \"ссылка\"}],\n"
+                "  \"publication_ideas\": {\"LinkedIn\": \"...\", \"Telegram\": \"...\", \"VC\": \"...\", \"Сетка\": \"...\"}\n"
+                "} ] }. Каждый тренд должен опираться на реальные сигналы из списка."
+            ),
+            action="trend_radar_synthesize",
+        )
+    except AIGatewayError:
+        return []
+    trends = response.get("trends") if isinstance(response, dict) else None
+    if not isinstance(trends, list):
+        return []
+    return [item for item in trends if isinstance(item, dict)]
+
+
 def _refresh_trend_radar_now() -> dict[str, object]:
     DailyBriefRequestHandler.knowledge_base.ensure_seed_documents()
     author_brain = AuthorBrain(
@@ -1522,6 +1600,7 @@ def _refresh_trend_radar_now() -> dict[str, object]:
         author_brain=author_brain,
         graph_links=DailyBriefRequestHandler.knowledge_graph.related_to(pillar_query),
         ai_context=ai_context,
+        synthesizer=_ai_synthesize_trends,
     )
 
 
@@ -1540,8 +1619,20 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
     empty = '<div class="empty">Радар трендов еще не запускался. Нажмите «Обновить радар».</div>'
     main_card = _main_trend_recommendation(topics[0]) if topics else empty
     cards = "".join(_trend_card(topic) for topic in topics) or empty
+    analysis_mode = str(cache.get("analysis_mode", "local"))
+    signal_count = int(cache.get("external_signal_count", 0) or 0)
+    if analysis_mode == "ai":
+        mode_text = (
+            f"AI-анализ мировых СМИ: обработано {signal_count} свежих сигналов и выделены глобальные тренды."
+            if signal_count > 0
+            else "AI-анализ: глобальные тренды выделены (внешние СМИ сейчас недоступны)."
+        )
+        mode_badge = f'<div class="trend-mode trend-mode-ai">{escape(mode_text)}</div>'
+    else:
+        mode_badge = '<div class="trend-mode trend-mode-local">Локальный анализ: внешние СМИ или AI недоступны, показаны редакционные заготовки.</div>'
     content = f"""
     {saved_notice}
+    {mode_badge}
     <section class="block">
       <div class="section-title">
         <div>
@@ -6342,6 +6433,24 @@ def _styles() -> str:
     }
     .trend-radar-list {
       gap: 18px;
+    }
+    .trend-mode {
+      margin: 0 0 18px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.4;
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .trend-mode-ai {
+      background: rgba(94, 234, 168, 0.10);
+      border-color: rgba(94, 234, 168, 0.35);
+      color: #bff3d6;
+    }
+    .trend-mode-local {
+      background: rgba(255, 196, 94, 0.08);
+      border-color: rgba(255, 196, 94, 0.30);
+      color: #f4d9a6;
     }
     .trend-card .topic-actions form {
       margin: 0;

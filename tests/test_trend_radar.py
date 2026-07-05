@@ -46,6 +46,60 @@ class TrendRadarTests(unittest.TestCase):
         self.assertIn("Внешние", cache["source_status"])
         self.assertIn("source_diagnostics", cache)
 
+    def test_trend_radar_uses_ai_synthesizer_for_global_trends(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_synth(signals, author_brain, content_plan):  # type: ignore[no-untyped-def]
+            captured["signals"] = signals
+            return [
+                {
+                    "title": "Глобальный тренд: AI перестраивает операционные модели",
+                    "category": "AI",
+                    "trend_essence": "Компании переосмысляют процессы под AI.",
+                    "main_idea": "AI усиливает зрелые процессы, а не заменяет их.",
+                    "author_angle": "Показать связь AI и операционной дисциплины.",
+                    "why_trend": "Сигнал повторяется в нескольких мировых СМИ.",
+                    "hype_level": "высокий",
+                    "trend_relevance": 9.2,
+                    "supporting_sources": [{"name": "HBR", "url": "https://hbr.org/x"}],
+                    "publication_ideas": {"LinkedIn": "AI operations post", "Telegram": "AI пост"},
+                }
+            ]
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json")
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh(
+                    {"focus": "Operations", "content_pillars": ["AI", "Operations"]},
+                    [],
+                    [],
+                    [],
+                    synthesizer=fake_synth,
+                )
+
+        self.assertEqual(cache["analysis_mode"], "ai")
+        self.assertTrue(captured.get("signals"))
+        first = cache["topics"][0]
+        self.assertIn("операцион", str(first["title"]).lower())
+        self.assertEqual(first["trend_essence"], "Компании переосмысляют процессы под AI.")
+        self.assertIn("HBR", first["sources"])
+        self.assertEqual(first["ai_explanation"]["analysis"], "AI-анализ мировых СМИ")
+        self.assertIn("LinkedIn", first["publication_ideas"])
+
+    def test_trend_radar_falls_back_to_rules_when_synth_returns_nothing(self) -> None:
+        def empty_synth(signals, author_brain, content_plan):  # type: ignore[no-untyped-def]
+            return []
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json")
+            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
+                cache = radar.refresh({}, [], [], [], synthesizer=empty_synth)
+
+        self.assertEqual(cache["analysis_mode"], "local")
+        self.assertTrue(cache["topics"])
+
     def test_external_feed_provider_is_enabled_by_default(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             provider = ExternalFeedSourceProvider(feeds=())
