@@ -176,9 +176,15 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path == "/learning":
-            self.send_response(303)
-            self.send_header("Location", "/author-profile?tab=rules")
-            self.end_headers()
+            query = parse_qs(urlparse(self.path).query)
+            self._send_html(
+                render_learning_center(
+                    self.learning_center,
+                    self.memory_inbox,
+                    self.knowledge_graph,
+                    saved=query.get("saved", ["0"])[0] == "1",
+                )
+            )
             return
         if path == "/trend-radar":
             query = parse_qs(urlparse(self.path).query)
@@ -306,7 +312,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             data = parse_qs(self.rfile.read(length).decode("utf-8"))
             _save_learning_settings_form(data, self.author_brain_repository)
             self.send_response(303)
-            self.send_header("Location", "/author-profile?tab=rules&learning_settings_saved=1")
+            self.send_header("Location", "/bot-rules?saved=1")
             self.end_headers()
             return
         if path == "/author-profile/rules/add":
@@ -317,7 +323,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             if rule:
                 self.learning_center.create_rule(rule=rule, reason=reason or "Правило добавлено вручную.", source="manual")
             self.send_response(303)
-            self.send_header("Location", "/author-profile?tab=rules&rule_saved=1")
+            self.send_header("Location", "/learning?saved=1")
             self.end_headers()
             return
         if path == "/content-plan":
@@ -377,7 +383,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             intent = data.get("intent", ["draft"])[0]
             if intent == "lesson":
                 self.learning_center.create_candidate_from_feedback(feedback, title)
-                location = "/author-profile?tab=rules&learning_saved=1"
+                location = "/learning?saved=1"
             else:
                 state = _load_ui_state()
                 refinements = state.setdefault("refinements", {})
@@ -444,7 +450,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 rule=data.get("rule", [None])[0],
             )
             self.send_response(303)
-            self.send_header("Location", "/author-profile?tab=rules&learning_saved=1")
+            self.send_header("Location", "/learning?saved=1")
             self.end_headers()
             return
         if path.startswith("/memory-inbox/"):
@@ -458,7 +464,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 self.memory_inbox.reject(item_id)
             self.knowledge_base.rebuild_graph()
             self.send_response(303)
-            self.send_header("Location", "/author-profile?tab=rules&learning_saved=1")
+            self.send_header("Location", "/learning?saved=1")
             self.end_headers()
             return
         if path == "/knowledge/cases/add":
@@ -623,6 +629,7 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         ("Идеи", "/ideas", "ideas"),
         ("Профиль автора", "/author-profile", "profile"),
         ("Правила бота", "/bot-rules", "bot-rules"),
+        ("Обучение", "/learning", "learning"),
         ("Как это связано", "/how-it-works", "how"),
     )
     items = "".join(
@@ -679,7 +686,7 @@ def _gates_banner(pending_memory: int, pending_lessons: int) -> str:
         <strong>{escape(what)} ждут вашего решения.</strong>
         <span>Пока вы их не подтвердите, AI их не использует.</span>
       </div>
-      <a class="gates-action" href="/author-profile?tab=rules">Открыть и решить →</a>
+      <a class="gates-action" href="/learning">Открыть и решить →</a>
     </div>"""
 
 
@@ -789,7 +796,6 @@ def render_author_profile(
         ("base", "Авторская база"),
         ("dna", "ДНК письма"),
         ("strategy", "Редакционная стратегия"),
-        ("rules", "Правила"),
     )
     tab_links = "".join(
         f"<a class=\"{'active' if key == active_tab else ''}\" href=\"/author-profile?tab={key}\">{label}</a>"
@@ -799,7 +805,6 @@ def render_author_profile(
         "base": _author_base_panel(brain_profile, brain_status),
         "dna": _writing_dna_panel(dna, profile),
         "strategy": _editorial_strategy_panel(_load_editorial_strategy()),
-        "rules": _rules_panel(learning_center),
     }
     return f"""<!doctype html>
 <html lang="ru">
@@ -833,10 +838,9 @@ def _normalize_author_tab(tab: str) -> str:
         "author-base": "base",
         "writing-dna": "dna",
         "editorial-strategy": "strategy",
-        "learning": "rules",
     }
     value = aliases.get((tab or "").strip(), (tab or "").strip())
-    return value if value in {"base", "dna", "strategy", "rules"} else "base"
+    return value if value in {"base", "dna", "strategy"} else "base"
 
 
 def _author_base_panel(profile: dict[str, object], status: object) -> str:
@@ -1518,6 +1522,14 @@ def render_learning_center(
     </section>
     <section class="block">
       <div class="section-title"><div><p class="eyebrow">что уже изучено</p><h2>Подтвержденные правила</h2></div><span>{len(accepted)} активных правил</span></div>
+      <details class="knowledge-upload embedded-form">
+        <summary>Добавить правило вручную</summary>
+        <form method="post" action="/author-profile/rules/add">
+          <textarea name="rule" rows="4" placeholder="Например: начинать пост с рабочей ситуации, а не с общего тезиса" required></textarea>
+          <textarea name="reason" rows="3" placeholder="Почему это важно для моего стиля"></textarea>
+          <button type="submit">Сохранить правило</button>
+        </form>
+      </details>
       <div class="card-list">{accepted_cards}</div>
     </section>
     <section class="block">
@@ -4218,12 +4230,12 @@ def _thinking_mode_rows(modes: object) -> str:
 def render_how_it_works() -> str:
     stages = [
         ("🟢", "Знания", "Память", "/knowledge", "Документы и кейсы, которые вы загружаете.", "Питают Граф знаний и Author Brain."),
-        ("⏳", "Входящие памяти", "Профиль автора → Правила", "/author-profile?tab=rules", "Новое знание сначала ждёт подтверждения.", "Влияет на AI только после того, как вы нажмёте «Принять»."),
+        ("⏳", "Входящие памяти", "Обучение", "/learning", "Новое знание сначала ждёт подтверждения.", "Влияет на AI только после того, как вы нажмёте «Принять»."),
         ("⚙️", "Граф знаний", "", "", "Связи между темами, компаниями и кейсами.", "Строится автоматически из принятой памяти."),
         ("🟢 ✅", "Правила бота", "Правила бота", "/bot-rules", "Правила мышления, запрещённые начала, правила площадок, режимы, анти-повтор, вес тем.", "Единый источник для AI. Есть жёсткие проверки: язык, режимы, площадки, повторы."),
         ("🟢", "ДНК письма", "Профиль автора → ДНК", "/author-profile?tab=dna", "Как автор пишет: тон, структура, лексика.", "Питает Author Brain."),
         ("⚙️", "Author Brain", "", "", "Модель мышления автора: темы, кейсы, идеи.", "Собирается из Знаний, ДНК письма, Уроков и Правил бота."),
-        ("🟢 ⏳", "Уроки (обучение)", "Профиль автора → Правила", "/author-profile?tab=rules", "Правила, выученные из ваших правок и решений.", "Влияют на AI только принятые уроки."),
+        ("🟢 ⏳", "Уроки (обучение)", "Обучение", "/learning", "Правила, выученные из ваших правок и решений.", "Влияют на AI только принятые уроки."),
         ("🟢 ✅", "Стратегия · Радар трендов · Контент-план", "Контент-план", "/content-plan", "Что и когда публиковать.", "Тренды подбираются к ячейкам плана в коде; повторы проверяются автоматически."),
         ("⚙️ ✅", "Thinking Engine", "", "", "Выбирает режим мышления и угол публикации.", "Выбирает только из ваших режимов (Правила бота)."),
         ("⚙️ ✅", "Сборка подсказки → AI", "", "", "Всё, что выше, собирается в одну подсказку и уходит в AI.", "Черновик проверяется на язык и запрещённые начала."),
