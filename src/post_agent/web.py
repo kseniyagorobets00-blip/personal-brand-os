@@ -708,31 +708,52 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
 
 
 def _global_nav(active: str = "", extra: str = "") -> str:
-    links = (
-        ("Дневной бриф", "/daily-brief", "daily"),
-        ("Контент-план", "/content-plan", "content"),
-        ("Тексты", "/texts", "texts"),
-        ("Радар трендов", "/trend-radar", "trends"),
-        ("Память", "/knowledge", "knowledge"),
-        ("Идеи", "/ideas", "ideas"),
-        ("Профиль автора", "/author-profile", "profile"),
-        ("Правила бота", "/bot-rules", "bot-rules"),
-        ("Обучение", "/learning", "learning"),
-        ("Как это связано", "/how-it-works", "how"),
+    # Grouped by user intent: desktop = persistent left sidebar, mobile = burger menu.
+    groups = (
+        ("Сегодня", (("Дневной бриф", "/daily-brief", "daily"),)),
+        (
+            "Планирование",
+            (
+                ("Контент-план", "/content-plan", "content"),
+                ("Тексты", "/texts", "texts"),
+                ("Идеи", "/ideas", "ideas"),
+            ),
+        ),
+        ("Память", (("Память", "/knowledge", "knowledge"),)),
+        ("Сигналы", (("Радар трендов", "/trend-radar", "trends"),)),
+        (
+            "Настройки",
+            (
+                ("Профиль автора", "/author-profile", "profile"),
+                ("Правила бота", "/bot-rules", "bot-rules"),
+                ("Обучение", "/learning", "learning"),
+                ("Как это связано", "/how-it-works", "how"),
+            ),
+        ),
     )
-    items = "".join(
-        "<a class=\"{cls}\" href=\"{href}\"{current}>{label}</a>".format(
-            cls="active" if key == active else "",
-            href=escape(href),
-            current=' aria-current="page"' if key == active else "",
-            label=escape(label),
+    sections = ""
+    for group_label, links in groups:
+        items = "".join(
+            "<a class=\"nav-link{active}\" href=\"{href}\"{current}>{label}</a>".format(
+                active=" active" if key == active else "",
+                href=escape(href),
+                current=' aria-current="page"' if key == active else "",
+                label=escape(label),
+            )
+            for label, href, key in links
         )
-        for label, href, key in links
+        sections += f"<p class=\"nav-group\">{escape(group_label)}</p>{items}"
+    extra_html = f"<p class=\"sidebar-extra\">{escape(extra)}</p>" if extra else ""
+    return (
+        "<input type=\"checkbox\" id=\"nav-toggle\" class=\"nav-toggle\" hidden>"
+        "<label for=\"nav-toggle\" class=\"burger\" aria-label=\"Открыть меню\">☰</label>"
+        "<label for=\"nav-toggle\" class=\"nav-backdrop\" aria-hidden=\"true\"></label>"
+        "<aside class=\"sidebar\">"
+        "<a class=\"brand\" href=\"/daily-brief\">Personal Brand OS</a>"
+        f"<nav class=\"sidebar-nav\" aria-label=\"Основная навигация\">{sections}</nav>"
+        f"<div class=\"sidebar-foot\">{extra_html}{_cloud_status_chip()}</div>"
+        "</aside>"
     )
-    if extra:
-        items += f"<span>{escape(extra)}</span>"
-    nav = f"<nav class=\"meta global-nav\" aria-label=\"Основная навигация\">{items}</nav>"
-    return f"<div class=\"nav-wrap\">{nav}{_cloud_status_chip()}</div>"
 
 
 def _cloud_status_chip() -> str:
@@ -6436,19 +6457,98 @@ def _styles() -> str:
       border-color: var(--accent);
       color: var(--ink);
     }
-    .global-nav {
-      max-width: 760px;
-    }
-    .meta a.active {
-      color: #fff;
-      background: var(--accent);
-      border-color: var(--accent);
-    }
-    .nav-wrap {
+    /* ===== Sidebar navigation (desktop) / burger (mobile) ===== */
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 240px;
       display: flex;
       flex-direction: column;
-      align-items: flex-end;
-      gap: 0;
+      padding: 26px 16px 20px;
+      background: var(--paper);
+      border-right: 1px solid var(--line-soft);
+      overflow-y: auto;
+      z-index: 50;
+    }
+    .brand {
+      display: block;
+      padding: 4px 12px 18px;
+      font-size: 15px;
+      font-weight: 720;
+      letter-spacing: .01em;
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
+    .nav-group {
+      margin: 18px 12px 8px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .nav-group:first-child { margin-top: 0; }
+    .nav-link {
+      display: block;
+      padding: 9px 12px;
+      border-radius: 10px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 640;
+      transition: background .16s ease, color .16s ease;
+    }
+    .nav-link:hover { background: var(--paper-soft); color: var(--ink); }
+    .nav-link.active { background: var(--accent-soft); color: var(--accent); }
+    .sidebar-foot {
+      margin-top: auto;
+      padding: 16px 12px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .sidebar-extra { margin: 0; color: var(--muted); font-size: 12px; font-weight: 640; }
+    .burger {
+      display: none;
+      position: fixed;
+      top: 14px;
+      right: 14px;
+      z-index: 60;
+      width: 44px;
+      height: 44px;
+      align-items: center;
+      justify-content: center;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      color: var(--ink);
+      font-size: 20px;
+      cursor: pointer;
+      box-shadow: var(--shadow);
+    }
+    .nav-backdrop { display: none; }
+    @media (min-width: 900px) {
+      body { padding-left: 240px; }
+    }
+    @media (max-width: 899px) {
+      .burger { display: inline-flex; }
+      .sidebar {
+        width: min(280px, 82vw);
+        transform: translateX(-100%);
+        transition: transform .22s ease;
+        box-shadow: var(--shadow);
+      }
+      .nav-toggle:checked ~ .sidebar { transform: none; }
+      .nav-toggle:checked ~ .nav-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, .5);
+        z-index: 40;
+      }
     }
     .cloud-chip {
       display: inline-flex;
@@ -6795,7 +6895,7 @@ def _styles() -> str:
       justify-content: space-between;
       align-items: flex-end;
       gap: 18px;
-      margin-bottom: 14px;
+      margin-bottom: 18px;
     }
     .section-title span, .why, .draft-meta, .tags {
       color: var(--muted);
@@ -6806,7 +6906,7 @@ def _styles() -> str:
     }
     .card-list, .draft-grid, .approval-grid {
       display: grid;
-      gap: 14px;
+      gap: 18px;
     }
     .card, .draft, .approval, .memory {
       background: var(--paper);
@@ -7014,7 +7114,11 @@ def _styles() -> str:
       padding: 5px 8px;
       font-size: 13px;
     }
-    .card p, .approval p { margin-top: 10px; }
+    .card p, .approval p { margin-top: 12px; line-height: 1.6; }
+    .approval-actions { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
+    .approval h3, .card-head { margin-bottom: 4px; }
+    .topic-actions { margin-top: 18px; }
+    .refine { margin-top: 16px; }
     .draft-prep-list {
       gap: 18px;
     }
@@ -7639,20 +7743,7 @@ def _styles() -> str:
       .shell { width: min(100% - 28px, 1120px); padding-top: 28px; }
       .topbar, .section-title { align-items: flex-start; }
       .topbar { display: grid; }
-      /* one-row horizontal scroll instead of the 8-item nav wrapping to 3 rows */
-      .meta.global-nav {
-        justify-content: flex-start;
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        max-width: 100%;
-        padding-bottom: 4px;
-        scrollbar-width: none;
-      }
-      .meta.global-nav::-webkit-scrollbar { display: none; }
-      .meta.global-nav a { flex: 0 0 auto; }
       .meta { justify-content: flex-start; }
-      .nav-wrap { align-items: flex-start; width: 100%; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
       .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter { grid-template-columns: 1fr; }
       .calendar-weekdays { display: none; }

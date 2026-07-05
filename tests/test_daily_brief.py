@@ -374,10 +374,11 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Сохранить профиль автора", dna_html)
         self.assertIn("Сохранить стратегию", strategy_html)
         self.assertIn("Создать план по стратегии", strategy_html)
-        nav = html.split("global-nav", 1)[-1].split("</div>", 1)[0]
-        self.assertNotIn("/writing-dna", nav)
-        self.assertNotIn("/learning", nav)
-        self.assertNotIn("/author-brain", nav)
+        # The profile tab bar should only expose base/dna/strategy — removed tabs must stay out.
+        tab_bar = html.split("class=\"view-switch\"", 1)[-1].split("</nav>", 1)[0]
+        self.assertNotIn("/writing-dna", tab_bar)
+        self.assertNotIn("tab=rules", tab_bar)
+        self.assertNotIn("/author-brain", tab_bar)
 
     def test_writing_dna_page_renders_editable_sections(self) -> None:
         dna = WritingDNARepository().load_raw()
