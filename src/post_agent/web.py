@@ -870,18 +870,7 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
 
     {_related_knowledge_block(brief.related_knowledge)}
 
-    <section class="block" id="decisions">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">решения</p>
-          <h2>Мои решения</h2>
-        </div>
-        <span>{len(brief.approvals)} решения</span>
-      </div>
-      <div class="approval-grid">
-        {"".join(_approval_card(item, ui_state) for item in brief.approvals)}
-      </div>
-    </section>
+    {_decisions_section(brief, ui_state)}
 
   </main>
 </body>
@@ -6055,6 +6044,32 @@ def _ai_draft_card(ai_result: dict[str, object] | None) -> str:
       <pre>{escape(str(ai_result.get("draft", "")))}</pre>
       {_refinement_bar(key, title, str(ai_result.get("draft", "")), "draft")}
     </article>
+    """
+
+
+def _decisions_section(brief: DailyBrief, ui_state: dict[str, object]) -> str:
+    # Accepted decisions leave the main screen; only open ones stay in "Мои решения".
+    pending = [
+        item
+        for item in brief.approvals
+        if _approval_status(ui_state, _item_key(item.title)) != "accepted"
+    ]
+    if not pending:
+        return ""
+    cards = "".join(_approval_card(item, ui_state) for item in pending)
+    return f"""
+    <section class="block" id="decisions">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">решения</p>
+          <h2>Мои решения</h2>
+        </div>
+        <span>{len(pending)} на решение</span>
+      </div>
+      <div class="approval-grid">
+        {cards}
+      </div>
+    </section>
     """
 
 
