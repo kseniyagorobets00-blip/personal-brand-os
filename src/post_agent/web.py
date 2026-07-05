@@ -3738,7 +3738,8 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         context = _content_plan_ai_context(publication)
         previous = _publication_signature(publication)
         response: dict[str, object] = {}
-        for attempt in range(2):
+        best_language_ok: dict[str, object] | None = None
+        for attempt in range(3):
             raw_response = _complete_json_with_retry(
                 AIGateway(),
                 system_prompt=(
@@ -3758,6 +3759,10 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                     f"- format: {publication_format}\n"
                     f"- language: {language}\n\n"
                     f"Жесткое правило языка: {_language_policy_for_platform(platform)}\n"
+                    f"ВАЖНО: тема (topic) должна быть на языке площадки ({language}). "
+                    "Даже если материал в Knowledge, Trend Radar или кейс назван по-английски (например «SOP-as-service-care»), "
+                    "нельзя выносить английское название в тему для русской площадки. Извлеки смысл и сформулируй тему по-русски. "
+                    "Английские слова допустимы только как отдельные термины (SOP, CX), но не как английское предложение-заголовок.\n"
                     "Не делай дословный перевод тренда или источника. Извлеки смысл, свяжи с Author Brain, Editorial Strategy, Memory и сформулируй новую редакционную тему под площадку.\n\n"
                     f"Правила рубрики: {_publication_format_instruction(rubric)}\n\n"
                     "Сначала внутри себя сформируй 3 варианта идеи. Проверь каждый по Author Brain, Editorial Strategy, площадке, "
@@ -3774,8 +3779,14 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                 action="content_plan_publication",
             )
             response = _extract_publication_response(raw_response)
-            if attempt == 1 or not _publication_too_similar(publication, response):
+            language_ok = _text_matches_platform(str(response.get("topic", "")), platform) and _text_matches_platform(str(response.get("summary", "")), platform)
+            not_duplicate = not _publication_too_similar(publication, response)
+            if language_ok and best_language_ok is None:
+                best_language_ok = response
+            if language_ok and not_duplicate:
                 break
+        # Prefer a response that respects the platform language, even if it took the last attempt.
+        response = best_language_ok or response
         updated["topic"] = str(response.get("topic") or response.get("title") or updated.get("topic") or "Тема для публикации").strip()
         updated["goal"] = str(response.get("goal") or response.get("purpose") or updated.get("goal", "")).strip()
         summary_parts = [
@@ -3845,6 +3856,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     "Жестко зафиксированный недельный шаблон. Его нельзя менять:\n"
                     f"{json.dumps(locked_publications, ensure_ascii=False)}\n\n"
                     "Жесткое правило языка: язык определяется только platform. LinkedIn — только английский. Telegram, VC и Сетка — только русский. "
+                    "Для русских площадок тема (topic) тоже должна быть на русском: даже если материал в Knowledge или кейс назван по-английски (например «SOP-as-service-care»), нельзя выносить английское название в тему — извлеки смысл и сформулируй по-русски. "
                     "Нельзя копировать или дословно переводить заголовок тренда; нужно извлечь смысл и создать новую редакционную тему под площадку, рубрику, Author Brain и Writing DNA.\n\n"
                     "Алгоритм выбора для каждого дня: Editorial Strategy -> Trend Radar -> Author Brain -> Knowledge -> Memory -> Writing DNA -> Anti-Repetition -> AI Context -> Content Plan. "
                     "Для каждой ячейки сначала используй trend fields: used_trend, trend_score, brand_fit_score, content_potential, repeat_risk. "
