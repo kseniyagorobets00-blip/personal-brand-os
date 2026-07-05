@@ -7116,6 +7116,9 @@ def _styles() -> str:
     .section-title span, .why, .draft-meta, .tags {
       color: var(--muted);
     }
+    .stack-form { display: grid; }
+    .stack-form .section-title { margin-top: 34px; margin-bottom: 14px; }
+    .stack-form > p:first-child { margin-bottom: 4px; }
     .section-title span {
       font-size: 13px;
       white-space: nowrap;
@@ -7552,6 +7555,7 @@ def _styles() -> str:
       overflow: hidden;
     }
     .plan-row.has-alert { border-color: rgba(240, 96, 74, .45); }
+    .plan-row:hover { border-color: var(--line); }
     .plan-row > summary {
       list-style: none;
       cursor: pointer;
