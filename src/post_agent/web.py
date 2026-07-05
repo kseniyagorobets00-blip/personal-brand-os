@@ -7528,7 +7528,7 @@ def _styles() -> str:
       list-style: none;
       cursor: pointer;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 14px;
       padding: 14px 16px;
     }
@@ -7551,12 +7551,13 @@ def _styles() -> str:
     .plan-row-topic {
       flex: 1 1 auto;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      line-height: 1.4;
       color: var(--ink);
     }
-    .plan-row .status-badge { flex: 0 0 auto; align-self: center; }
+    .plan-row-date, .plan-row-platform { padding-top: 1px; }
+    .plan-row .status-badge { flex: 0 0 auto; align-self: flex-start; }
     .plan-row > summary::after {
       content: "▾";
       color: var(--muted);
