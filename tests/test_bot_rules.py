@@ -82,6 +82,26 @@ def test_author_brain_uses_edited_rules(temp_data):
     assert brain["anti_repeat_rules"] == ["без повторов"]
 
 
+def test_rubric_rules_are_editable_and_reach_the_instruction(temp_data):
+    from post_agent.web import _publication_format_instruction
+
+    assert "проблема; действия; результат" in _publication_format_instruction("Кейс")
+    bot_rules.save_bot_rules(
+        {
+            "rubric_rules": {"Кейс": "моя проблема\nмоё решение\nмой результат"},
+            "thinking_rules": "x",
+            "forbidden_openings": "y",
+            "anti_repeat_rules": "z",
+            "theme_weight_rule": "w",
+            "thinking_modes": ["Observation"],
+            "platform_rules": {},
+        }
+    )
+    assert _publication_format_instruction("Кейс") == "Кейс: моя проблема; моё решение; мой результат"
+    # untouched rubric keeps its default recipe
+    assert "рабочая ситуация" in _publication_format_instruction("Наблюдение")
+
+
 def test_edited_modes_drive_mode_selection(temp_data):
     from post_agent.thinking_engine import ThinkingEngine
 

@@ -31,10 +31,25 @@ DEFAULT_ANTI_REPEAT_RULES = (
     "Если новая идея похожа на старую идею или кейс, показывать предупреждение перед черновиком.",
 )
 
-# The keys used everywhere. list-of-lines fields vs. single-text vs. platform map.
+# The rubric "recipe": which steps each content rubric should follow. Editable in "Правила бота".
+DEFAULT_RUBRIC_RULES = {
+    "Аналитика": ["проблема", "причина", "закономерность", "управленческий вывод"],
+    "Кейс": ["проблема", "действия", "результат", "бизнес-эффект", "урок"],
+    "Framework": ["модель", "3-5 элементов", "применение", "вывод"],
+    "Наблюдение": ["рабочая ситуация", "вывод", "вопрос к аудитории"],
+    "Разбор ошибки": ["ошибка", "почему возникает", "как исправить", "профилактика"],
+    "Миф": ["миф", "почему он живет", "что происходит на практике", "новая формулировка"],
+    "Storytelling": ["ситуация", "напряжение", "поворот", "смысл"],
+    "Разговорный пост": ["живой тон", "личная мысль", "без академического стиля"],
+    "Инструменты": ["задача", "инструмент", "как применять", "ограничение"],
+    "Ответ на вопрос": ["вопрос", "короткий ответ", "логика", "пример"],
+}
+
+# The keys used everywhere. list-of-lines fields vs. single-text vs. platform map vs. rubric map-of-lists.
 LIST_FIELDS = ("thinking_rules", "forbidden_openings", "anti_repeat_rules", "thinking_modes")
 TEXT_FIELDS = ("theme_weight_rule",)
 MAP_FIELDS = ("platform_rules",)
+RUBRIC_FIELD = "rubric_rules"
 
 
 def default_bot_rules() -> dict[str, object]:
@@ -45,6 +60,7 @@ def default_bot_rules() -> dict[str, object]:
         "anti_repeat_rules": list(DEFAULT_ANTI_REPEAT_RULES),
         "theme_weight_rule": THEME_WEIGHT_RULE,
         "thinking_modes": list(THINKING_MODES),
+        "rubric_rules": {rubric: list(steps) for rubric, steps in DEFAULT_RUBRIC_RULES.items()},
     }
 
 
@@ -64,7 +80,16 @@ def load_bot_rules() -> dict[str, object]:
         value = raw.get(key)
         if not value:
             continue
-        if key in MAP_FIELDS and isinstance(value, dict):
+        if key == RUBRIC_FIELD and isinstance(value, dict):
+            rubric_merged = dict(defaults[key])
+            for rubric, steps in value.items():
+                if isinstance(steps, str):
+                    steps = steps.splitlines()
+                cleaned = [str(step).strip() for step in steps if str(step).strip()] if isinstance(steps, list) else []
+                if cleaned:
+                    rubric_merged[str(rubric)] = cleaned
+            merged[key] = rubric_merged
+        elif key in MAP_FIELDS and isinstance(value, dict):
             merged[key] = {**defaults[key], **{str(k): str(v) for k, v in value.items() if str(v).strip()}}
         elif key in LIST_FIELDS and isinstance(value, list):
             cleaned = [str(item).strip() for item in value if str(item).strip()]
@@ -94,6 +119,16 @@ def save_bot_rules(data: dict[str, object]) -> dict[str, object]:
         else:
             merged = {}
         clean[key] = {**defaults[key], **merged}  # type: ignore[dict-item]
+    rubric_value = data.get(RUBRIC_FIELD, {})
+    rubric_clean = dict(defaults[RUBRIC_FIELD])  # type: ignore[arg-type]
+    if isinstance(rubric_value, dict):
+        for rubric, steps in rubric_value.items():
+            if isinstance(steps, str):
+                steps = steps.splitlines()
+            cleaned = [str(step).strip() for step in steps if str(step).strip()] if isinstance(steps, list) else []
+            if cleaned:
+                rubric_clean[str(rubric)] = cleaned
+    clean[RUBRIC_FIELD] = rubric_clean
     BOT_RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
     BOT_RULES_PATH.write_text(json.dumps(clean, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return clean

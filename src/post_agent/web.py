@@ -3366,7 +3366,7 @@ def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[st
     context = DailyBriefRequestHandler.ai_context_engine.build(target or {}, include_local_sources=True)
     # editorial_strategy and lessons already come from AIContextEngine.build(); only add
     # what build() does not provide.
-    context["rubric_library"] = RUBRIC_LIBRARY
+    context["rubric_library"] = _effective_rubric_rules()
     trend_cache = context.get("trend_radar", {})
     trend_cache = trend_cache if isinstance(trend_cache, dict) else {}
     if target:
@@ -4292,9 +4292,13 @@ def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
         return data.get(key, [""])[0]
 
     platform_rules: dict[str, str] = {}
+    rubric_rules: dict[str, list[str]] = {}
     for key, values in data.items():
         if key.startswith("platform__"):
             platform_rules[key[len("platform__"):]] = values[0] if values else ""
+        elif key.startswith("rubric__"):
+            steps = [line.strip() for line in (values[0] if values else "").splitlines() if line.strip()]
+            rubric_rules[key[len("rubric__"):]] = steps
     thinking_modes = [item.strip() for item in data.get("thinking_mode_item", []) if item.strip()]
     return {
         "thinking_rules": first("thinking_rules"),
@@ -4303,6 +4307,7 @@ def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
         "theme_weight_rule": first("theme_weight_rule"),
         "thinking_modes": thinking_modes,
         "platform_rules": platform_rules,
+        "rubric_rules": rubric_rules,
     }
 
 
@@ -4318,6 +4323,13 @@ def render_bot_rules(rules: dict[str, object], saved: bool = False) -> str:
     platform_blocks = "".join(
         _textarea(f"platform__{platform}", f"Площадка: {platform}", text)
         for platform, text in platform_rules.items()
+    )
+    rubric_rules = rules.get("rubric_rules", {})
+    if not isinstance(rubric_rules, dict):
+        rubric_rules = {}
+    rubric_blocks = "".join(
+        _textarea(f"rubric__{rubric}", f"Рубрика: {rubric}", "\n".join(str(step) for step in (steps if isinstance(steps, list) else [])))
+        for rubric, steps in rubric_rules.items()
     )
     notice = '<div class="notice ok">Правила сохранены. AI будет использовать их при следующей генерации.</div>' if saved else ""
     return f"""<!doctype html>
@@ -4352,6 +4364,10 @@ def render_bot_rules(rules: dict[str, object], saved: bool = False) -> str:
 
         <div class="section-title"><div><p class="eyebrow">против повторов</p><h2>Правила против повторов</h2></div></div>
         {_textarea("anti_repeat_rules", "По одному правилу на строку", _lines("anti_repeat_rules"))}
+
+        <div class="section-title"><div><p class="eyebrow">рубрики</p><h2>Правила рубрик</h2></div></div>
+        <p class="mode-hint">Из каких шагов состоит публикация каждой рубрики. Один шаг — с новой строки. Пустое поле вернёт значение по умолчанию.</p>
+        {rubric_blocks}
 
         <div class="section-title"><div><p class="eyebrow">приоритет тем</p><h2>Правило веса главных тем</h2></div></div>
         {_textarea("theme_weight_rule", "Как вес темы влияет на приоритет", str(rules.get("theme_weight_rule", "")))}
@@ -5278,10 +5294,19 @@ def _language_policy_for_platform(platform: str) -> str:
     return "Telegram, VC and Сетка mean every topic, title, goal, summary, recommendation, explanation and draft must be in Russian. Do not output English for this platform."
 
 
+def _effective_rubric_rules() -> dict[str, object]:
+    """Rubric recipes from the editable "Правила бота" store (falls back to defaults)."""
+    from .bot_rules import load_bot_rules
+
+    rules = load_bot_rules().get("rubric_rules", {})
+    return rules if isinstance(rules, dict) and rules else RUBRIC_LIBRARY
+
+
 def _publication_format_instruction(publication_format: str) -> str:
     rubric = _normalize_rubric(publication_format)
-    rules = RUBRIC_LIBRARY.get(rubric, RUBRIC_LIBRARY["Наблюдение"])
-    return f"{rubric}: " + "; ".join(rules)
+    library = _effective_rubric_rules()
+    rules = library.get(rubric) or library.get("Наблюдение") or RUBRIC_LIBRARY["Наблюдение"]
+    return f"{rubric}: " + "; ".join(str(step) for step in rules)
 
 
 def _select(name: str, label: str, selected: str, options: tuple[str, ...] | list[str]) -> str:
