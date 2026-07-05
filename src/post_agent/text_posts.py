@@ -51,6 +51,7 @@ class TextPostRepository:
             for item in raw
             if isinstance(item, dict)
         }
+        current_keys: set[str] = set()
         changed = False
         for publication in publications:
             if not isinstance(publication, dict):
@@ -58,6 +59,7 @@ class TextPostRepository:
             source_key = source_key_for_publication(publication)
             if not source_key:
                 continue
+            current_keys.add(source_key)
             status = _normalize_plan_status(str(publication.get("status", "")))
             tab = "archive" if status == "published" else "planned"
             title = str(publication.get("topic", "")).strip() or "Без названия"
@@ -101,6 +103,13 @@ class TextPostRepository:
                     "updated_at": _now(),
                 }
             )
+            changed = True
+        # Drop orphaned drafts left over from previous plan versions — but only
+        # untouched ones (came from the content plan, still a draft, empty body).
+        # Anything the user wrote, approved or archived is always kept.
+        pruned = [item for item in raw if not _is_orphan_plan_draft(item, current_keys)]
+        if len(pruned) != len(raw):
+            raw = pruned
             changed = True
         if changed:
             self._write(raw)
@@ -261,6 +270,20 @@ class TextPostRepository:
             updated_at=str(item.get("updated_at", "")),
             brief=str(item.get("brief", "")),
         )
+
+
+def _is_orphan_plan_draft(item: dict[str, object], current_keys: set[str]) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if str(item.get("source", "")) != "content_plan":
+        return False
+    if str(item.get("tab", "planned")) != "planned":
+        return False
+    if str(item.get("status", "draft")) != "draft":
+        return False
+    if str(item.get("text", "")).strip():
+        return False
+    return str(item.get("source_key", "")) not in current_keys
 
 
 def source_key_for_publication(publication: dict[str, object]) -> str:

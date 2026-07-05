@@ -35,6 +35,26 @@ class TextPostRepositoryTests(unittest.TestCase):
         self.assertEqual(loaded.status, "approved")
         self.assertIsNotNone(approved)
 
+    def test_orphaned_plan_drafts_are_pruned_but_edited_ones_kept(self) -> None:
+        plan_a = {
+            "planned_publications": [
+                {"date": "2026-07-06", "platform": "LinkedIn", "topic": "Untouched draft", "status": "planned"},
+                {"date": "2026-07-07", "platform": "Telegram", "topic": "Edited draft", "status": "planned"},
+            ]
+        }
+        plan_b = {"planned_publications": []}
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            repository.sync_from_content_plan(plan_a)
+            edited = next(p for p in repository.list_posts("planned") if p.title == "Edited draft")
+            repository.update(edited.id, edited.title, edited.platform, edited.publication_date, "My real text", "draft")
+            repository.sync_from_content_plan(plan_b)
+            remaining = repository.list_posts("planned")
+
+        titles = {p.title for p in remaining}
+        self.assertNotIn("Untouched draft", titles)
+        self.assertIn("Edited draft", titles)
+
     def test_manual_archive_posts_are_available_for_ai(self) -> None:
         with TemporaryDirectory() as directory:
             repository = TextPostRepository(Path(directory) / "posts.json")
