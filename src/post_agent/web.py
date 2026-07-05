@@ -6999,6 +6999,7 @@ def _styles() -> str:
     }
     .week-item {
       display: grid;
+      align-content: start;
       gap: 6px;
       padding: 14px;
       border: 1px solid var(--line-soft);
@@ -7013,6 +7014,7 @@ def _styles() -> str:
     }
     .week-item strong {
       font-size: 16px;
+      color: var(--accent);
     }
     .week-item em {
       color: var(--accent);
