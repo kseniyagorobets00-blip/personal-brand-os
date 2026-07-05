@@ -178,11 +178,10 @@ def refresh_stale_content_plan(plan: dict[str, Any], today: date) -> dict[str, A
     if not dated_items:
         return plan
 
-    latest_publication = max(item[0] for item in dated_items)
-    if latest_publication >= today:
+    first_publication = min(item[0] for item in dated_items)
+    if first_publication >= today:
         return plan
 
-    first_publication = min(item[0] for item in dated_items)
     refreshed = dict(plan)
     refreshed_publications = [dict(item) if isinstance(item, dict) else item for item in publications]
     for old_date, index, item in dated_items:

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "updated_at": "2026-07-05T19:11:15+00:00",
+  "updated_at": "2026-07-05T19:53:48+00:00",
   "status": "ready",
   "main_themes": [
     {
@@ -602,6 +602,9 @@
       "usage_risk": "из загруженного документа"
     }
   ],
+  "author_principles": [],
+  "author_observations": [],
+  "author_stories": [],
   "content_angles": [
     {
       "name": "личное наблюдение",

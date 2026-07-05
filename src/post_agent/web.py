@@ -23,6 +23,7 @@ from .daily_brief import (
     DailyBrief,
     DailyBriefService,
     Draft,
+    PlannedPublication,
     RelatedKnowledge,
     parse_plan_date,
     refresh_stale_content_plan,
@@ -1004,7 +1005,6 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
     primary_topic = brief.topics[0] if brief.topics else None
     primary_idea = brief.ideas[0] if brief.ideas else None
     primary_recommendation = brief.recommendations[0] if brief.recommendations else None
-    ui_state = _load_ui_state()
     ai_status = load_ai_status()
     ai_result = load_ai_result()
     content = f"""
@@ -1014,13 +1014,9 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
 
     {_today_card(brief, primary_topic, primary_idea, primary_recommendation, ai_result)}
 
-    {_decisions_section(brief, ui_state)}
-
     {_drafts_to_prepare_section(brief, ai_result)}
 
     {_compact_content_plan_block(brief.content_plan)}
-
-    {_trends_block(brief.market_signals)}
 """
     return _page_shell(
         title="Дневной бриф",
@@ -1171,7 +1167,7 @@ def _author_base_editor(profile: dict[str, object]) -> str:
       <form class="profile-form" method="post" action="/author-profile/base">
         <section class="profile-section">
           <div class="section-title"><div><p class="eyebrow">редактируется вручную</p><h2>Главные темы</h2></div></div>
-          <div class="state-note">Вес темы: 90-100 — основной фокус AI, 70-89 — использовать регулярно, 40-69 — вспомогательный угол, ниже 40 — только если явно подходит к задаче.</div>
+          <div class="help-note">Вес темы: 90-100 — основной фокус AI, 70-89 — использовать регулярно, 40-69 — вспомогательный угол, ниже 40 — только если явно подходит к задаче.</div>
           <div class="card-list">{theme_rows}</div>
           <article class="plan-item edit-row">
             <h3>Добавить тему</h3>
@@ -2676,7 +2672,11 @@ def _today_publication_rows(topics: tuple[BriefItem, ...], plan: ContentPlan) ->
 
 
 def _compact_content_plan_block(plan: ContentPlan) -> str:
-    publications = "".join(_week_group_card(group_key, items) for group_key, items in _group_publications_by_date(plan))
+    day_groups = _week_plan_day_groups(plan)
+    if not day_groups:
+        body = '<div class="empty">В контент-плане пока нет будущих публикаций.</div>'
+    else:
+        body = "".join(_week_group_card(day, items) for day, items in day_groups)
     return f"""
     <section class="content-plan compact-plan">
       <div class="section-title">
@@ -2686,21 +2686,37 @@ def _compact_content_plan_block(plan: ContentPlan) -> str:
         </div>
         <span>{escape(plan.week)}</span>
       </div>
-      <div class="week-list">{publications}</div>
+      <div class="week-list">{body}</div>
       <a class="open-link" href="/content-plan">Открыть полный контент-план</a>
     </section>
     """
 
 
-def _group_publications_by_date(plan: ContentPlan) -> list[tuple[str, list[object]]]:
-    groups: dict[str, list[object]] = {}
-    for item in sorted(plan.planned_publications, key=_publication_sort_key):
-        parsed = parse_plan_date(str(getattr(item, "date", "")))
-        if parsed and parsed < today_moscow():
+def _week_plan_day_groups(plan: ContentPlan) -> list[tuple[date, list[PlannedPublication]]]:
+    """Build day-by-day week view from today through plan end, including empty days."""
+    today = today_moscow()
+    raw_plan = _load_content_plan_raw()
+    week_start, week_end = _content_plan_period(raw_plan)
+    parsed_start = parse_plan_date(week_start) or today
+    parsed_end = parse_plan_date(week_end) or parsed_start
+    if parsed_end < today:
+        parsed_end = today
+
+    by_date: dict[date, list[PlannedPublication]] = {}
+    for item in plan.planned_publications:
+        parsed = parse_plan_date(str(item.date))
+        if parsed is None or parsed < today or parsed > parsed_end:
             continue
-        key = item.date or item.day or item.topic
-        groups.setdefault(key, []).append(item)
-    return list(groups.items())
+        by_date.setdefault(parsed, []).append(item)
+    for items in by_date.values():
+        items.sort(key=lambda pub: (str(pub.platform), str(pub.topic)))
+
+    days: list[tuple[date, list[PlannedPublication]]] = []
+    cursor = max(today, parsed_start)
+    while cursor <= parsed_end:
+        days.append((cursor, by_date.get(cursor, [])))
+        cursor += timedelta(days=1)
+    return days
 
 
 def _publication_sort_key(item: object) -> tuple[object, str, str]:
@@ -2708,22 +2724,26 @@ def _publication_sort_key(item: object) -> tuple[object, str, str]:
     return (parsed or date.max, str(getattr(item, "platform", "")), str(getattr(item, "topic", "")))
 
 
-def _week_group_card(group_key: str, items: list[object]) -> str:
-    first = items[0] if items else None
-    date_text = str(getattr(first, "date", "") or group_key)
-    day = weekday_name_for_date(date_text) or str(getattr(first, "day", ""))
-    rows = "".join(
-        f"""
-        <div class="week-publication">
-          <strong>{escape(str(getattr(item, "platform", "")))}</strong>
-          <span>{escape(str(getattr(item, "topic", "")))}</span>
-        </div>
-        """
-        for item in items
-    )
+def _week_group_card(day: date, items: list[PlannedPublication]) -> str:
+    today = today_moscow()
+    day_label = weekday_name_for_date(day.isoformat())
+    date_text = day.strftime("%d.%m")
+    extra_class = " is-today" if day == today else (" is-empty" if not items else "")
+    if items:
+        rows = "".join(
+            f"""
+            <div class="week-publication">
+              <strong>{escape(str(item.platform))}</strong>
+              <span>{escape(str(item.topic))}</span>
+            </div>
+            """
+            for item in items
+        )
+    else:
+        rows = '<div class="week-publication muted"><span>Нет публикаций</span></div>'
     return f"""
-    <article class="week-item">
-      <span>{escape(day)}</span>
+    <article class="week-item{extra_class}">
+      <span>{escape(day_label)} · {escape(date_text)}</span>
       {rows}
     </article>
     """
@@ -6962,9 +6982,10 @@ def _styles() -> str:
     .section-title span, .why, .draft-meta, .tags {
       color: var(--muted);
     }
-    .stack-form { display: grid; }
+    .stack-form { display: grid; gap: 4px; }
     .stack-form .section-title { margin-top: 34px; margin-bottom: 14px; }
     .stack-form > p:first-child { margin-bottom: 4px; }
+    .stack-form label + label { margin-top: 18px; }
     .section-title span {
       font-size: 13px;
       white-space: nowrap;
@@ -7025,6 +7046,17 @@ def _styles() -> str:
     .week-item em {
       color: var(--accent);
       font-style: normal;
+      font-size: 13px;
+    }
+    .week-item.is-today {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+    .week-item.is-empty {
+      opacity: .82;
+    }
+    .week-publication.muted span {
+      color: var(--muted);
       font-size: 13px;
     }
     .week-publication {
@@ -7172,14 +7204,23 @@ def _styles() -> str:
       align-items: center;
       flex-wrap: wrap;
     }
+    .card-head h3 {
+      margin: 0;
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow-wrap: anywhere;
+      line-height: 1.35;
+    }
     .card-head strong {
       color: var(--accent);
       background: var(--accent-soft);
       border-radius: 999px;
       min-width: 42px;
+      flex-shrink: 0;
       text-align: center;
-      padding: 5px 8px;
+      padding: 5px 10px;
       font-size: 13px;
+      line-height: 1.3;
     }
     .card p, .approval p { margin-top: 12px; line-height: 1.6; }
     .approval-actions { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
@@ -7346,9 +7387,21 @@ def _styles() -> str:
       padding: 18px;
       overflow-wrap: anywhere;
     }
+    .help-note {
+      margin: 12px 0 4px;
+      padding: 12px 14px;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-sm);
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
     .state-note, .decision-status {
       margin-top: 12px;
       display: inline-flex;
+      max-width: 100%;
       width: fit-content;
       border: 1px solid var(--line-soft);
       border-radius: 999px;
@@ -7357,6 +7410,7 @@ def _styles() -> str:
       color: var(--accent);
       font-size: 13px;
       font-weight: 680;
+      overflow-wrap: anywhere;
     }
     .decision-status.is-deferred {
       background: rgba(240, 190, 90, .12);
@@ -7459,11 +7513,12 @@ def _styles() -> str:
       list-style: none;
       cursor: pointer;
       display: grid;
-      grid-template-columns: 190px 96px minmax(0, 1fr) 160px 14px;
+      grid-template-columns: minmax(0, 190px) minmax(0, 96px) minmax(0, 1fr) minmax(0, 160px) 14px;
       grid-template-areas: "date platform topic status chev";
       align-items: start;
       gap: 14px 16px;
       padding: 15px 16px;
+      min-width: 0;
     }
     .plan-row > summary::-webkit-details-marker { display: none; }
     .plan-row-date {
@@ -7471,7 +7526,9 @@ def _styles() -> str:
       color: var(--muted);
       font-size: 13px;
       font-weight: 680;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      min-width: 0;
       line-height: 1.4;
     }
     .plan-row-platform {
@@ -7479,7 +7536,9 @@ def _styles() -> str:
       color: var(--accent);
       font-size: 13px;
       font-weight: 700;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      min-width: 0;
       line-height: 1.4;
     }
     .plan-row-topic {
@@ -7490,7 +7549,15 @@ def _styles() -> str:
       line-height: 1.4;
       color: var(--ink);
     }
-    .plan-row .status-badge { grid-area: status; justify-self: start; align-self: start; white-space: nowrap; }
+    .plan-row .status-badge {
+      grid-area: status;
+      justify-self: start;
+      align-self: start;
+      max-width: 100%;
+      white-space: normal;
+      text-align: center;
+      line-height: 1.35;
+    }
     .plan-row > summary::after {
       content: "▾";
       grid-area: chev;
@@ -7535,7 +7602,7 @@ def _styles() -> str:
     }
     .period-picker {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, max-content));
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 12px;
       align-items: end;
       margin: 18px 0 0;
@@ -7544,8 +7611,9 @@ def _styles() -> str:
       border-radius: var(--radius-sm);
       background: rgba(var(--paper-rgb), .72);
     }
-    .period-picker input {
-      min-width: 180px;
+    .period-picker input,
+    .period-picker select {
+      min-width: 0;
     }
     .calendar-block {
       margin-top: 26px;
@@ -7630,6 +7698,37 @@ def _styles() -> str:
     .edit-row {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .card-list + .plan-item,
+    .card-list + .profile-section {
+      margin-top: 18px;
+    }
+    .plan-item.edit-row {
+      margin-top: 18px;
+      align-content: start;
+    }
+    .plan-item.edit-row h3 {
+      grid-column: 1 / -1;
+      margin: 0 0 2px;
+    }
+    .inline-editor {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line-soft);
+    }
+    .inline-editor > summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 680;
+      list-style: none;
+    }
+    .inline-editor > summary::-webkit-details-marker { display: none; }
+    .inline-editor .edit-row,
+    .inline-editor label,
+    .inline-editor form {
+      margin-top: 14px;
     }
     .mode-hint {
       color: var(--muted);
@@ -7821,7 +7920,7 @@ def _styles() -> str:
     }
     .knowledge-list {
       display: grid;
-      gap: 12px;
+      gap: 16px;
     }
     .knowledge-card, .document-view {
       background: rgba(var(--paper-rgb), .86);
@@ -7834,6 +7933,15 @@ def _styles() -> str:
       justify-content: space-between;
       gap: 16px;
       align-items: flex-start;
+      min-width: 0;
+    }
+    .knowledge-card > div:first-child {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .knowledge-card > form,
+    .knowledge-card .card-actions {
+      flex-shrink: 0;
     }
     .knowledge-card a {
       color: var(--ink);
@@ -7983,6 +8091,17 @@ def _styles() -> str:
     @media (min-width: 641px) and (max-width: 1100px) {
       .shell { width: min(100% - 40px, 960px); }
       .period-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .plan-row > summary {
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+          "topic topic"
+          "date chev"
+          "platform status";
+        gap: 8px 12px;
+        align-items: center;
+      }
+      .plan-row-topic { font-weight: 600; }
+      .plan-row .status-badge { justify-self: end; }
       .hero-cards, .today-details, .week-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .calendar-weekdays { display: none; }
       .calendar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -7990,7 +8109,10 @@ def _styles() -> str:
       .today-card { grid-template-columns: 1fr; }
       .draft-grid, .approval-grid, .plan-list, .form-grid, .edit-row, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter, .plan-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .plan-meta-grid { grid-template-columns: 1fr; }
-      .knowledge-card { display: grid; }
+      .knowledge-card {
+        flex-direction: column;
+        align-items: stretch;
+      }
     }
     @media (max-width: 640px) {
       .shell { width: min(100% - 28px, 1120px); padding-top: 28px; }
@@ -8009,7 +8131,17 @@ def _styles() -> str:
         align-items: center;
       }
       .plan-row-topic { font-weight: 600; }
-      .plan-row .status-badge { justify-self: end; }
+      .plan-row-date,
+      .plan-row-platform { font-size: 12px; }
+      .plan-row .status-badge { justify-self: end; font-size: 12px; padding: 6px 9px; }
+      .knowledge-card {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .knowledge-card .card-actions,
+      .knowledge-card > form {
+        justify-content: flex-start;
+      }
       .calendar-weekdays { display: none; }
       .calendar-grid { grid-template-columns: 1fr; }
       .calendar-day { min-height: auto; }
@@ -8021,7 +8153,6 @@ def _styles() -> str:
       h1 { font-size: 42px; }
       .section-title { display: grid; }
       .section-title span { white-space: normal; }
-      .knowledge-card { display: grid; }
       .ai-panel, .trend-item { display: grid; }
       .today-publication { display: grid; }
       .ai-diagnostics dl div { grid-template-columns: 1fr; gap: 2px; }

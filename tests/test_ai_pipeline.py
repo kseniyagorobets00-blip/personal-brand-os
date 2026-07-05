@@ -151,9 +151,8 @@ class AIPipelineTests(unittest.TestCase):
         self.assertIn(".env загружен", html)
         self.assertIn("ProxyAPI настроен", html)
         self.assertIn("Последняя ошибка AI-анализа", html)
-        self.assertIn("AI-анализ", html)
-        self.assertIn("Тренды и сигналы", html)
-        self.assertIn("Локальные данные", html)
+        self.assertNotIn("Тренды и сигналы", html)
+        self.assertNotIn("Локальные данные", html)
 
 
 if __name__ == "__main__":

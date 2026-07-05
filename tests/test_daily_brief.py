@@ -79,7 +79,8 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Почему актуально", html)
         self.assertIn("Краткая структура", html)
         self.assertIn("Первый черновик текста", html)
-        self.assertIn("Мои решения", html)
+        self.assertNotIn("Тренды и сигналы", html)
+        self.assertNotIn("Мои решения", html)
         self.assertIn("Контент-план", html)
         self.assertIn("План недели", html)
         self.assertIn("Открыть полный контент-план", html)
@@ -255,6 +256,53 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(refreshed["planned_publications"][0]["day"], "Суббота")
         self.assertEqual(refreshed["planned_publications"][2]["date"], "2026-07-09")
         self.assertIn("автоматически перенесен", refreshed["last_action"])
+
+    def test_partially_stale_content_plan_is_shifted_when_first_publication_is_past(self) -> None:
+        plan = {
+            "week": "04-09 июля",
+            "week_start": "2026-07-04",
+            "week_end": "2026-07-09",
+            "focus": "Focus",
+            "planned_publications": [
+                {"date": "2026-07-04", "topic": "Past but recent", "day": "Суббота"},
+                {"date": "2026-07-06", "topic": "Still upcoming", "day": "Понедельник"},
+            ],
+        }
+
+        refreshed = refresh_stale_content_plan(plan, date(2026, 7, 5))
+
+        self.assertEqual(refreshed["planned_publications"][0]["date"], "2026-07-05")
+        self.assertEqual(refreshed["planned_publications"][1]["date"], "2026-07-07")
+        self.assertEqual(refreshed["week_start"], "2026-07-05")
+
+    def test_compact_content_plan_shows_today_even_without_publication(self) -> None:
+        today = today_moscow()
+        future = (today + timedelta(days=2)).isoformat()
+        plan = ContentPlan(
+            week="test",
+            focus="test",
+            month_focus="test",
+            content_pillars=(),
+            platform_targets=(),
+            today_recommendation="",
+            planned_publications=(
+                PlannedPublication(
+                    date=future,
+                    day="",
+                    platform="LinkedIn",
+                    topic="Future topic",
+                    pillar="",
+                    status="planned",
+                    note="",
+                ),
+            ),
+        )
+
+        with patch("post_agent.web._load_content_plan_raw", return_value={"week_start": today.isoformat(), "week_end": future}):
+            html = _compact_content_plan_block(plan)
+
+        self.assertIn("Нет публикаций", html)
+        self.assertIn("Future topic", html)
 
     def test_2026_06_26_is_friday(self) -> None:
         self.assertEqual(weekday_name_for_date("2026-06-26"), "Пятница")
