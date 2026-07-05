@@ -3313,9 +3313,9 @@ def _match_trend_to_publication(publication: dict[str, object], trend_cache: dic
 
 def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[str, object]:
     context = DailyBriefRequestHandler.ai_context_engine.build(target or {}, include_local_sources=True)
-    context["editorial_strategy"] = _load_editorial_strategy()
+    # editorial_strategy and lessons already come from AIContextEngine.build(); only add
+    # what build() does not provide.
     context["rubric_library"] = RUBRIC_LIBRARY
-    context["accepted_lessons"] = lessons_for_prompt(DailyBriefRequestHandler.learning_center.list_lessons("accepted"))
     trend_cache = context.get("trend_radar", {})
     trend_cache = trend_cache if isinstance(trend_cache, dict) else {}
     if target:
