@@ -144,6 +144,10 @@ class SeedRepository:
         plan = json.loads(self.content_plan_path.read_text(encoding="utf-8"))
         if self.content_plan_path != DEFAULT_CONTENT_PLAN_PATH:
             return plan
+        # The plan is week-scoped only; the retired month focus must not leak into
+        # the generation context.
+        if isinstance(plan, dict):
+            plan.pop("month_focus", None)
         # Present the plan on current dates, but do NOT persist that back to the
         # committed seed: writing on read caused git churn and flaky tests. The
         # refresh is cheap and re-applied on every load; real edits persist via save.

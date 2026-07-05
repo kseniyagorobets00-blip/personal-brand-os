@@ -4,6 +4,7 @@ from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ast
 import json
 import re
 import socket
@@ -1489,7 +1490,6 @@ def _ai_synthesize_trends(
         "author_principles": principles,
         "author_observations": observations,
         "week_focus": str(content_plan.get("focus", "")),
-        "month_focus": str(content_plan.get("month_focus", "")),
         "content_pillars": [str(p) for p in pillars] if isinstance(pillars, list) else [],
         "expertise": expertise,
     }
@@ -1823,7 +1823,7 @@ def _trend_card(topic: object) -> str:
         <p><b>Оценка тренда:</b> {escape(str(explanation.get("trend_score", item.get("trend_score", ""))))}/10</p>
         <p><b>Соответствие бренду:</b> {escape(str(item.get("brand_fit_score", "")))}/10</p>
         <p><b>Контентный потенциал:</b> {escape(str(explanation.get("content_potential", item.get("content_potential", ""))))}/10</p>
-        <p><b>Фокус месяца/недели:</b> {escape(str(explanation.get("month_focus", "")))} / {escape(str(explanation.get("week_focus", "")))}</p>
+        <p><b>Фокус недели:</b> {escape(str(explanation.get("week_focus", "")))}</p>
         <p><b>Почему подходит автору:</b> {escape(str(item.get("expertise_connection", "")))}</p>
         <p><b>Авторский угол:</b> {escape(str(explanation.get("author_angle", item.get("author_angle", ""))))}</p>
         <p><b>Риск повтора:</b> {escape(_repeat_risk_label(str(explanation.get("repeat_risk", item.get("repeat_risk", "")))))}</p>
@@ -2369,13 +2369,6 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
       <a class="{'active' if view == 'calendar' else ''}" href="/content-plan?view=calendar">Календарь</a>
     </div>
     {calendar_block}
-    <form class="period-picker" method="get" action="/content-plan">
-      <input type="hidden" name="view" value="{escape(view)}">
-      <label><span>Месяц</span><input type="month" name="month" value="{escape(_month_for_input(week_start))}" onchange="this.form.submit()"></label>
-      <label><span>Дата начала периода</span><input type="date" name="week_start" value="{escape(_date_for_input(week_start))}" onchange="this.form.submit()"></label>
-      <label><span>Дата конца периода</span><input type="date" name="week_end" value="{escape(_date_for_input(week_end))}" onchange="this.form.submit()"></label>
-      <button class="ghost" type="submit">Открыть период</button>
-    </form>
     <form class="profile-form" method="post" action="/content-plan" onsubmit="if (document.activeElement && document.activeElement.tagName === 'BUTTON') {{ document.activeElement.dataset.originalText = document.activeElement.textContent; document.activeElement.textContent = 'Генерируется...'; }}">
       <input type="hidden" name="view" value="{escape(view)}">
       <section class="profile-section">
@@ -2383,17 +2376,16 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <div class="form-grid">
           {_date_input("week_start", "Дата начала недели", week_start)}
           {_date_input("week_end", "Дата конца недели", week_end)}
-          {_input("month_focus", "Фокус месяца", plan.get("month_focus", ""))}
         </div>
         <div class="state-note">Период: {escape(_format_week_range(week_start, week_end))}</div>
-        {_textarea("focus", "Фокус недели", plan.get("focus", ""))}
+        {_textarea("focus", "Фокус недели", _clean_focus_value(plan.get("focus", "")))}
         <input type="hidden" name="today_recommendation" value="{escape(str(plan.get("today_recommendation", "")))}">
         <input type="hidden" name="content_pillars" value="{escape(list_to_text(plan.get("content_pillars", [])))}">
         <input type="hidden" name="platform_targets" value="{escape(list_to_text(plan.get("platform_targets", [])))}">
         <div class="form-actions">
           <button name="plan_action" value="save_focus" type="submit">Сохранить фокус и даты</button>
         </div>
-        <p class="state-note">Фокус и даты закрепляются сразу — публикации ниже не меняются. По ним потом строится «Создать план по стратегии».</p>
+        <p class="brief-hint">Фокус и даты закрепляются сразу, публикации ниже не меняются. По ним потом строится «Создать план по стратегии».</p>
       </section>
       <section class="profile-section">
         <p class="eyebrow">публикации</p>
@@ -3006,11 +2998,36 @@ def _short_text(text: str, limit: int) -> str:
     return compact[: max(0, limit - 1)].rstrip() + "…"
 
 
+def _clean_focus_value(value: object) -> str:
+    """Return a clean week-focus string.
+
+    Older generations could accidentally store the whole focus object
+    ({'month_focus': ..., 'week_focus': ...}) as text in this field. If we
+    detect that shape, pull out just the week focus so the field reads cleanly.
+    """
+    if isinstance(value, dict):
+        return str(value.get("week_focus") or value.get("focus") or "").strip()
+    text = str(value or "").strip()
+    if text.startswith("{") and "week_focus" in text:
+        try:
+            parsed = ast.literal_eval(text)
+        except (ValueError, SyntaxError):
+            return text
+        if isinstance(parsed, dict):
+            return str(parsed.get("week_focus") or parsed.get("focus") or "").strip()
+    return text
+
+
 def _load_content_plan_raw() -> dict[str, object]:
     # Present the plan on current dates in memory, but don't persist that back to
     # the committed seed on every read — that caused git churn and flaky tests.
     # Real edits still persist through the save handlers.
     plan = json.loads(DEFAULT_CONTENT_PLAN_PATH.read_text(encoding="utf-8"))
+    # The plan is week-scoped only. Clean any legacy focus dump and drop the
+    # retired month focus so nothing month-based leaks into the UI or the AI.
+    if isinstance(plan, dict):
+        plan["focus"] = _clean_focus_value(plan.get("focus", ""))
+        plan.pop("month_focus", None)
     return refresh_stale_content_plan(plan, today_moscow())
 
 
@@ -3236,7 +3253,6 @@ def _strategy_publications(strategy: dict[str, object], week_start: str, plan: d
                 "status": "planned",
                 "summary": _localized_summary(platform, trend, evergreen),
                 "note": _trend_selection_note(platform, rubric, trend, str(entry.get("note", ""))),
-                "month_focus": str(plan.get("month_focus", "")),
                 "week_focus": str(plan.get("focus", "")),
                 "strategy_locked": "true",
                 "strategy_note": str(entry.get("note", "")),
@@ -3553,8 +3569,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         "week": _format_week_range(week_start, week_end),
         "week_start": week_start,
         "week_end": week_end,
-        "focus": value("focus"),
-        "month_focus": value("month_focus"),
+        "focus": _clean_focus_value(value("focus")),
         "content_pillars": text_to_list(value("content_pillars")),
         "platform_targets": text_to_list(value("platform_targets")),
         "today_recommendation": value("today_recommendation"),
@@ -3885,9 +3900,8 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                 ),
                 user_prompt=(
                     "Строгая иерархия смысла:\n"
-                    f"1. Фокус месяца: {plan.get('month_focus', '')}\n"
-                    f"2. Фокус недели: {plan.get('focus', '')}\n"
-                    "3. Из фокуса недели нужно придумать новую публикацию.\n\n"
+                    f"1. Фокус недели (фиксирован): {plan.get('focus', '')}\n"
+                    "2. Из фокуса недели нужно придумать новую публикацию.\n\n"
                     "Сохрани только эти поля публикации:\n"
                     f"- date: {publication.get('date', '')}\n"
                     f"- platform: {platform}\n"
@@ -3943,7 +3957,6 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
         updated["day"] = weekday_name_for_date(str(updated.get("date", "")))
-        updated["month_focus"] = str(plan.get("month_focus", ""))
         updated["week_focus"] = str(plan.get("focus", ""))
         updated["updated_at"] = _now_iso()
         updated.pop("ai_error", None)
@@ -3984,16 +3997,15 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     "Не меняй день, дату, площадку, рубрику и формат публикации. Ответь строго JSON."
                 ),
                 user_prompt=(
-                    "Фокус недели и фокус месяца заданы пользователем и ЗАФИКСИРОВАНЫ — их нельзя менять. "
+                    "Фокус недели задан пользователем и ЗАФИКСИРОВАН — его нельзя менять. "
                     "Все темы недели должны прямо раскрывать фокус недели.\n\n"
                     "Строгая иерархия:\n"
                     "1. Редакционная стратегия\n"
                     "2. Недельный шаблон\n"
-                    f"3. Фокус месяца (фиксирован): {plan.get('month_focus', '')}\n"
-                    f"4. Фокус недели (фиксирован, раскрывать в каждой теме): {plan.get('focus', '')}\n"
-                    "5. Author Brain\n"
-                    "6. Trend Radar\n"
-                    "7. Контент-план\n\n"
+                    f"3. Фокус недели (фиксирован, раскрывать в каждой теме): {plan.get('focus', '')}\n"
+                    "4. Author Brain\n"
+                    "5. Trend Radar\n"
+                    "6. Контент-план\n\n"
                     f"Период: {plan.get('week_start', '')} - {plan.get('week_end', '')}\n"
                     f"Опорные направления: {plan.get('content_pillars', [])}\n\n"
                     "Жестко зафиксированный недельный шаблон. Его нельзя менять:\n"
@@ -4016,7 +4028,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
                     f"Редакционная стратегия и правила рубрик: {json.dumps(strategy, ensure_ascii=False)}\n"
                     f"Контекст автора, Knowledge, Trend Radar и Lessons: {json.dumps(context, ensure_ascii=False)}\n\n"
-                    "Верни JSON с полем planned_publications (фокус недели/месяца менять нельзя). "
+                    "Верни JSON с полем planned_publications (фокус недели менять нельзя). "
                     "У каждой публикации верни только: topic, angle, goal, main_thought, summary, status, note, draft, choice_reason, quality_scores. "
                     "Для LinkedIn генерируй тему, цель, summary и note на английском языке. Для остальных площадок — на русском. "
                     "Если идея похожа на предыдущую, предложи другой угол."
@@ -4045,7 +4057,6 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
         updated["week"] = _format_week_range(week_start, week_end)
         for publication in updated.get("planned_publications", []):
             if isinstance(publication, dict):
-                publication["month_focus"] = str(updated.get("month_focus", ""))
                 publication["week_focus"] = str(updated.get("focus", ""))
         duplicate_count = _flag_duplicate_cells(updated)
         updated["updated_at"] = _now_iso()

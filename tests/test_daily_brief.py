@@ -9,7 +9,7 @@ from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, refresh_stale_content_plan, today_moscow, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, _text_matches_platform, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
+from post_agent.web import _author_profile_form_to_raw, _clean_focus_value, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, _text_matches_platform, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -482,7 +482,9 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn('type="date" name="week_end"', html)
         self.assertIn('type="date" name="pub_0_date"', html)
         self.assertIn('value="2026-06-26"', html)
-        self.assertIn('type="month" name="month"', html)
+        # The content plan is week-scoped: no month picker, no month focus.
+        self.assertNotIn('type="month" name="month"', html)
+        self.assertNotIn("Фокус месяца", html)
 
     def test_content_plan_period_query_can_open_month(self) -> None:
         plan = _content_plan_with_query_period({}, {"month": ["2026-06"]})
@@ -594,6 +596,13 @@ class DailyBriefTests(unittest.TestCase):
         self.assertTrue(saved["planned_publications"][1]["updated_at"])
         self.assertTrue(saved["updated_at"])
 
+    def test_clean_focus_value_recovers_week_focus_from_legacy_dump(self) -> None:
+        dumped = "{'month_focus': 'Закрепить территорию', 'week_focus': 'CX через дисциплину'}"
+        self.assertEqual(_clean_focus_value(dumped), "CX через дисциплину")
+        self.assertEqual(_clean_focus_value({"week_focus": "W", "month_focus": "M"}), "W")
+        self.assertEqual(_clean_focus_value("Обычный фокус недели"), "Обычный фокус недели")
+        self.assertEqual(_clean_focus_value(""), "")
+
     def test_content_plan_save_focus_updates_header_but_keeps_publications(self) -> None:
         with TemporaryDirectory() as directory:
             plan_path = Path(directory) / "content_plan.json"
@@ -703,7 +712,6 @@ class DailyBriefTests(unittest.TestCase):
                         "week_start": ["2026-06-22"],
                         "week_end": ["2026-06-28"],
                         "focus": ["Weekly focus"],
-                        "month_focus": ["Month focus"],
                         "content_pillars": ["Operations"],
                         "platform_targets": ["LinkedIn"],
                         "today_recommendation": ["Today"],
@@ -720,8 +728,9 @@ class DailyBriefTests(unittest.TestCase):
 
         self.assertIn("status=updated", result)
         self.assertEqual(gateway.calls, 2)
-        self.assertIn("Month focus", gateway.prompts[0])
+        # The plan is week-scoped: only the week focus drives generation, no month focus.
         self.assertIn("Weekly focus", gateway.prompts[0])
+        self.assertNotIn("Фокус месяца", gateway.prompts[0])
 
     def test_content_plan_generate_full_plan_uses_editorial_strategy(self) -> None:
         class Gateway:
