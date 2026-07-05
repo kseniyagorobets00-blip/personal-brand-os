@@ -92,8 +92,8 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn('name="kind"', html)
         self.assertIn("Обновляем...", html)
         self.assertIn("Профиль автора", html)
-        self.assertIn("Полезные материалы", html)
-        self.assertIn("Открыть", html)
+        # The standalone "Полезные материалы" block was removed from the main screen by request.
+        self.assertNotIn("<h2>Полезные материалы</h2>", html)
         self.assertIn("Использовать", html)
         self.assertIn("/daily-brief/approval", html)
         self.assertIn("decision-status", html)

@@ -868,8 +868,6 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
 
     {_trends_block(brief.market_signals)}
 
-    {_related_knowledge_block(brief.related_knowledge)}
-
     {_decisions_section(brief, ui_state)}
 
   </main>
