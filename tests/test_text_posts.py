@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from post_agent.text_posts import TextPostRepository
 from post_agent.web import render_text_post_detail, render_text_posts_page
@@ -72,6 +73,10 @@ class TextPostRepositoryTests(unittest.TestCase):
     def test_editor_offers_generate_and_generation_degrades_without_ai(self) -> None:
         from post_agent.web import _generate_post_text
 
+        class UnconfiguredGateway:
+            def is_configured(self) -> bool:
+                return False
+
         with TemporaryDirectory() as directory:
             repository = TextPostRepository(Path(directory) / "posts.json")
             post = repository.add_planned("Тема", "LinkedIn", "2026-07-10", "")
@@ -80,7 +85,8 @@ class TextPostRepositoryTests(unittest.TestCase):
         self.assertIn("Сгенерировать текст", detail_html)
         self.assertIn("value=\"generate\"", detail_html)
         # Without a configured AI the call must return a friendly error, never raise.
-        result = _generate_post_text("Тема", "LinkedIn", "Цель: показать экспертизу")
+        with patch("post_agent.web.AIGateway", return_value=UnconfiguredGateway()):
+            result = _generate_post_text("Тема", "LinkedIn", "Цель: показать экспертизу")
         self.assertIn("error", result)
         self.assertNotIn("text", result)
 

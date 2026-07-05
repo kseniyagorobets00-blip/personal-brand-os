@@ -56,7 +56,8 @@ class DailyBriefTests(unittest.TestCase):
         self.assertNotIn("Краткая структура:", draft_text)
 
     @patch("post_agent.daily_brief.today_moscow", return_value=PLANNED_DATE)
-    def test_daily_brief_html_renders_user_visible_blocks(self, _today) -> None:
+    @patch("post_agent.web._load_ui_state", return_value={"approvals": {}, "refinements": {}})
+    def test_daily_brief_html_renders_user_visible_blocks(self, _ui_state, _today) -> None:
         brief = DailyBriefService().build_today()
         html = render_daily_brief(brief)
 

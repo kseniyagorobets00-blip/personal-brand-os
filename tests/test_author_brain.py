@@ -43,21 +43,30 @@ class AuthorBrainTests(unittest.TestCase):
         self.assertTrue(any(case.get("result") == "-30%" for case in brain["cases"]))
 
     def test_author_brain_uses_knowledge_case_notes(self) -> None:
-        knowledge = KnowledgeBase()
-        knowledge.ensure_seed_documents()
-        brain = AuthorBrain(
-            author_profile=AuthorProfileRepository().load_raw(),
-            writing_dna=WritingDNARepository().load_raw(),
-            documents=knowledge.list_documents(),
-            cases=knowledge.list_cases(),
-            ideas=[],
-        ).build(
-            {
-                "platform": "LinkedIn",
-                "topic": "Customer Experience как следствие операционной дисциплины",
-                "summary": "CX зависит от operations, SOP и hospitality.",
-            }
-        )
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            knowledge = KnowledgeBase(root / "documents", root / "index.json")
+            knowledge.add_document(
+                "MAYRVEDA-cx-operations-note.md",
+                (
+                    "# MAYRVEDA: Customer Experience and Operations\n\n"
+                    "Кейс MAYRVEDA показывает, что Customer Experience зависит от операционной дисциплины, "
+                    "точек передачи ответственности и ясных SOP."
+                ).encode("utf-8"),
+            )
+            brain = AuthorBrain(
+                author_profile=AuthorProfileRepository().load_raw(),
+                writing_dna=WritingDNARepository().load_raw(),
+                documents=knowledge.list_documents(),
+                cases=knowledge.list_cases(),
+                ideas=[],
+            ).build(
+                {
+                    "platform": "LinkedIn",
+                    "topic": "Customer Experience как следствие операционной дисциплины",
+                    "summary": "CX зависит от operations, SOP и hospitality.",
+                }
+            )
 
         self.assertEqual(brain["thinking_mode"], "Case")
         self.assertTrue(any("MAYRVEDA" in str(item.get("title", "")) for item in brain["case_candidates"]))
