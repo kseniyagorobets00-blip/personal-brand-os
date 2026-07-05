@@ -69,6 +69,21 @@ class TextPostRepositoryTests(unittest.TestCase):
         self.assertIn("char-count", detail_html)
         self.assertIn("confirm(", detail_html)
 
+    def test_editor_offers_generate_and_generation_degrades_without_ai(self) -> None:
+        from post_agent.web import _generate_post_text
+
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            post = repository.add_planned("Тема", "LinkedIn", "2026-07-10", "")
+            detail_html = render_text_post_detail(post)
+
+        self.assertIn("Сгенерировать текст", detail_html)
+        self.assertIn("value=\"generate\"", detail_html)
+        # Without a configured AI the call must return a friendly error, never raise.
+        result = _generate_post_text("Тема", "LinkedIn", "Цель: показать экспертизу")
+        self.assertIn("error", result)
+        self.assertNotIn("text", result)
+
     def test_text_posts_ui_renders_list_and_detail(self) -> None:
         plan = {
             "week_start": "2026-07-06",

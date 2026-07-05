@@ -421,9 +421,11 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("/author-profile?tab=strategy", html)
         self.assertNotIn("Сохранить стратегию", html)
         self.assertIn("Рубрика", html)
-        self.assertIn("Сгенерировать тему/содержание", html)
+        self.assertIn("Сгенерировать тему/ТЗ", html)
         self.assertIn("Добавить публикацию", html)
-        self.assertIn("Краткое содержание", html)
+        # The full post content ("Краткое содержание") is no longer editable on the plan — only the ТЗ.
+        self.assertNotIn(">Краткое содержание<", html)
+        self.assertIn("Заметка / ТЗ", html)
         self.assertIn("Цель", html)
         self.assertIn("Дата", html)
 

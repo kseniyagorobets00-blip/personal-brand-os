@@ -240,7 +240,15 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             if not post:
                 self.send_error(404, "Not Found")
                 return
-            self._send_html(render_text_post_detail(post))
+            query_params = parse_qs(urlparse(self.path).query)
+            self._send_html(
+                render_text_post_detail(
+                    post,
+                    saved=query_params.get("saved", ["0"])[0] == "1",
+                    generated=query_params.get("generated", ["0"])[0] == "1",
+                    gen_error=query_params.get("gen_error", [""])[0],
+                )
+            )
             return
         if path == "/knowledge":
             query_params = parse_qs(urlparse(self.path).query)
@@ -400,6 +408,23 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 tab = post.tab
                 self.text_posts.delete(post_id)
                 location = f"/texts?tab={tab}&deleted=1"
+            elif action == "generate":
+                title = data.get("title", [""])[0]
+                platform = data.get("platform", [""])[0]
+                result = _generate_post_text(title or post.title, platform or post.platform, post.brief)
+                new_text = str(result.get("text", "")).strip() or data.get("text", [""])[0]
+                self.text_posts.update(
+                    post_id=post_id,
+                    title=title,
+                    platform=platform,
+                    publication_date=data.get("publication_date", [""])[0],
+                    text=new_text,
+                    status=data.get("status", ["draft"])[0],
+                )
+                if result.get("text"):
+                    location = f"/texts/{post_id}?generated=1"
+                else:
+                    location = f"/texts/{post_id}?gen_error={quote(str(result.get('error', 'AI недоступен'))[:200])}"
             else:
                 self.text_posts.update(
                     post_id=post_id,
@@ -2869,7 +2894,8 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
           {_input("new_pub_goal", "Цель", "")}
           {_select("new_pub_pillar", "Рубрика", "Наблюдение", RUBRICS)}
           {_select("new_pub_format", "Формат публикации", "пост", PUBLICATION_FORMATS)}
-          {_textarea("new_pub_summary", "Краткое содержание", "")}
+          {_input("new_pub_note", "Заметка / ТЗ", "")}
+          <input type="hidden" name="new_pub_summary" value="">
           <input type="hidden" name="new_pub_status" value="planned">
           <button class="ghost" name="plan_action" value="add_publication" type="submit">Добавить публикацию</button>
         </article>
@@ -2970,8 +2996,60 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
 </html>"""
 
 
-def render_text_post_detail(post: TextPost) -> str:
+def _generate_post_text(title: str, platform: str, brief: str) -> dict[str, object]:
+    """Generate a ready-to-publish post body from the brief, in the author's style."""
+    title = title.strip()
+    try:
+        gateway = AIGateway()
+        if not gateway.is_configured():
+            raise AIGatewayError("ProxyAPI не настроен.")
+        norm_platform = _normalize_platform(platform)
+        language = _language_for_platform(norm_platform)
+        context = DailyBriefRequestHandler.ai_context_engine.build(
+            {"topic": title, "platform": platform, "summary": brief},
+            include_local_sources=True,
+        )
+        response = _complete_json_with_retry(
+            gateway,
+            system_prompt=(
+                "Ты AI Chief Content Officer для Personal Brand OS. "
+                "Напиши готовый к публикации пост от лица автора строго по брифу и в его стиле "
+                "(Author Brain, Writing DNA, правила площадки). Не добавляй пояснений от себя. "
+                "Ответь строго JSON с единственным полем draft."
+            ),
+            user_prompt=(
+                f"Площадка: {norm_platform}\n"
+                f"Язык: {language}. {_language_policy_for_platform(norm_platform)}\n"
+                f"Тема: {title}\n"
+                f"Задание (бриф):\n{brief or '—'}\n\n"
+                "Напиши полный текст поста: сильное начало без запрещённых клише, "
+                "структура по правилам рубрики, живой авторский тон, без общих мест.\n"
+                f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
+                "Верни строго JSON: {\"draft\": \"полный текст поста\"}."
+            ),
+            action="text_post_generate",
+        )
+        draft = str(response.get("draft") or response.get("text") or "").strip()
+        if not draft:
+            return {"error": "AI вернул пустой ответ. Попробуйте ещё раз."}
+        return {"text": draft}
+    except AIGatewayError as exc:
+        _save_ai_action_error("text_post_generate", exc)
+        return {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - surface any failure as a friendly message
+        _save_ai_action_error("text_post_generate", exc)
+        return {"error": f"Не удалось сгенерировать текст: {exc}"}
+
+
+def render_text_post_detail(post: TextPost, saved: bool = False, generated: bool = False, gen_error: str = "") -> str:
     back_tab = post.tab
+    notice = ""
+    if saved:
+        notice += "<div class=\"notice\">Сохранено.</div>"
+    if generated:
+        notice += "<div class=\"notice\">Текст сгенерирован. Проверьте и при необходимости отредактируйте.</div>"
+    if gen_error:
+        notice += _ai_error_note(gen_error, "сгенерировать текст")
     archive_action = (
         '<button class="ghost" name="action" value="archive" type="submit">Перенести в архив</button>'
         if post.tab == "planned"
@@ -3014,6 +3092,7 @@ def render_text_post_detail(post: TextPost) -> str:
       </div>
       {_global_nav("texts")}
     </header>
+    {notice}
     <form class="profile-form" method="post" action="/texts/{escape(post.id)}">
       <div class="focus-bar">
         <button id="focus-exit" class="ghost" type="button">← Выйти из фокуса</button>
@@ -3036,6 +3115,8 @@ def render_text_post_detail(post: TextPost) -> str:
         <div class="editor-bar">
           <p class="editor-meta"><span id="char-count">0</span> символов · <span id="word-count">0</span> слов</p>
           <div class="editor-bar-actions">
+            <button name="action" value="generate" type="submit" class="secondary"
+              onclick="var t=document.getElementById('post-text'); if(t&&t.value.trim()&&!confirm('Заменить текущий текст сгенерированным AI?'))return false; this.textContent='Генерирую…';">✨ Сгенерировать текст</button>
             <button id="focus-enter" class="ghost" type="button">✎ Режим фокуса</button>
             <button id="copy-text" class="ghost" type="button">Скопировать текст</button>
           </div>
@@ -3247,12 +3328,13 @@ def _content_plan_edit_row(item: object, index: int) -> str:
       {_select(f"pub_{index}_format", "Формат публикации", _publication_format(item), PUBLICATION_FORMATS)}
       <input type="hidden" name="pub_{index}_status" value="{escape(status)}">
       {_status_badge(status)}
-      {_textarea(f"pub_{index}_summary", "Краткое содержание", item.get("summary", item.get("note", "")))}
-      {_textarea(f"pub_{index}_note", "Заметка", item.get("note", ""))}
+      <input type="hidden" name="pub_{index}_summary" value="{escape(str(item.get("summary", item.get("note", ""))))}">
+      {_textarea(f"pub_{index}_note", "Заметка / ТЗ", item.get("note", ""))}
+      <p class="mode-hint">Полный текст поста готовится в разделе «Тексты» — здесь только тема и ТЗ.</p>
       {updated}
       {error}
       <div class="form-actions">
-        <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/содержание</button>
+        <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/ТЗ</button>
         <button class="ghost" name="plan_action" value="next_pub_{index}" type="submit">Следующий этап</button>
         <button class="ghost" name="plan_action" value="change_pub_{index}" type="submit">Изменить</button>
         <button class="ghost" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
@@ -3901,7 +3983,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             "rubric": _normalize_rubric(value("new_pub_pillar") or value("new_pub_format")),
             "status": "planned",
             "summary": value("new_pub_summary"),
-            "note": "",
+            "note": value("new_pub_note"),
         }
         publications.append(new_publication)
 
