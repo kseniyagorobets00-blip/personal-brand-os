@@ -2996,6 +2996,11 @@ def render_text_post_detail(post: TextPost) -> str:
       {_global_nav("texts")}
     </header>
     <form class="profile-form" method="post" action="/texts/{escape(post.id)}">
+      <div class="focus-bar">
+        <button id="focus-exit" class="ghost" type="button">← Выйти из фокуса</button>
+        <p class="editor-meta"><span id="char-count-2">0</span> симв. · <span id="word-count-2">0</span> сл.</p>
+        <button name="action" value="save" type="submit">Сохранить</button>
+      </div>
       <section class="profile-section">
         <div class="form-grid">
           {_input("title", "Название", post.title)}
@@ -3010,7 +3015,10 @@ def render_text_post_detail(post: TextPost) -> str:
         </label>
         <div class="editor-bar">
           <p class="editor-meta"><span id="char-count">0</span> символов · <span id="word-count">0</span> слов</p>
-          <button id="copy-text" class="ghost" type="button">Скопировать текст</button>
+          <div class="editor-bar-actions">
+            <button id="focus-enter" class="ghost" type="button">✎ Режим фокуса</button>
+            <button id="copy-text" class="ghost" type="button">Скопировать текст</button>
+          </div>
         </div>
         <div class="form-actions">
           <button name="action" value="save" type="submit">Сохранить</button>
@@ -3023,9 +3031,10 @@ def render_text_post_detail(post: TextPost) -> str:
     </form>
     <script>(function(){{
       var t=document.getElementById('post-text');
-      var cc=document.getElementById('char-count'), wc=document.getElementById('word-count');
-      function upd(){{if(!t)return;var v=t.value;if(cc)cc.textContent=v.length;
-        if(wc)wc.textContent=v.trim()?v.trim().split(/\\s+/).length:0;}}
+      var counts=[['char-count','word-count'],['char-count-2','word-count-2']];
+      function upd(){{if(!t)return;var v=t.value;var c=v.length;var w=v.trim()?v.trim().split(/\\s+/).length:0;
+        counts.forEach(function(p){{var ce=document.getElementById(p[0]),we=document.getElementById(p[1]);
+          if(ce)ce.textContent=c; if(we)we.textContent=w;}});}}
       if(t){{t.addEventListener('input',upd);upd();}}
       var b=document.getElementById('copy-text');
       if(b&&t){{b.addEventListener('click',function(){{
@@ -3034,6 +3043,10 @@ def render_text_post_detail(post: TextPost) -> str:
         b.textContent='Скопировано ✓';
         setTimeout(function(){{b.textContent='Скопировать текст';}},1500);
       }});}}
+      var fe=document.getElementById('focus-enter');
+      if(fe)fe.addEventListener('click',function(){{document.body.classList.add('focus-on'); if(t)t.focus();}});
+      var fx=document.getElementById('focus-exit');
+      if(fx)fx.addEventListener('click',function(){{document.body.classList.remove('focus-on');}});
     }})();</script>
   </main>
 </body>
@@ -7528,6 +7541,7 @@ def _styles() -> str:
       resize: vertical;
       line-height: 1.6;
       font-size: 15px;
+      font-weight: 400;
     }
     .editor-bar {
       display: flex;
@@ -7541,6 +7555,49 @@ def _styles() -> str:
       color: var(--muted);
       font-size: 0.85rem;
       margin: 0;
+    }
+    .editor-bar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    /* ===== Focus Mode: distraction-free writing ===== */
+    .focus-bar { display: none; }
+    body.focus-on { padding-left: 0; }
+    body.focus-on .sidebar,
+    body.focus-on .burger,
+    body.focus-on .topbar,
+    body.focus-on .form-grid,
+    body.focus-on .mode-hint,
+    body.focus-on .editor-bar,
+    body.focus-on .form-actions { display: none; }
+    body.focus-on .shell { width: min(760px, calc(100% - 32px)); padding-top: 12px; }
+    body.focus-on .profile-form { margin-top: 0; }
+    body.focus-on .profile-section {
+      background: transparent;
+      border: 0;
+      box-shadow: none;
+      padding: 0;
+    }
+    body.focus-on .editor-label span { display: none; }
+    body.focus-on .editor-label textarea {
+      min-height: 82vh;
+      font-size: 17px;
+      line-height: 1.7;
+      border: 0;
+      background: transparent;
+      padding: 8px 0;
+    }
+    body.focus-on .editor-label textarea:focus,
+    body.focus-on .editor-label textarea:focus-visible { outline: none; border: 0; }
+    body.focus-on .focus-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      padding: 12px 0;
+      margin-bottom: 6px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--line-soft);
     }
     .pointer-note {
       color: var(--muted);
