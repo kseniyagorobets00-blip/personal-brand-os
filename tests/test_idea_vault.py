@@ -49,10 +49,10 @@ class IdeaVaultTests(unittest.TestCase):
             list_html = render_idea_vault(vault.list_ideas())
             detail_html = render_idea_detail(idea)
 
-        self.assertIn("Идеи", list_html)
-        self.assertIn("Добавить идею вручную", list_html)
-        self.assertIn("AI accelerates chaos", list_html)
-        self.assertIn("Новая", list_html)
+        # The ideas page now shows only the author's key ideas; free ideas moved to Memory.
+        self.assertIn("Ключевые идеи", list_html)
+        self.assertIn("/knowledge?section=ideas", list_html)
+        self.assertNotIn("Добавить идею вручную", list_html)
         self.assertIn("Обновить статус", detail_html)
         self.assertIn("Удалить идею", detail_html)
         self.assertIn("Добавить в контент-план", detail_html)

@@ -99,6 +99,7 @@ class AuthorBrain:
         cases: list[object],
         ideas: list[object],
         lessons: list[object] | None = None,
+        memory_notes: dict[str, list[str]] | None = None,
     ) -> None:
         self.author_profile = author_profile
         self.writing_dna = writing_dna or {}
@@ -107,6 +108,25 @@ class AuthorBrain:
         self.ideas = ideas
         self.lessons = lessons or []
         self._rules_cache: dict[str, object] | None = None
+        self._memory_notes_override = memory_notes
+        self._memory_notes_cache: dict[str, list[str]] | None = None
+
+    def _memory_notes(self, category: str) -> list[str]:
+        """Hand-written memory notes (observations, principles, stories) that feed AI.
+
+        Loaded lazily from the default store, mirroring how bot rules are loaded, so
+        existing call sites don't need to pass them explicitly. Tests can inject."""
+        if self._memory_notes_override is not None:
+            return list(self._memory_notes_override.get(category, []))
+        if self._memory_notes_cache is None:
+            try:
+                from .memory_notes import MEMORY_NOTE_CATEGORIES, MemoryNoteStore
+
+                store = MemoryNoteStore()
+                self._memory_notes_cache = {cat: store.for_ai(cat) for cat in MEMORY_NOTE_CATEGORIES}
+            except Exception:  # noqa: BLE001 - memory notes must never break generation
+                self._memory_notes_cache = {}
+        return list(self._memory_notes_cache.get(category, []))
 
     def _rules(self) -> dict[str, object]:
         if self._rules_cache is None:
@@ -136,6 +156,9 @@ class AuthorBrain:
             },
             "key_ideas": key_ideas,
             "cases": cases,
+            "author_principles": self._memory_notes("principle"),
+            "author_observations": self._memory_notes("observation"),
+            "author_stories": self._memory_notes("story"),
             "content_angles": self._content_angles(corpus),
             "platform_fit": self._rules().get("platform_rules", PLATFORM_FIT) if isinstance(self._rules().get("platform_rules"), dict) else PLATFORM_FIT,
             "thinking_style": self._thinking_style(),
@@ -232,6 +255,8 @@ class AuthorBrain:
             principles.append("можно использовать подзаголовки, но текст должен оставаться опытом практика")
         if platform in {"РЎРµС‚РєР°", "Сетка"}:
             principles.append("коротко: ситуация, вывод, вопрос")
+        # Author's hand-written principles from Memory are explicit voice rules.
+        principles.extend(self._memory_notes("principle"))
         return [item for item in principles if item]
 
     def _vocabulary(self) -> dict[str, list[str]]:
@@ -265,13 +290,17 @@ class AuthorBrain:
 
     def _examples_and_stories(self, query: str) -> list[dict[str, object]]:
         stories = self.author_profile.get("examples_and_stories", [])
-        if not isinstance(stories, list):
-            return []
-        return [
-            story
-            for story in stories
-            if isinstance(story, dict) and _matches(query, " ".join(str(value) for value in story.values()))
-        ][:4]
+        result: list[dict[str, object]] = []
+        # Author's hand-written stories from Memory always count as real examples.
+        for note in self._memory_notes("story"):
+            result.append({"type": "author_story", "text": note})
+        if isinstance(stories, list):
+            result.extend(
+                story
+                for story in stories
+                if isinstance(story, dict) and _matches(query, " ".join(str(value) for value in story.values()))
+            )
+        return result[:6]
 
     def _case_candidates(self, query: str) -> list[dict[str, object]]:
         candidates: list[dict[str, object]] = []
@@ -320,6 +349,9 @@ class AuthorBrain:
 
     def _knowledge_observations(self, query: str) -> list[dict[str, str]]:
         observations = []
+        # Author's hand-written observations from Memory are trusted first-class signals.
+        for note in self._memory_notes("observation"):
+            observations.append({"title": "Наблюдение автора", "excerpt": note, "metadata": "", "chunks": ""})
         for document in self.documents:
             chunks = tuple(getattr(document, "semantic_chunks", ()))
             metadata = getattr(document, "document_metadata", {}) or {}

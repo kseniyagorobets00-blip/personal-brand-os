@@ -34,6 +34,7 @@ from .knowledge import KnowledgeBase, KnowledgeSearchResult, SUPPORTED_EXTENSION
 from .knowledge_graph import KnowledgeGraph
 from .learning import LearningCenter, lessons_for_prompt
 from .memory import MemoryInbox
+from .memory_notes import MEMORY_NOTE_CATEGORIES, MEMORY_NOTE_LABELS, MemoryNote, MemoryNoteStore
 from .text_posts import TEXT_POST_STATUSES, TextPost, TextPostRepository
 from .trend_radar import TrendRadar
 from .writing_dna import WritingDNARepository, writing_dna_form_to_raw
@@ -121,6 +122,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
     learning_center = LearningCenter()
     knowledge_base = KnowledgeBase()
     idea_vault = IdeaVault()
+    memory_notes = MemoryNoteStore()
     text_posts = TextPostRepository()
     author_brain_repository = AuthorBrainRepository()
     trend_radar = TrendRadar(learning_center=learning_center)
@@ -272,18 +274,26 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             deleted = query_params.get("deleted", ["0"])[0] == "1"
             case_saved = query_params.get("case_saved", ["0"])[0] == "1"
             case_deleted = query_params.get("case_deleted", ["0"])[0] == "1"
+            note_saved = query_params.get("note_saved", ["0"])[0] == "1"
+            note_deleted = query_params.get("note_deleted", ["0"])[0] == "1"
+            idea_saved = query_params.get("idea_saved", ["0"])[0] == "1"
             section = query_params.get("section", ["documents"])[0]
             self.knowledge_base.ensure_seed_documents()
             self._send_html(
                 render_knowledge(
                     self.knowledge_base.list_documents(),
                     cases=self.knowledge_base.list_cases(),
+                    ideas=self.idea_vault.list_ideas(),
+                    notes=self.memory_notes.list_notes(),
                     uploaded=uploaded,
                     analysis=analysis,
                     upload_error=upload_error,
                     deleted=deleted,
                     case_saved=case_saved,
                     case_deleted=case_deleted,
+                    note_saved=note_saved,
+                    note_deleted=note_deleted,
+                    idea_saved=idea_saved,
                     section=section,
                 )
             )
@@ -630,6 +640,57 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.knowledge_base.delete_case(case_id)
             self.send_response(303)
             self.send_header("Location", "/knowledge?section=cases&case_deleted=1")
+            self.end_headers()
+            return
+        if path == "/knowledge/notes/add":
+            length = int(self.headers.get("Content-Length", "0"))
+            data = parse_qs(self.rfile.read(length).decode("utf-8"))
+            category = data.get("category", [""])[0]
+            self.memory_notes.add_note(
+                category=category,
+                text=data.get("text", [""])[0],
+                title=data.get("title", [""])[0],
+            )
+            self._refresh_author_brain_background()
+            section = _note_category_to_section(category)
+            self.send_response(303)
+            self.send_header("Location", f"/knowledge?section={section}&note_saved=1")
+            self.end_headers()
+            return
+        if path.startswith("/knowledge/notes/delete/"):
+            note_id = path.rsplit("/", 1)[-1]
+            length = int(self.headers.get("Content-Length", "0"))
+            data = parse_qs(self.rfile.read(length).decode("utf-8"))
+            section = _knowledge_section(data.get("section", ["observations"])[0])
+            self.memory_notes.delete_note(note_id)
+            self._refresh_author_brain_background()
+            self.send_response(303)
+            self.send_header("Location", f"/knowledge?section={section}&note_deleted=1")
+            self.end_headers()
+            return
+        if path == "/knowledge/ideas/add":
+            length = int(self.headers.get("Content-Length", "0"))
+            data = parse_qs(self.rfile.read(length).decode("utf-8"))
+            text = data.get("text", [""])[0].strip()
+            if text:
+                first_line = text.splitlines()[0].strip()
+                title = first_line if len(first_line) <= 80 else first_line[:77] + "..."
+                self.idea_vault.add_idea(
+                    title=title or "Идея",
+                    description=text,
+                    source="Память",
+                    platforms=(),
+                    status="New",
+                )
+            self.send_response(303)
+            self.send_header("Location", "/knowledge?section=ideas&idea_saved=1")
+            self.end_headers()
+            return
+        if path.startswith("/knowledge/ideas/delete/"):
+            idea_id = path.rsplit("/", 1)[-1]
+            self.idea_vault.delete_idea(idea_id)
+            self.send_response(303)
+            self.send_header("Location", "/knowledge?section=ideas&note_deleted=1")
             self.end_headers()
             return
         if path == "/knowledge/upload":
@@ -4501,12 +4562,17 @@ def _normalize_plan_publication(item: dict[str, object]) -> dict[str, str]:
 def render_knowledge(
     documents: list[object],
     cases: list[object] | None = None,
+    ideas: list[object] | None = None,
+    notes: list[object] | None = None,
     uploaded: bool = False,
     analysis: str = "",
     upload_error: str = "",
     deleted: bool = False,
     case_saved: bool = False,
     case_deleted: bool = False,
+    note_saved: bool = False,
+    note_deleted: bool = False,
+    idea_saved: bool = False,
     section: str = "documents",
 ) -> str:
     notices = []
@@ -4524,46 +4590,38 @@ def render_knowledge(
         notices.append("Кейс сохранен.")
     if case_deleted:
         notices.append("Кейс удален.")
+    if note_saved:
+        notices.append("Запись сохранена в память.")
+    if note_deleted:
+        notices.append("Запись удалена.")
+    if idea_saved:
+        notices.append("Идея сохранена в память.")
     notice_html = "".join(
         f"<div class=\"notice{' error-note' if item == upload_error and upload_error else ''}\">{escape(item)}</div>"
         for item in notices
     )
     cases = cases if cases is not None else DailyBriefRequestHandler.knowledge_base.list_cases()
-    cases_html = "".join(_case_card(case) for case in cases) if cases else "<div class=\"empty\">Кейсов пока нет. Добавьте первый рабочий пример.</div>"
-    docs_html = (
-        "".join(_knowledge_card(document) for document in documents)
-        if documents
-        else "<div class=\"empty\">Пока нет документов. Загрузите PDF, DOCX, Markdown или TXT.</div>"
-    )
-    supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+    ideas = ideas if ideas is not None else DailyBriefRequestHandler.idea_vault.list_ideas()
+    notes = notes if notes is not None else DailyBriefRequestHandler.memory_notes.list_notes()
     section = _knowledge_section(section)
-    section_html = _knowledge_section_content(section, documents, docs_html, cases_html)
+    section_html = _knowledge_section_content(section, documents, cases, ideas, notes)
     content = f"""
     {notice_html}
-    <section class="memory-categories">
-      {_memory_category("documents", "Документы", "PDF, DOCX, Markdown и TXT.", section)}
-      {_memory_category("cases", "Кейсы", "Рабочие ситуации для будущего контента.", section)}
-      {_memory_category("ideas", "Идеи", "Мысли и заготовки из обработанных материалов.", section)}
-      {_memory_category("observations", "Наблюдения", "Закономерности и выводы из практики.", section)}
-      {_memory_category("principles", "Принципы", "Авторские правила и убеждения.", section)}
-      {_memory_category("stories", "Истории", "Жизненные примеры и ситуации.", section)}
-    </section>
-    <section class="knowledge-upload">
-      <h2>Загрузить документ</h2>
-      <p>Поддерживаются: {escape(supported)}. Документ сохранится локально и попадет в базовый индекс.</p>
-      <form method="post" action="/knowledge/upload" enctype="multipart/form-data" onsubmit="const s=this.querySelector('[data-upload-status]'); if (s) s.textContent='Анализируется...';">
-        <input type="file" name="document" required>
-        <button type="submit">Добавить в память</button>
-        <span class="state-note" data-upload-status></span>
-      </form>
-    </section>
+    <nav class="memory-tabs">
+      {_memory_tab("documents", "Документы", section)}
+      {_memory_tab("cases", "Кейсы", section)}
+      {_memory_tab("ideas", "Идеи", section)}
+      {_memory_tab("observations", "Наблюдения", section)}
+      {_memory_tab("principles", "Принципы", section)}
+      {_memory_tab("stories", "Истории", section)}
+    </nav>
     {section_html}
 """
     return _page_shell(
         title="Память",
         eyebrow="долгосрочная память",
         heading="Память",
-        hint="Ваши документы, кейсы и заметки — материал, из которого AI учится.",
+        hint="Документы, кейсы, идеи, наблюдения, принципы и истории — материал, из которого учится AI.",
         active="knowledge",
         content=content,
     )
@@ -4873,55 +4931,190 @@ def _chunks_panel(chunks: list[dict[str, object]]) -> str:
     return '<div class="knowledge-list">' + "".join(cards) + "</div>"
 
 
-def _memory_category(section_key: str, title: str, text: str, active: str) -> str:
+SECTION_TO_NOTE_CATEGORY = {
+    "observations": "observation",
+    "principles": "principle",
+    "stories": "story",
+}
+NOTE_CATEGORY_TO_SECTION = {value: key for key, value in SECTION_TO_NOTE_CATEGORY.items()}
+
+
+def _note_category_to_section(category: str) -> str:
+    return NOTE_CATEGORY_TO_SECTION.get(category, "observations")
+
+
+def _memory_tab(section_key: str, title: str, active: str) -> str:
     active_class = " active" if section_key == active else ""
-    return f"""
-    <a class="memory-category{active_class}" href="/knowledge?section={escape(section_key)}">
-      <h3>{escape(title)}</h3>
-      <p>{escape(text)}</p>
-    </a>
-    """
+    return f'<a class="memory-tab{active_class}" href="/knowledge?section={escape(section_key)}">{escape(title)}</a>'
 
 
 def _knowledge_section(value: str) -> str:
     return value if value in {"documents", "cases", "ideas", "observations", "principles", "stories"} else "documents"
 
 
-def _knowledge_section_content(section: str, documents: list[object], docs_html: str, cases_html: str) -> str:
+def _knowledge_section_content(
+    section: str,
+    documents: list[object],
+    cases: list[object],
+    ideas: list[object],
+    notes: list[object],
+) -> str:
     labels = {
-        "documents": "Документы",
-        "cases": "Кейсы",
-        "ideas": "Идеи",
-        "observations": "Наблюдения",
-        "principles": "Принципы",
-        "stories": "Истории",
+        "documents": ("Документы", "материалы, из которых AI берёт факты"),
+        "cases": ("Кейсы", "рабочие ситуации для будущего контента"),
+        "ideas": ("Идеи", "мысли и заготовки для постов"),
+        "observations": ("Наблюдения", "закономерности и выводы из практики"),
+        "principles": ("Принципы", "ваши правила и убеждения"),
+        "stories": ("Истории", "жизненные примеры и ситуации"),
     }
+    title, eyebrow = labels.get(section, labels["documents"])
     if section == "documents":
-        body = docs_html
+        form = _docs_upload_form()
+        body = (
+            "".join(_knowledge_card(document) for document in documents)
+            if documents
+            else "<div class=\"empty\">Пока нет документов. Загрузите PDF, DOCX, Markdown или TXT.</div>"
+        )
         count = len(documents)
     elif section == "cases":
-        body = _case_form() + f"<div class=\"knowledge-list\">{cases_html}</div>"
-        count = len(DailyBriefRequestHandler.knowledge_base.list_cases())
-    else:
-        items = _memory_items_from_documents(documents, section)
+        form = _case_form()
         body = (
-            "".join(_memory_item_card(item) for item in items)
-            if items
-            else "<div class=\"empty\">В этом разделе пока нет извлеченных материалов. Загрузите документ или добавьте кейс.</div>"
+            "".join(_case_card(case) for case in cases)
+            if cases
+            else "<div class=\"empty\">Кейсов пока нет. Добавьте первый рабочий пример.</div>"
         )
-        count = len(items)
-    title = labels.get(section, "Документы")
+        count = len(cases)
+    elif section == "ideas":
+        form = _ideas_memory_form()
+        body = (
+            "".join(_memory_idea_card(idea) for idea in ideas)
+            if ideas
+            else "<div class=\"empty\">Пока нет идей. Запишите первую мысль — она попадёт в память и в подсказку AI.</div>"
+        )
+        count = len(ideas)
+    else:
+        category = SECTION_TO_NOTE_CATEGORY.get(section, "observation")
+        section_notes = [note for note in notes if getattr(note, "category", "") == category]
+        form = _note_form(section, category)
+        body = (
+            "".join(_note_card(note, section) for note in section_notes)
+            if section_notes
+            else "<div class=\"empty\">Здесь пока пусто. Добавьте запись текстом — AI будет её использовать.</div>"
+        )
+        count = len(section_notes)
     return f"""
+    {form}
     <section class="block">
       <div class="section-title">
         <div>
-          <p class="eyebrow">память</p>
+          <p class="eyebrow">{escape(eyebrow)}</p>
           <h2>{escape(title)}</h2>
         </div>
         <span>{count} записей</span>
       </div>
       <div class="knowledge-list">{body}</div>
     </section>
+    """
+
+
+def _docs_upload_form() -> str:
+    supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+    return f"""
+    <section class="knowledge-upload embedded-form">
+      <h2>Загрузить документ</h2>
+      <p>Поддерживаются: {escape(supported)}. Документ сохранится локально и попадёт в базовый индекс.</p>
+      <form method="post" action="/knowledge/upload" enctype="multipart/form-data" onsubmit="const s=this.querySelector('[data-upload-status]'); if (s) s.textContent='Анализируется...';">
+        <input type="file" name="document" required>
+        <button type="submit">Добавить в память</button>
+        <span class="state-note" data-upload-status></span>
+      </form>
+    </section>
+    """
+
+
+def _ideas_memory_form() -> str:
+    return """
+    <section class="knowledge-upload embedded-form">
+      <h2>Добавить идею</h2>
+      <form method="post" action="/knowledge/ideas/add">
+        <textarea name="text" rows="3" placeholder="Запишите идею одним текстом…" required></textarea>
+        <button type="submit">Сохранить идею</button>
+      </form>
+    </section>
+    """
+
+
+NOTE_PLACEHOLDERS = {
+    "observations": "Опишите наблюдение или закономерность из практики…",
+    "principles": "Сформулируйте принцип или убеждение…",
+    "stories": "Расскажите историю или ситуацию из опыта…",
+}
+NOTE_ADD_LABELS = {
+    "observations": "Добавить наблюдение",
+    "principles": "Добавить принцип",
+    "stories": "Добавить историю",
+}
+
+
+def _note_form(section: str, category: str) -> str:
+    placeholder = NOTE_PLACEHOLDERS.get(section, "Запишите текст…")
+    add_label = NOTE_ADD_LABELS.get(section, "Добавить запись")
+    title_field = (
+        '<input name="title" placeholder="Название истории (необязательно)">'
+        if section == "stories"
+        else ""
+    )
+    return f"""
+    <section class="knowledge-upload embedded-form">
+      <h2>{escape(add_label)}</h2>
+      <form method="post" action="/knowledge/notes/add">
+        <input type="hidden" name="category" value="{escape(category)}">
+        {title_field}
+        <textarea name="text" rows="3" placeholder="{escape(placeholder)}" required></textarea>
+        <button type="submit">Сохранить</button>
+      </form>
+    </section>
+    """
+
+
+def _note_card(note: object, section: str) -> str:
+    note_id = escape(getattr(note, "id", ""))
+    title = escape(getattr(note, "title", "") or "")
+    text = escape(getattr(note, "text", ""))
+    heading = f"<h3>{title}</h3>" if title else ""
+    return f"""
+    <article class="knowledge-card">
+      <div>
+        {heading}
+        <p>{text}</p>
+      </div>
+      <form method="post" action="/knowledge/notes/delete/{note_id}">
+        <input type="hidden" name="section" value="{escape(section)}">
+        <button class="ghost danger-text" type="submit">Удалить</button>
+      </form>
+    </article>
+    """
+
+
+def _memory_idea_card(idea: object) -> str:
+    idea_id = escape(getattr(idea, "id", ""))
+    title = escape(getattr(idea, "title", "") or "Идея")
+    description = escape(getattr(idea, "description", ""))
+    source = escape(_source_ru(getattr(idea, "source", "")))
+    return f"""
+    <article class="knowledge-card">
+      <div>
+        <h3>{title}</h3>
+        <p>{description}</p>
+        <div class="doc-meta"><span>{source}</span></div>
+      </div>
+      <div class="card-actions">
+        <a class="open-link" href="/ideas/{idea_id}">Открыть</a>
+        <form method="post" action="/knowledge/ideas/delete/{idea_id}">
+          <button class="ghost danger-text" type="submit">Удалить</button>
+        </form>
+      </div>
+    </article>
     """
 
 
@@ -4946,49 +5139,6 @@ def _case_form() -> str:
         <button type="submit">Сохранить кейс</button>
       </form>
     </section>
-    """
-
-
-def _memory_items_from_documents(documents: list[object], section: str) -> list[dict[str, str]]:
-    key_map = {
-        "ideas": ("ideas", "conclusions"),
-        "observations": ("conclusions", "results"),
-        "principles": ("favorite_phrases", "themes"),
-        "stories": ("quotes", "cases"),
-    }
-    result: list[dict[str, str]] = []
-    for document in documents:
-        analysis = getattr(document, "analysis", {}) or {}
-        if not isinstance(analysis, dict):
-            continue
-        for key in key_map.get(section, ()):
-            values = analysis.get(key, [])
-            if isinstance(values, list):
-                for value in values[:8]:
-                    if isinstance(value, dict):
-                        text = str(value.get("context") or value.get("title") or value)
-                    else:
-                        text = str(value)
-                    if text.strip():
-                        result.append(
-                            {
-                                "title": getattr(document, "title", ""),
-                                "text": text.strip(),
-                                "source": getattr(document, "id", ""),
-                            }
-                        )
-    return result[:40]
-
-
-def _memory_item_card(item: dict[str, str]) -> str:
-    return f"""
-    <article class="knowledge-card">
-      <div>
-        <h3>{escape(item.get("title", "Материал памяти"))}</h3>
-        <p>{escape(item.get("text", ""))}</p>
-      </div>
-      <a class="open-link" href="/knowledge/{escape(item.get("source", ""))}">Открыть</a>
-    </article>
     """
 
 
@@ -5030,41 +5180,19 @@ def render_idea_vault(
     if updated:
         notices.append("Статус идеи обновлен.")
     notice_html = "".join(f"<div class=\"notice\">{escape(item)}</div>" for item in notices)
-    ideas_html = (
-        "".join(_idea_card(idea) for idea in ideas)
-        if ideas
-        else "<div class=\"empty\">Пока нет идей. Добавьте вручную, сохраните идею из дневного брифа или из «Радара трендов» — они попадают сюда.</div>"
-    )
     author_profile = AuthorBrainRepository().load_profile()
     content = f"""
     {notice_html}
     {_key_ideas_section(author_profile)}
-    <section class="knowledge-upload">
-      <h2>Добавить идею вручную</h2>
-      <form method="post" action="/ideas/add">
-        <input name="title" placeholder="Название идеи" required>
-        <textarea name="description" rows="4" placeholder="Краткое описание" required></textarea>
-        <input name="source" value="Вручную">
-        <input name="platforms" placeholder="Платформы: LinkedIn, Telegram">
-        <button type="submit">Сохранить идею</button>
-      </form>
-    </section>
     <section class="block">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">хранилище</p>
-          <h2>Свободные идеи</h2>
-        </div>
-        <span>{len(ideas)} в хранилище</span>
-      </div>
-      <div class="knowledge-list">{ideas_html}</div>
+      <p class="page-hint">Свободные идеи и заготовки теперь живут в разделе <a href="/knowledge?section=ideas">«Память → Идеи»</a> — там же появляются идеи из Дневного брифа и Радара трендов. Здесь остаются только ключевые идеи автора.</p>
     </section>
 """
     return _page_shell(
         title="Идеи",
-        eyebrow="хранилище идей",
-        heading="Идеи",
-        hint="Копилка идей и заготовок для будущих постов.",
+        eyebrow="ключевые идеи автора",
+        heading="Ключевые идеи",
+        hint="Опорные убеждения автора, на которые AI опирается при генерации.",
         active="ideas",
         content=content,
     )
@@ -5085,7 +5213,7 @@ def _key_ideas_section(profile: dict[str, object]) -> str:
           <h2>Ключевые идеи автора</h2>
         </div>
       </div>
-      <p class="page-hint">Это опорные убеждения из профиля автора — не то же самое, что свободные идеи ниже. AI опирается на них при генерации. Их также можно редактировать в разделе «Профиль автора».</p>
+      <p class="page-hint">Это опорные убеждения из профиля автора — не то же самое, что свободные идеи в «Память → Идеи». AI опирается на них при генерации. Их также можно редактировать в разделе «Профиль автора».</p>
       <form class="profile-form" method="post" action="/ideas/key-ideas">
         <div class="card-list">{rows}</div>
         <section class="profile-section">
@@ -7263,30 +7391,37 @@ def _styles() -> str:
       padding: 24px;
       box-shadow: var(--shadow);
     }
-    .memory-categories {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin: 30px 0;
+    .memory-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 24px 0;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line-soft);
     }
-    .memory-category {
+    .memory-tab {
       background: rgba(var(--paper-rgb), .72);
       border: 1px solid var(--line-soft);
-      border-radius: var(--radius-sm);
-      padding: 16px;
+      border-radius: 999px;
+      padding: 8px 16px;
       color: var(--ink);
       text-decoration: none;
-      min-height: 118px;
-      display: block;
-    }
-    .memory-category.active {
-      background: var(--accent-soft);
-      border-color: rgba(49, 95, 86, .42);
-    }
-    .memory-category p {
-      color: var(--muted);
-      margin-top: 8px;
       font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: background .16s ease, border-color .16s ease, color .16s ease;
+    }
+    .memory-tab:hover { background: var(--paper-soft); }
+    .memory-tab.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
     }
     .plan-edit-list {
       display: grid;
@@ -7828,7 +7963,7 @@ def _styles() -> str:
     @media (min-width: 641px) and (max-width: 1100px) {
       .shell { width: min(100% - 40px, 960px); }
       .period-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .hero-cards, .memory-categories, .today-details, .week-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .hero-cards, .today-details, .week-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .calendar-weekdays { display: none; }
       .calendar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .calendar-day.muted { display: none; }
@@ -7843,7 +7978,7 @@ def _styles() -> str:
       .topbar { display: grid; }
       .meta { justify-content: flex-start; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
-      .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter, .plan-fields { grid-template-columns: 1fr; }
+      .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter, .plan-fields { grid-template-columns: 1fr; }
       .plan-row > summary {
         grid-template-columns: 1fr auto;
         grid-template-areas:
