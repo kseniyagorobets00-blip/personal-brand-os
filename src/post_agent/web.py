@@ -576,6 +576,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         return
 
     def _send_html(self, body: str) -> None:
+        if "</body>" in body:
+            body = body.replace("</body>", _global_script() + "</body>", 1)
         payload = body.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2276,9 +2278,42 @@ def _ai_diagnostics_block(diagnostics: dict[str, object]) -> str:
 
 
 def _auto_refresh_meta(status: object) -> str:
+    # Refresh while the AI is running, but never interrupt the user while they read or type.
     if getattr(status, "state", "") == "running":
-        return '<meta http-equiv="refresh" content="3">'
+        return (
+            "<script>(function(){"
+            "var last=Date.now();"
+            "['keydown','mousemove','scroll','input','focusin','touchstart'].forEach(function(ev){"
+            "document.addEventListener(ev,function(){last=Date.now();},{passive:true});});"
+            "setInterval(function(){"
+            "var el=document.activeElement;"
+            "if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.tagName==='SELECT'))return;"
+            "if(Date.now()-last<8000)return;"
+            "location.reload();"
+            "},4000);})();</script>"
+        )
     return ""
+
+
+def _global_script() -> str:
+    # Injected on every page (via _send_html): confirm destructive deletes, and give
+    # every form's button a loading state + double-submit guard.
+    return (
+        "<script>(function(){"
+        "document.addEventListener('submit',function(e){"
+        "var f=e.target; if(!(f&&f.tagName==='FORM'))return;"
+        "var action=f.getAttribute('action')||'';"
+        "if(action.indexOf('/delete/')>=0||action.indexOf('/remove/')>=0){"
+        "if(!window.confirm('Удалить безвозвратно? Это действие нельзя отменить.')){e.preventDefault();return;}}"
+        "if(f.dataset.submitting==='1'){e.preventDefault();return;}"
+        "f.dataset.submitting='1';"
+        "var btn=e.submitter||f.querySelector('button[type=\"submit\"],button:not([type])');"
+        "var hasInline=f.getAttribute('onsubmit');"
+        "setTimeout(function(){if(!btn)return;"
+        "if(btn.tagName==='BUTTON'&&!hasInline){btn.textContent=btn.dataset.busy||'Подождите…';}"
+        "btn.disabled=true;},0);"
+        "});})();</script>"
+    )
 
 
 def _ai_result_block(result: dict[str, object] | None) -> str:

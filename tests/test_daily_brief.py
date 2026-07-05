@@ -113,6 +113,28 @@ class DailyBriefTests(unittest.TestCase):
         self.assertTrue(brief.topics)
         self.assertTrue(all("из контент-плана" in item.tags for item in brief.topics))
 
+    def test_global_script_confirms_deletes_and_guards_submits(self) -> None:
+        from post_agent.web import _global_script
+
+        script = _global_script()
+        self.assertIn("Удалить безвозвратно", script)          # delete confirmation (#1)
+        self.assertIn("/delete/", script)
+        self.assertIn("dataset.submitting", script)            # double-submit + loading guard (#2)
+        self.assertIn("btn.disabled=true", script)
+
+    def test_auto_refresh_only_while_running_and_respects_activity(self) -> None:
+        from post_agent.web import _auto_refresh_meta
+
+        class Status:
+            def __init__(self, state):
+                self.state = state
+
+        self.assertEqual(_auto_refresh_meta(Status("idle")), "")
+        running = _auto_refresh_meta(Status("running"))
+        self.assertIn("location.reload()", running)            # still refreshes while running (#5)
+        self.assertIn("activeElement", running)                # but not while typing / active
+        self.assertNotIn("http-equiv", running)                # no more hard full-page meta refresh
+
     def test_how_it_works_page_maps_the_pipeline(self) -> None:
         from post_agent.web import render_how_it_works
 
