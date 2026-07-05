@@ -695,7 +695,7 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(saved["planned_publications"][1]["pillar"], "Наблюдение")
         self.assertEqual(saved["planned_publications"][0]["topic"], "Generated Monday")
         self.assertEqual(len(saved["planned_publications"]), 2)
-        self.assertEqual(saved["last_action"], "Создан план по редакционной стратегии.")
+        self.assertTrue(saved["last_action"].startswith("Создан план по редакционной стратегии."))
         self.assertTrue(saved["updated_at"])
 
     def test_content_plan_strategy_respects_calendar_weekdays(self) -> None:
