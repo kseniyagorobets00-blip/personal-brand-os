@@ -3971,11 +3971,13 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     "Не меняй день, дату, площадку, рубрику и формат публикации. Ответь строго JSON."
                 ),
                 user_prompt=(
+                    "Фокус недели и фокус месяца заданы пользователем и ЗАФИКСИРОВАНЫ — их нельзя менять. "
+                    "Все темы недели должны прямо раскрывать фокус недели.\n\n"
                     "Строгая иерархия:\n"
                     "1. Редакционная стратегия\n"
                     "2. Недельный шаблон\n"
-                    f"3. Фокус месяца: {plan.get('month_focus', '')}\n"
-                    f"4. Фокус недели: {plan.get('focus', '')}\n"
+                    f"3. Фокус месяца (фиксирован): {plan.get('month_focus', '')}\n"
+                    f"4. Фокус недели (фиксирован, раскрывать в каждой теме): {plan.get('focus', '')}\n"
                     "5. Author Brain\n"
                     "6. Trend Radar\n"
                     "7. Контент-план\n\n"
@@ -4001,7 +4003,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
                     f"Редакционная стратегия и правила рубрик: {json.dumps(strategy, ensure_ascii=False)}\n"
                     f"Контекст автора, Knowledge, Trend Radar и Lessons: {json.dumps(context, ensure_ascii=False)}\n\n"
-                    "Верни JSON с полями focus, today_recommendation, planned_publications. "
+                    "Верни JSON с полем planned_publications (фокус недели/месяца менять нельзя). "
                     "У каждой публикации верни только: topic, angle, goal, main_thought, summary, status, note, draft, choice_reason, quality_scores. "
                     "Для LinkedIn генерируй тему, цель, summary и note на английском языке. Для остальных площадок — на русском. "
                     "Если идея похожа на предыдущую, предложи другой угол."
@@ -4011,16 +4013,9 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
             response = _extract_plan_response(raw_response)
             if attempt == 1 or not _plan_too_similar(previous_publications, response):
                 break
-        for field in ("week", "focus", "month_focus", "today_recommendation"):
-            if response.get(field):
-                updated[field] = response[field]
-        for field in ("week_start", "week_end"):
-            if response.get(field):
-                updated[field] = _normalize_plan_date_value(str(response.get(field))) or str(updated.get(field, ""))
-        for field in ("content_pillars", "platform_targets"):
-            value = response.get(field)
-            if isinstance(value, list):
-                updated[field] = [str(item) for item in value if str(item).strip()]
+        # The user's strategic inputs (focus, month focus, period dates, pillars) are the
+        # intent that GUIDES generation — never overwrite them with the AI's echo. The AI
+        # only fills in the publications (topics/summaries/drafts).
         publications = response.get("planned_publications") or response.get("publications") or response.get("plan")
         if isinstance(publications, list) and publications:
             merged = []

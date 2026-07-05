@@ -749,7 +749,8 @@ class DailyBriefTests(unittest.TestCase):
                 saved = json.loads(plan_path.read_text(encoding="utf-8"))
 
         self.assertEqual(location, "/content-plan?saved=1&status=updated&view=calendar")
-        self.assertEqual(saved["focus"], "Generated focus")
+        # The user's manual week focus must be preserved, not overwritten by the AI's echo.
+        self.assertEqual(saved["focus"], "Old")
         self.assertEqual(saved["planned_publications"][0]["date"], "2026-06-22")
         self.assertEqual(saved["planned_publications"][1]["date"], "2026-06-23")
         self.assertEqual(saved["planned_publications"][0]["platform"], "LinkedIn")
