@@ -1118,7 +1118,7 @@ def _normalize_author_tab(tab: str) -> str:
 def _author_base_panel(profile: dict[str, object], status: object) -> str:
     state = _status_label(str(getattr(status, "state", "")))
     message = _status_message(str(getattr(status, "message", "")))
-    updated = str(getattr(status, "updated_at", "")) or str(profile.get("updated_at", ""))
+    updated = _format_moscow_time(str(getattr(status, "updated_at", "")) or str(profile.get("updated_at", "")))
     error = str(getattr(status, "error", ""))
     source_counts = profile.get("source_counts", {})
     if not isinstance(source_counts, dict):
@@ -1828,7 +1828,7 @@ def render_trend_radar(
       <summary>Техническая информация</summary>
       <div class="draft-context-grid">
         <div><p class="label">Статус</p><p>{escape(status)}</p></div>
-        <div><p class="label">Последнее обновление</p><p>{escape(generated_at or "еще не запускался")}</p></div>
+        <div><p class="label">Последнее обновление</p><p>{escape(_format_moscow_time(generated_at) or "еще не запускался")}</p></div>
         <div><p class="label">Кэш до</p><p>{escape(expires_at or "не задан")}</p></div>
         <div><p class="label">Источники</p><p>{escape(source_text or "локальные источники продукта")}</p></div>
         <div><p class="label">Доступ внешних источников</p><p>{escape(source_status or "Внешние источники недоступны, используется локальный анализ.")}</p></div>
@@ -2754,7 +2754,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     if action_status == "updated":
         notice += "<div class=\"notice\">Обновлено.</div>"
     if plan.get("updated_at"):
-        notice += f"<div class=\"state-note\">Последнее обновление: {escape(str(plan.get('updated_at')))}</div>"
+        notice += f"<div class=\"state-note\">Обновлено: {escape(_format_moscow_time(plan.get('updated_at')))} (МСК)</div>"
     if plan.get("last_action"):
         notice += f"<div class=\"state-note\">{escape(str(plan.get('last_action')))}</div>"
     if plan.get("ai_error"):
@@ -3292,7 +3292,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         error = _ai_error_note(item.get("ai_error"), "подобрать тему")
     if item.get("repeat_warning"):
         error += f"<div class=\"state-note repeat-note\">⚠ {escape(str(item.get('repeat_warning')))}</div>"
-    updated = f"<div class=\"state-note\">Обновлено: {escape(str(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
+    updated = f"<div class=\"state-note\">Обновлено: {escape(_format_moscow_time(item.get('updated_at')))} (МСК)</div>" if item.get("updated_at") else ""
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
     status = _normalize_publication_status(str(item.get("status", "")))
     topic_text = str(item.get("topic", "")).strip() or "Без темы"
@@ -3496,6 +3496,21 @@ def _month_range(value: str) -> tuple[str, str]:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _format_moscow_time(value: object) -> str:
+    """Short human-readable Moscow time (dd.mm.yyyy HH:MM) from a stored ISO timestamp."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    moscow = parsed.astimezone(timezone(timedelta(hours=3)))
+    return moscow.strftime("%d.%m.%Y %H:%M")
 
 
 def _load_editorial_strategy() -> dict[str, object]:
@@ -8056,9 +8071,13 @@ def _styles() -> str:
       color: var(--muted);
       font-size: 13px;
       font-weight: 680;
+      min-width: 0;
     }
     input, textarea {
       width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
       background: var(--paper-soft);
@@ -8069,10 +8088,18 @@ def _styles() -> str:
       min-height: 44px;
       transition: border-color .16s ease;
     }
+    /* iOS renders native date/month pickers with a large intrinsic width; keep them inside the card. */
+    input[type="date"], input[type="month"], input[type="time"] {
+      -webkit-appearance: none;
+      appearance: none;
+    }
     input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
     input:focus, textarea:focus, select:focus { border-color: var(--accent); }
     select {
       width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
       border: 1px solid var(--line);
       border-radius: 999px;
       background: var(--paper-soft);
