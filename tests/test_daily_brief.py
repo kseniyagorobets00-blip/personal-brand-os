@@ -113,6 +113,22 @@ class DailyBriefTests(unittest.TestCase):
         self.assertTrue(brief.topics)
         self.assertTrue(all("из контент-плана" in item.tags for item in brief.topics))
 
+    def test_flag_duplicate_cells_marks_near_duplicates(self) -> None:
+        from post_agent.web import _flag_duplicate_cells
+
+        plan = {
+            "planned_publications": [
+                {"topic": "Почему сервис ломается в точках передачи ответственности", "summary": "CX зависит от процессов и владельцев", "note": ""},
+                {"topic": "Почему сервис ломается в точках передачи ответственности между ролями", "summary": "клиентский опыт зависит от процессов и владельцев участка", "note": ""},
+                {"topic": "AI как зеркало операционной зрелости", "summary": "ИИ подсвечивает слабые процессы", "note": ""},
+            ]
+        }
+        flagged = _flag_duplicate_cells(plan)
+        self.assertEqual(flagged, 1)
+        self.assertNotIn("repeat_warning", plan["planned_publications"][0])
+        self.assertIn("repeat_warning", plan["planned_publications"][1])
+        self.assertNotIn("repeat_warning", plan["planned_publications"][2])
+
     def test_gates_banner_surfaces_pending_gates(self) -> None:
         from post_agent.web import _gates_banner
 

@@ -2743,6 +2743,8 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     error = ""
     if item.get("ai_error"):
         error = f"<div class=\"state-note error-note\">Ошибка AI: {escape(str(item.get('ai_error')))}</div>"
+    if item.get("repeat_warning"):
+        error += f"<div class=\"state-note repeat-note\">⚠ {escape(str(item.get('repeat_warning')))}</div>"
     updated = f"<div class=\"state-note\">Обновлено: {escape(str(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
     status = _normalize_publication_status(str(item.get("status", "")))
@@ -3740,6 +3742,14 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         language = _language_for_platform(platform)
         context = _content_plan_ai_context(publication)
         previous = _publication_signature(publication)
+        # Other cells of the plan, so the new topic does not repeat a sibling publication.
+        own_signature = _publication_signature(publication)
+        siblings = [
+            item
+            for item in plan.get("planned_publications", [])
+            if isinstance(item, dict) and _publication_signature(item) and _publication_signature(item) != own_signature
+        ]
+        sibling_topics = "; ".join(str(item.get("topic", "")) for item in siblings if str(item.get("topic", "")).strip())
         response: dict[str, object] = {}
         best_language_ok: dict[str, object] | None = None
         for attempt in range(3):
@@ -3777,6 +3787,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                     "Заново придумай: topic, angle, main_thought, summary, note. "
                     "Тема должна быть заметно другой, не рерайтом старой.\n\n"
                     f"Предыдущий вариант, который нельзя повторять: {previous}\n"
+                    f"Темы других публикаций плана, которые тоже нельзя повторять: {sibling_topics or 'нет'}\n"
                     f"Попытка: {attempt + 1}. Seed: {_now_iso()}\n"
                     f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
                     "Верни JSON с полями: topic, angle, main_thought, goal, summary, status, note, choice_reason, quality_scores. "
@@ -3786,7 +3797,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
             )
             response = _extract_publication_response(raw_response)
             language_ok = _text_matches_platform(str(response.get("topic", "")), platform) and _text_matches_platform(str(response.get("summary", "")), platform)
-            not_duplicate = not _publication_too_similar(publication, response)
+            not_duplicate = not _publication_too_similar(publication, response) and not any(_publication_too_similar(sibling, response) for sibling in siblings)
             if language_ok and best_language_ok is None:
                 best_language_ok = response
             if language_ok and not_duplicate:
@@ -3917,8 +3928,13 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
             if isinstance(publication, dict):
                 publication["month_focus"] = str(updated.get("month_focus", ""))
                 publication["week_focus"] = str(updated.get("focus", ""))
+        duplicate_count = _flag_duplicate_cells(updated)
         updated["updated_at"] = _now_iso()
-        updated["last_action"] = "Создан план по редакционной стратегии."
+        updated["last_action"] = (
+            f"Создан план по редакционной стратегии. Похожих публикаций: {duplicate_count} — отмечены, их можно перегенерировать."
+            if duplicate_count
+            else "Создан план по редакционной стратегии."
+        )
         updated.pop("ai_error", None)
     except AIGatewayError as exc:
         _save_ai_action_error("content_plan_full", exc)
@@ -3963,6 +3979,33 @@ def _publication_too_similar(previous: dict[str, object], response: dict[str, ob
         for field in ("topic", "title", "angle", "main_thought", "summary", "content", "description", "note")
     )
     return _text_similarity(old_text, new_text) >= 0.58
+
+
+def _flag_duplicate_cells(plan: dict[str, object], threshold: float = 0.58) -> int:
+    """Deterministically mark plan cells that are too similar to an earlier cell.
+
+    No extra AI calls: it just detects repeats and sets repeat_warning so the UI
+    can show them and the user can regenerate the affected cell (which then avoids siblings).
+    """
+    publications = plan.get("planned_publications", [])
+    if not isinstance(publications, list):
+        return 0
+    flagged = 0
+    for index, item in enumerate(publications):
+        if not isinstance(item, dict):
+            continue
+        item.pop("repeat_warning", None)
+        signature = _publication_signature(item)
+        if not signature:
+            continue
+        for earlier in publications[:index]:
+            if not isinstance(earlier, dict):
+                continue
+            if _text_similarity(signature, _publication_signature(earlier)) >= threshold:
+                item["repeat_warning"] = f"Похожа на публикацию «{str(earlier.get('topic', '')).strip()}» — стоит перегенерировать."
+                flagged += 1
+                break
+    return flagged
 
 
 def _plan_too_similar(previous_publications: list[dict[str, object]], response: dict[str, object]) -> bool:
@@ -6725,6 +6768,8 @@ def _styles() -> str:
       background: rgba(120,120,120,0.06);
     }
     .pointer-note a { font-weight: 680; }
+    .repeat-note { color: #9a6a12; background: #fff6e6; border-radius: 8px; padding: 6px 10px; }
+    @media (prefers-color-scheme: dark) { .repeat-note { color: #f0c975; background: rgba(240,190,90,0.12); } }
     .gates-banner {
       display: flex;
       align-items: center;
