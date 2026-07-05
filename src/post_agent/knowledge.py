@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from html import unescape
 import json
 import re
+import threading
 import zlib
 from pathlib import Path
 from uuid import uuid4
@@ -147,7 +148,43 @@ class KnowledgeBase:
             extracted=analysis,
         )
         self.rebuild_graph()
+        self._start_background_ai_enrichment(document.id)
         return document
+
+    def _start_background_ai_enrichment(self, document_id: str) -> None:
+        """If AI is configured, read the document with the model in the background and
+        extract the author's real companies, roles, skills, projects and cases."""
+        try:
+            from .ai_gateway import AIGateway
+
+            if not AIGateway().is_configured():
+                return
+        except Exception:
+            return
+        threading.Thread(target=lambda: self.enrich_document_with_ai(document_id), daemon=True).start()
+
+    def enrich_document_with_ai(self, document_id: str, gateway: object | None = None) -> bool:
+        document = self.get_document(document_id)
+        if not document:
+            return False
+        ai = build_ai_document_analysis(document.title, document.content_text or document.excerpt, gateway)
+        if not ai:
+            return False
+        items = self._read_index()
+        changed = False
+        for item in items:
+            if item.get("id") == document_id:
+                analysis = item.get("analysis") if isinstance(item.get("analysis"), dict) else {}
+                analysis["ai"] = ai
+                item["analysis"] = analysis
+                changed = True
+                break
+        if not changed:
+            return False
+        self._write_index(items)
+        self.memory_inbox.update_extracted(document_id, {"ai": ai})
+        self.rebuild_graph()
+        return True
 
     def delete_document(self, document_id: str) -> bool:
         items = self._read_index()
@@ -393,6 +430,67 @@ class KnowledgeBase:
         if not compact:
             return "Документ сохранен и обработан. Текстовое содержание не найдено, но файл добавлен в память."
         return compact[:900]
+
+
+_AI_DOC_SYSTEM = (
+    "Ты аналитик базы знаний автора. Из загруженного документа (резюме, кейс, портфолио, заметка) "
+    "извлеки конкретные факты об авторе. Не выдумывай — бери только то, что реально есть в тексте. "
+    "Ответь строго JSON-объектом."
+)
+
+
+def _ai_doc_user_prompt(title: str, text: str) -> str:
+    return (
+        "Извлеки структурированные факты и верни JSON с полями: "
+        "summary (1-2 предложения, о чём документ), companies (компании автора), roles (должности и роли), "
+        "skills (навыки и компетенции), projects (проекты), "
+        "cases (список объектов {title, problem, action, result}), achievements (измеримые результаты, с цифрами), "
+        "themes (главные профессиональные темы автора), content_angles (о чём можно написать пост на основе этого), "
+        "quotes (яркие формулировки автора). Если поля нет в тексте — верни пустой список.\n\n"
+        f"Заголовок: {title}\n\nТекст документа:\n{text[:8000]}"
+    )
+
+
+def build_ai_document_analysis(title: str, text: str, gateway: object | None = None) -> dict[str, object]:
+    """AI-extracted, document-specific facts about the author. Returns {} if AI is unavailable."""
+    if not str(text).strip():
+        return {}
+    try:
+        from .ai_gateway import AIGateway
+
+        gw = gateway or AIGateway()
+        if not gw.is_configured():
+            return {}
+        response = gw.complete_json(_AI_DOC_SYSTEM, _ai_doc_user_prompt(title, text))
+    except Exception:
+        return {}
+    if not isinstance(response, dict):
+        return {}
+
+    def _list(value: object) -> list[str]:
+        return [str(item).strip() for item in value if str(item).strip()] if isinstance(value, list) else []
+
+    cases: list[dict[str, str]] = []
+    if isinstance(response.get("cases"), list):
+        for case in response["cases"]:
+            if isinstance(case, dict):
+                entry = {key: str(case.get(key, "")).strip() for key in ("title", "problem", "action", "result")}
+                if any(entry.values()):
+                    cases.append(entry)
+    result = {
+        "summary": str(response.get("summary", "")).strip(),
+        "companies": _list(response.get("companies")),
+        "roles": _list(response.get("roles")),
+        "skills": _list(response.get("skills")),
+        "projects": _list(response.get("projects")),
+        "cases": cases,
+        "achievements": _list(response.get("achievements")),
+        "themes": _list(response.get("themes")),
+        "content_angles": _list(response.get("content_angles")),
+        "quotes": _list(response.get("quotes")),
+    }
+    # Drop entirely-empty results so we never overwrite the heuristic analysis with nothing.
+    return result if any(result.values()) else {}
 
 
 def extract_text(path: Path, extension: str) -> str:

@@ -10,6 +10,52 @@ from post_agent.web import render_knowledge, render_knowledge_document
 
 
 class KnowledgeBaseTests(unittest.TestCase):
+    def test_ai_enrichment_adds_document_specific_facts(self) -> None:
+        class MockGateway:
+            def is_configured(self):
+                return True
+
+            def complete_json(self, system, user):
+                return {
+                    "summary": "Резюме операционного директора",
+                    "companies": ["Мой Отель"],
+                    "roles": ["Операционный директор"],
+                    "skills": ["Operations", "CX"],
+                    "cases": [{"title": "Отток", "problem": "высокий отток", "action": "внедрила SOP", "result": "-30%"}],
+                    "achievements": ["выручка +25%"],
+                    "themes": ["Hospitality"],
+                    "content_angles": ["как SOP спасает сервис"],
+                    "quotes": ["сервис держится на стандартах"],
+                }
+
+        with TemporaryDirectory() as directory:
+            base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
+            document = base.add_document("resume.md", "# Резюме\nОперационный директор, компания Мой Отель.".encode("utf-8"))
+
+            self.assertNotIn("ai", document.analysis or {})  # not enriched synchronously
+            self.assertTrue(base.enrich_document_with_ai(document.id, gateway=MockGateway()))
+
+            enriched = base.get_document(document.id)
+            ai = (enriched.analysis or {}).get("ai", {})
+            self.assertEqual(ai["companies"], ["Мой Отель"])
+            self.assertEqual(ai["cases"][0]["result"], "-30%")
+            self.assertIn("выручка +25%", ai["achievements"])
+            # and it reaches the memory item that feeds the AI
+            self.assertIn("ai", base.memory_inbox.list_items()[0].extracted)
+
+    def test_ai_enrichment_no_op_without_ai(self) -> None:
+        class Off:
+            def is_configured(self):
+                return False
+
+            def complete_json(self, system, user):
+                raise AssertionError("must not be called when AI is off")
+
+        with TemporaryDirectory() as directory:
+            base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")
+            document = base.add_document("note.txt", "Просто заметка.".encode("utf-8"))
+            self.assertFalse(base.enrich_document_with_ai(document.id, gateway=Off()))
+
     def test_txt_document_uploads_and_indexes(self) -> None:
         with TemporaryDirectory() as directory:
             base = KnowledgeBase(Path(directory) / "documents", Path(directory) / "index.json")

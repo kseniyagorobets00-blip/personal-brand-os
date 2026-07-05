@@ -65,6 +65,21 @@ class MemoryInbox:
         self._write(raw)
         return item
 
+    def update_extracted(self, source_id: str, extra: dict[str, object]) -> bool:
+        """Merge extra fields into the extracted data of every item from this source."""
+        items = self._read()
+        changed = False
+        for item in items:
+            if item.get("source_id") == source_id:
+                extracted = item.get("extracted")
+                extracted = extracted if isinstance(extracted, dict) else {}
+                extracted.update(extra)
+                item["extracted"] = extracted
+                changed = True
+        if changed:
+            self._write(items)
+        return changed
+
     def accept(self, item_id: str) -> bool:
         return self._set_status(item_id, "accepted")
 
