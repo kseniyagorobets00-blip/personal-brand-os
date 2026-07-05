@@ -25,3 +25,4 @@ data/trend_radar/
 data/ui_state.json
 !data/seeds/
 !data/seeds/**
+data/author_brain/

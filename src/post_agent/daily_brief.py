@@ -153,14 +153,10 @@ class SeedRepository:
         plan = json.loads(self.content_plan_path.read_text(encoding="utf-8"))
         if self.content_plan_path != DEFAULT_CONTENT_PLAN_PATH:
             return plan
-        refreshed = refresh_stale_content_plan(plan, today_moscow())
-        if refreshed != plan:
-            self.content_plan_path.write_text(
-                json.dumps(refreshed, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            return refreshed
-        return plan
+        # Present the plan on current dates, but do NOT persist that back to the
+        # committed seed: writing on read caused git churn and flaky tests. The
+        # refresh is cheap and re-applied on every load; real edits persist via save.
+        return refresh_stale_content_plan(plan, today_moscow())
 
 
 def refresh_stale_content_plan(plan: dict[str, Any], today: date) -> dict[str, Any]:

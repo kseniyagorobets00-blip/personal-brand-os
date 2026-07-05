@@ -1274,47 +1274,6 @@ def _writing_dna_panel(dna: dict[str, object], profile: dict[str, object]) -> st
     """
 
 
-def _editable_platform_fit_card(platform: str, value: str) -> str:
-    return f"""
-      <article class="card">
-        <h3>{escape(platform)}</h3>
-        <div class="tags"><span>{escape(_short_text(_display_ru(value), 90))}</span></div>
-        <details class="inline-editor">
-          <summary>Редактировать</summary>
-          {_textarea(f"platform_fit_{platform}", "Правило площадки", _display_ru(value))}
-        </details>
-      </article>
-    """
-
-
-def _editable_anti_repetition_card(value: dict[str, object]) -> str:
-    rules = value.get("rules", [])
-    cases = value.get("case_rotation", [])
-    themes = value.get("overused_theme_candidates", [])
-    rules_text = list_to_text(rules if isinstance(rules, list) else [])
-    cases_text = list_to_text(cases if isinstance(cases, list) else [])
-    themes_text = list_to_text(themes if isinstance(themes, list) else [])
-    chips = _chips(
-        [
-            f"правил: {len(rules) if isinstance(rules, list) else 0}",
-            f"кейсов в ротации: {len(cases) if isinstance(cases, list) else 0}",
-            f"тем под наблюдением: {len(themes) if isinstance(themes, list) else 0}",
-        ]
-    )
-    return f"""
-      <article class="card">
-        <h3>Правила антиповторов</h3>
-        <div class="tags">{chips}</div>
-        <details class="inline-editor">
-          <summary>Редактировать</summary>
-          {_textarea("anti_rules", "Правила", rules_text)}
-          {_textarea("anti_case_rotation", "Кейсы, которые нужно чередовать", cases_text)}
-          {_textarea("anti_overused_themes", "Темы, за повтором которых следить", themes_text)}
-        </details>
-      </article>
-    """
-
-
 def _status_label(state: str) -> str:
     return {
         "idle": "Ожидание",
@@ -1339,14 +1298,6 @@ def _small_error(value: str) -> str:
     return f"<p class=\"risk\">{value}</p>" if value else ""
 
 
-def _profile_list_section(title: str, items: object, renderer: object) -> str:
-    return f"""<section class="profile-section">
-      <p class="eyebrow">Авторская база</p>
-      <h2>{escape(title)}</h2>
-      <div class="card-list">{_profile_items(items, renderer)}</div>
-    </section>"""
-
-
 def _simple_list_section(title: str, items: object) -> str:
     entries = [str(item) for item in items if str(item).strip()] if isinstance(items, list) else []
     body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>Пока недостаточно данных</li>"
@@ -1366,82 +1317,6 @@ def _profile_items(items: object, renderer: object) -> str:
 def _chips(items: object) -> str:
     values = items if isinstance(items, list) else []
     return "".join(f"<span>{escape(_display_ru(str(item)))}</span>" for item in values if str(item).strip())
-
-
-def _theme_item(item: dict[str, object]) -> str:
-    evidence = item.get("evidence", [])
-    tags = _chips(evidence)
-    risk = f"<p class=\"risk\">{escape(_display_ru(str(item.get('risk', ''))))}</p>" if item.get("risk") else ""
-    return f"""<article class="card">
-      <div class="card-head"><h3>{escape(_display_ru(str(item.get("name", ""))))}</h3><strong>{escape(str(item.get("score", "")))}</strong></div>
-      <div class="tags">{tags}</div>
-      {risk}
-    </article>"""
-
-
-def _idea_item(item: dict[str, object]) -> str:
-    return f"""<article class="card">
-      <h3>{escape(_display_ru(str(item.get("idea", ""))))}</h3>
-      <p>{escape(_display_ru(str(item.get("belief", ""))))}</p>
-      <div class="tags"><span>{_repeat_risk_label(str(item.get("repeat_risk", "")))}</span></div>
-    </article>"""
-
-
-def _case_item(item: dict[str, object]) -> str:
-    themes = item.get("themes", [])
-    platforms = item.get("platform_fit", [])
-    tags = []
-    if isinstance(themes, list):
-        tags.extend(_display_ru(str(theme)) for theme in themes)
-    if isinstance(platforms, list):
-        tags.extend(_display_ru(str(platform)) for platform in platforms)
-    tags_html = "".join(f"<span>{escape(tag)}</span>" for tag in tags if tag)
-    return f"""<article class="card">
-      <div class="card-head"><h3>{escape(str(item.get("project") or item.get("company", "")))}</h3><strong>{escape(str(item.get("company", "")))}</strong></div>
-      <p>{escape(_display_ru(str(item.get("problem", ""))))}</p>
-      <p>{escape(_display_ru(str(item.get("actions", ""))))}</p>
-      <p>{escape(_display_ru(str(item.get("result", ""))))}</p>
-      <div class="action">{escape(_display_ru(str(item.get("business_effect", ""))))}</div>
-      <div class="tags">{tags_html}</div>
-    </article>"""
-
-
-def _platform_fit_section(value: object) -> str:
-    items = value if isinstance(value, dict) else {}
-    rows = "".join(f"<li><strong>{escape(_display_ru(str(key)))}</strong><span>{escape(_display_ru(str(item)))}</span></li>" for key, item in items.items())
-    return f"""<section class="profile-section">
-      <p class="eyebrow">площадки</p>
-      <h2>Площадки</h2>
-      <ul class="ai-list">{rows}</ul>
-    </section>"""
-
-
-def _anti_repetition_section(value: object) -> str:
-    raw = value if isinstance(value, dict) else {}
-    rules = raw.get("rules", [])
-    cases = raw.get("case_rotation", [])
-    themes = raw.get("overused_theme_candidates", [])
-    entries = []
-    for item in rules if isinstance(rules, list) else []:
-        entries.append(_anti_rule_label(str(item)))
-    for item in cases if isinstance(cases, list) else []:
-        entries.append(f"Чередовать кейс: {item}")
-    for item in themes if isinstance(themes, list) else []:
-        entries.append(f"Следить за повтором: {item}")
-    body = "".join(f"<li>{escape(item)}</li>" for item in entries) if entries else "<li>Пока нет рисков повтора</li>"
-    return f"""<section class="profile-section">
-      <p class="eyebrow">антиповторы</p>
-      <h2>Антиповторы</h2>
-      <ul class="ai-list">{body}</ul>
-    </section>"""
-
-
-def _repeat_risk_label(value: str) -> str:
-    return {
-        "high": "высокий риск повтора",
-        "medium": "средний риск повтора",
-        "low": "низкий риск повтора",
-    }.get(value, value)
 
 
 def _anti_rule_label(value: str) -> str:
@@ -1522,13 +1397,6 @@ def _display_ru(value: str) -> str:
     for source, target in phrase_replacements.items():
         result = re.sub(re.escape(source), target, result, flags=re.IGNORECASE)
     return result
-
-
-def _update_item(item: dict[str, object]) -> str:
-    return f"""<article class="card">
-      <div class="card-head"><h3>{escape(str(item.get("title", "")))}</h3><strong>{escape(_display_ru(str(item.get("type", ""))))}</strong></div>
-      <p>{escape(str(item.get("updated_at", "")))}</p>
-    </article>"""
 
 
 def render_learning_center(
@@ -1880,99 +1748,6 @@ def _main_trend_recommendation(topic: object) -> str:
     item = topic if isinstance(topic, dict) else {}
     topic_id = str(item.get("id", ""))
     reasons = [
-        f"Trend Score {item.get('trend_score', '')}/10",
-        f"Brand Fit {item.get('brand_fit_score', '')}/10",
-        f"Content Potential {item.get('content_potential', item.get('reach_score', ''))}/10",
-        f"Repeat Risk: {item.get('repeat_risk', 'низкий')}",
-        "основана на текущем тренде",
-    ]
-    reason_items = "".join(f"<li>{escape(str(reason))}</li>" for reason in reasons if str(reason).strip())
-    return f"""
-      <article class="card trend-card main-trend-card">
-        <p class="label">Главная рекомендация</p>
-        <h3>{escape(str(item.get("title", "")))}</h3>
-        <p>{escape(str(item.get("description", "")))}</p>
-        <ul>{reason_items}</ul>
-        <div class="topic-actions">
-          {_trend_action_form(topic_id, "drafted", "Создать пост")}
-          {_trend_action_form(topic_id, "planned", "Добавить в контент-план", "secondary")}
-          {_trend_action_form(topic_id, "saved", "Добавить в идеи", "secondary")}
-          {_trend_action_form(topic_id, "rejected", "Отклонить", "ghost")}
-        </div>
-      </article>
-    """
-
-
-def _trend_card(topic: object) -> str:
-    item = topic if isinstance(topic, dict) else {}
-    topic_id = str(item.get("id", ""))
-    cases = _inline_list(item.get("matching_cases", []), "Подходящих кейсов пока нет")
-    materials = _inline_list(item.get("knowledge_materials", []), "Материалы из Knowledge пока не найдены")
-    formats = _inline_list(item.get("best_formats", []), "LinkedIn / Telegram")
-    rubrics = _inline_list(item.get("best_rubrics", []), "Наблюдение / Аналитика")
-    author_topics = _inline_list(item.get("author_brain_topics", []), "Связь с Author Brain пока слабая")
-    sources = _inline_list(item.get("sources", []), str(item.get("source", "")))
-    explanation = item.get("ai_explanation", {})
-    explanation = explanation if isinstance(explanation, dict) else {}
-    status = str(item.get("status", "new"))
-    return f"""
-    <article class="card trend-card" id="{escape(topic_id)}">
-      <div class="card-head">
-        <h3>{escape(str(item.get("title", "")))}</h3>
-        <strong>{escape(_trend_status_ru(status))}</strong>
-      </div>
-      <p>{escape(str(item.get("description", "")))}</p>
-      <div class="score-grid">
-        <div><p class="label">Trend Score</p><b>{escape(str(item.get("trend_score", "")))}/10</b></div>
-        <div><p class="label">Соответствие бренду</p><b>{escape(str(item.get("brand_fit_score", "")))}/10</b></div>
-        <div><p class="label">Content Potential</p><b>{escape(str(item.get("content_potential", item.get("reach_score", ""))))}/10</b></div>
-        <div><p class="label">Категория</p><b>{escape(str(item.get("category", "")))}</b></div>
-      </div>
-      <div class="draft-context-grid">
-        <div><p class="label">Источник/источники</p><p>{sources}</p></div>
-        <div><p class="label">Дата обнаружения</p><p>{escape(str(item.get("detected_at", item.get("created_at", ""))))}</p></div>
-        <div><p class="label">Почему это тренд</p><p>{escape(str(item.get("why_trend", item.get("why_now", ""))))}</p></div>
-        <div><p class="label">Почему это важно</p><p>{escape(str(item.get("why_important", "")))}</p></div>
-        <div><p class="label">Уровень хайпа</p><p>{escape(str(item.get("hype_level", "")))}</p></div>
-        <div><p class="label">Прогноз актуальности</p><p>{escape(str(item.get("relevance_forecast", "")))}</p></div>
-        <div><p class="label">Риск повтора</p><p>{escape(str(item.get("repeat_risk", "низкий")))}</p></div>
-        <div><p class="label">Рекомендация</p><p>{escape(str(item.get("recommendation", "отложить")))}</p></div>
-      </div>
-      <details class="draft-materials">
-        <summary>Почему AI выбрал эту тему?</summary>
-        <p><b>Тренд:</b> {escape(str(explanation.get("trend", item.get("why_now", ""))))}</p>
-        <p><b>Trend Score:</b> {escape(str(explanation.get("trend_score", item.get("trend_score", ""))))}</p>
-        <p><b>Brand Fit:</b> {escape(str(item.get("brand_fit_score", "")))}</p>
-        <p><b>Content Potential:</b> {escape(str(explanation.get("content_potential", item.get("content_potential", ""))))}</p>
-        <p><b>Фокус месяца/недели:</b> {escape(str(explanation.get("month_focus", "")))} / {escape(str(explanation.get("week_focus", "")))}</p>
-        <p><b>Почему подходит площадке:</b> {escape(str(explanation.get("platform_fit", "")))}</p>
-        <p><b>Почему подходит автору:</b> {escape(str(item.get("expertise_connection", "")))}</p>
-        <p><b>Почему лучше альтернатив:</b> {escape(str(item.get("ai_reason", "")))}</p>
-        <p><b>Риск повтора:</b> {escape(str(explanation.get("repeat_risk", item.get("repeat_risk", ""))))}</p>
-      </details>
-      <div class="draft-materials">
-        <p class="label">Что можно использовать</p>
-        <p><b>Кейсы:</b> {cases}</p>
-        <p><b>Knowledge:</b> {materials}</p>
-        <p><b>Площадки:</b> {formats}</p>
-        <p><b>Рубрики:</b> {rubrics}</p>
-        <p><b>Темы Author Brain:</b> {author_topics}</p>
-      </div>
-      <div class="topic-actions">
-        {_trend_action_form(topic_id, "approved", "Одобрить")}
-        {_trend_action_form(topic_id, "rejected", "Отклонить", "ghost")}
-        {_trend_action_form(topic_id, "saved", "Сохранить в Idea Vault", "secondary")}
-        {_trend_action_form(topic_id, "planned", "Добавить в Content Plan", "secondary")}
-        {_trend_action_form(topic_id, "drafted", "Создать черновик", "secondary")}
-      </div>
-    </article>
-    """
-
-
-def _main_trend_recommendation(topic: object) -> str:
-    item = topic if isinstance(topic, dict) else {}
-    topic_id = str(item.get("id", ""))
-    reasons = [
         f"оценка тренда {_score_value(item, 'trend_score')}/10",
         f"соответствие бренду {_score_value(item, 'brand_fit_score')}/10",
         f"контентный потенциал {_score_value(item, 'content_potential')}/10",
@@ -1994,85 +1769,6 @@ def _main_trend_recommendation(topic: object) -> str:
           {_trend_action_form(topic_id, "rejected", "Отклонить", "ghost")}
         </div>
       </article>
-    """
-
-
-def _trend_card(topic: object) -> str:
-    item = topic if isinstance(topic, dict) else {}
-    topic_id = str(item.get("id", ""))
-    cases = _inline_list(item.get("matching_cases", []), "Подходящих кейсов пока нет")
-    materials = _inline_list(item.get("knowledge_materials", []), "Документы из памяти пока не найдены")
-    sources = _inline_list(item.get("sources", []), str(item.get("source", "")))
-    publication_ideas = _publication_ideas_html(item.get("publication_ideas", {}))
-    source_url = str(item.get("source_url", "")).strip()
-    source_link = (
-        f'<a class="open-link" href="{escape(source_url)}" target="_blank" rel="noreferrer">Открыть оригинальную статью</a>'
-        if source_url
-        else '<span class="state-note">Оригинальная ссылка не найдена</span>'
-    )
-    status = str(item.get("status", "new"))
-    explanation = item.get("ai_explanation", {})
-    explanation = explanation if isinstance(explanation, dict) else {}
-    return f"""
-    <article class="card trend-card" id="{escape(topic_id)}">
-      <div class="card-head">
-        <h3>{escape(str(item.get("title", "")))}</h3>
-        <strong>{escape(_trend_status_ru(status))}</strong>
-      </div>
-      <p class="score-stars">{_score_stars(item.get("trend_score", 0))}</p>
-      <div class="score-grid">
-        <div><p class="label">Оценка тренда</p><b>{escape(str(item.get("trend_score", "")))}/10</b></div>
-        <div><p class="label">Соответствие бренду</p><b>{escape(str(item.get("brand_fit_score", "")))}/10</b></div>
-        <div><p class="label">Контентный потенциал</p><b>{escape(str(item.get("content_potential", item.get("reach_score", ""))))}/10</b></div>
-        <div><p class="label">Категория</p><b>{escape(_category_ru(str(item.get("category", ""))))}</b></div>
-      </div>
-      <div class="draft-materials">
-        <p class="label">Краткая суть</p>
-        <p>{escape(str(item.get("trend_essence") or item.get("description", "")))}</p>
-        <p class="label">О чем на самом деле этот тренд?</p>
-        <p><b>Суть тренда:</b> {escape(str(item.get("trend_essence", "")))}</p>
-        <p><b>Главная идея:</b> {escape(str(item.get("main_idea", "")))}</p>
-        <p><b>Почему это важно для моей аудитории:</b> {escape(str(item.get("audience_importance", "")))}</p>
-        <p class="label">Почему это важно именно сейчас</p>
-        <p>{escape(str(item.get("why_trend", item.get("why_now", ""))))}</p>
-        <p class="label">Какой авторский угол предлагает AI</p>
-        <p>{escape(str(item.get("author_angle", "")))}</p>
-        <p class="label">Как это связано с моей экспертизой</p>
-        <p>{escape(str(item.get("expertise_connection", "")))}</p>
-      </div>
-      <div class="draft-context-grid">
-        <div><p class="label">Кейсы использовать</p><p>{cases}</p></div>
-        <div><p class="label">Документы использованы</p><p>{materials}</p></div>
-        <div><p class="label">Риск повтора</p><p>{escape(_repeat_risk_label(str(item.get("repeat_risk", ""))))}</p></div>
-        <div><p class="label">Рекомендация</p><p>{escape(_recommendation_label(str(item.get("recommendation", ""))))}</p></div>
-      </div>
-      <div class="draft-materials">
-        <p class="label">Какие публикации можно сделать</p>
-        {publication_ideas}
-      </div>
-      <details class="draft-materials">
-        <summary>Почему AI предложил это?</summary>
-        <p><b>Тренд:</b> {escape(str(explanation.get("trend", item.get("why_now", ""))))}</p>
-        <p><b>Оценка тренда:</b> {escape(str(explanation.get("trend_score", item.get("trend_score", ""))))}/10</p>
-        <p><b>Соответствие бренду:</b> {escape(str(item.get("brand_fit_score", "")))}/10</p>
-        <p><b>Контентный потенциал:</b> {escape(str(explanation.get("content_potential", item.get("content_potential", ""))))}/10</p>
-        <p><b>Фокус месяца/недели:</b> {escape(str(explanation.get("month_focus", "")))} / {escape(str(explanation.get("week_focus", "")))}</p>
-        <p><b>Почему подходит автору:</b> {escape(str(explanation.get("author_fit", item.get("ai_reason", ""))))}</p>
-        <p><b>Авторский угол:</b> {escape(str(explanation.get("author_angle", item.get("author_angle", ""))))}</p>
-        <p><b>Риск повтора:</b> {escape(_repeat_risk_label(str(explanation.get("repeat_risk", item.get("repeat_risk", "")))))}</p>
-      </details>
-      <div class="draft-materials">
-        <p class="label">Источник новости</p>
-        <p>{sources}</p>
-        {source_link}
-      </div>
-      <div class="topic-actions">
-        {_trend_action_form(topic_id, "drafted", "Создать пост")}
-        {_trend_action_form(topic_id, "planned", "Добавить в контент-план", "secondary")}
-        {_trend_action_form(topic_id, "saved", "Добавить в идеи", "secondary")}
-        {_trend_action_form(topic_id, "rejected", "Отклонить", "ghost")}
-      </div>
-    </article>
     """
 
 
@@ -2295,30 +1991,6 @@ def _lesson_summary_card(lesson: object) -> str:
     """
 
 
-def _accepted_rule_card(lesson: object) -> str:
-    lesson_id = escape(str(getattr(lesson, "id", "")))
-    rule = str(getattr(lesson, "rule", ""))
-    reason = str(getattr(lesson, "reason", ""))
-    source = _lesson_source_label(str(getattr(lesson, "source", "")))
-    return f"""
-    <article class="card">
-      <div class="tags"><span>{escape(source)}</span></div>
-      <h3>{escape(rule)}</h3>
-      {f'<p class="why">{escape(reason)}</p>' if reason else ''}
-      <details class="inline-editor">
-        <summary>Редактировать</summary>
-        <form method="post" action="/learning/lesson/{lesson_id}">
-          <textarea name="rule" rows="4">{escape(rule)}</textarea>
-          <div class="form-actions">
-            <button type="submit" name="status" value="accepted">Сохранить</button>
-            <button class="ghost" type="submit" name="status" value="rejected">Удалить из правил</button>
-          </div>
-        </form>
-      </details>
-    </article>
-    """
-
-
 def _lesson_source_label(source: str) -> str:
     return "добавлено мной" if source in {"manual", "user"} else "добавлен AI"
 
@@ -2338,13 +2010,6 @@ def _memory_inbox_card(item: object) -> str:
       </form>
     </article>
     """
-
-
-def _short_text(text: str, limit: int) -> str:
-    compact = " ".join(str(text).split())
-    if len(compact) <= limit:
-        return compact
-    return compact[: max(0, limit - 1)].rstrip(" .,;:") + "…"
 
 
 def _ai_status_block(status: object, result: dict[str, object] | None) -> str:
@@ -2429,50 +2094,6 @@ def _global_script() -> str:
         "btn.disabled=true;},0);"
         "});})();</script>"
     )
-
-
-def _ai_list(items: object) -> str:
-    if not isinstance(items, list) or not items:
-        return "<p class=\"empty-inline\">Пока нет данных.</p>"
-    rows = []
-    for item in items[:4]:
-        if isinstance(item, dict):
-            title = str(item.get("title", item.get("name", "")))
-            reason = str(item.get("reason", ""))
-            item_type = str(item.get("type", ""))
-            rows.append(f"<li><b>{escape(title)}</b> <span>{escape(item_type)}</span><p>{escape(reason)}</p></li>")
-        else:
-            rows.append(f"<li>{escape(str(item))}</li>")
-    return f"<ul class=\"ai-list\">{''.join(rows)}</ul>"
-
-
-def _trends_block(items: tuple[BriefItem, ...]) -> str:
-    if not items:
-        return ""
-    cards = "".join(
-        f"""
-        <article class="trend-item">
-          <div>
-            <h3>{escape(item.title)}</h3>
-            <p>{escape(item.summary)}</p>
-          </div>
-          <span>Локальные данные</span>
-        </article>
-        """
-        for item in items[:3]
-    )
-    return f"""
-    <details class="block trends-block secondary-details">
-      <summary>
-        <span class="s-eyebrow">контекст</span>
-        <span class="s-title">Тренды и сигналы</span>
-        <span class="s-hint">Фон для тем — можно посмотреть по желанию</span>
-      </summary>
-      <div class="secondary-body">
-        <div class="trend-list">{cards}</div>
-      </div>
-    </details>
-    """
 
 
 def _ai_error_note(detail: object, action: str = "сгенерировать текст") -> str:
@@ -2717,11 +2338,6 @@ def _week_plan_day_groups(plan: ContentPlan) -> list[tuple[date, list[PlannedPub
         days.append((cursor, by_date.get(cursor, [])))
         cursor += timedelta(days=1)
     return days
-
-
-def _publication_sort_key(item: object) -> tuple[object, str, str]:
-    parsed = parse_plan_date(str(getattr(item, "date", "")))
-    return (parsed or date.max, str(getattr(item, "platform", "")), str(getattr(item, "topic", "")))
 
 
 def _week_group_card(day: date, items: list[PlannedPublication]) -> str:
@@ -3406,12 +3022,11 @@ def _short_text(text: str, limit: int) -> str:
 
 
 def _load_content_plan_raw() -> dict[str, object]:
+    # Present the plan on current dates in memory, but don't persist that back to
+    # the committed seed on every read — that caused git churn and flaky tests.
+    # Real edits still persist through the save handlers.
     plan = json.loads(DEFAULT_CONTENT_PLAN_PATH.read_text(encoding="utf-8"))
-    refreshed = refresh_stale_content_plan(plan, today_moscow())
-    if refreshed != plan:
-        DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(refreshed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return refreshed
-    return plan
+    return refresh_stale_content_plan(plan, today_moscow())
 
 
 def _content_plan_with_query_period(plan: dict[str, object], query: dict[str, list[str]]) -> dict[str, object]:
@@ -3704,20 +3319,6 @@ def _evergreen_topic_for_strategy(platform: str, rubric: str) -> str:
     return "Customer Experience as an operational system" if platform == "LinkedIn" else "Customer Experience как операционная система"
 
 
-def _editorial_topic_from_signal(signal: str, platform: str, rubric: str) -> str:
-    signal = signal.strip()
-    if platform == "LinkedIn":
-        safe_signal = signal if signal and not re.search(r"[А-Яа-я]", signal) else "This Market Signal"
-        return f"{_english_rubric_prefix(rubric)}: Why {safe_signal} Matters for Operations and Customer Experience"
-    if rubric == "Кейс":
-        return f"Как тренд «{signal}» проявляется в операционной реальности сервиса"
-    if rubric == "Framework":
-        return f"Фреймворк: как разложить тренд «{signal}» на процессы, роли и контроль"
-    if rubric == "Миф":
-        return f"Миф вокруг тренда «{signal}»: почему он не работает без операционной системы"
-    return f"{signal}: что это значит для сервиса, процессов и клиентского опыта"
-
-
 def _english_rubric_prefix(rubric: str) -> str:
     return {
         "Аналитика": "Analysis",
@@ -3737,43 +3338,6 @@ def _localized_goal(platform: str, text: str) -> str:
     if platform == "LinkedIn":
         return "Connect the editorial strategy with the strongest weekly trend and show an executive operations point of view."
     return text
-
-
-def _localized_summary(platform: str, trend: dict[str, object] | None, evergreen: str) -> str:
-    if trend:
-        score = str(trend.get("trend_score", ""))
-        if platform == "LinkedIn":
-            return f"Use the trend signal with Trend Score {score} as a source of meaning, not as a translated headline. Connect it to Author Brain, operations maturity, CX and service systems."
-        return f"Использовать тренд с Trend Score {score} как смысловой сигнал, а не как дословный перевод заголовка. Связать с Author Brain, операционной зрелостью, CX и сервисными системами."
-    if platform == "LinkedIn":
-        return f"No strong trend matched the strategy, so use an evergreen Knowledge angle: {evergreen}."
-    return f"Подходящий тренд не найден, поэтому используется evergreen-тема из Knowledge: {evergreen}."
-
-
-def _trend_selection_note(platform: str, rubric: str, trend: dict[str, object] | None, strategy_note: str) -> str:
-    if not trend:
-        base = "Evergreen fallback: Trend Radar did not find a strong enough match." if platform == "LinkedIn" else "Evergreen fallback: Trend Radar не нашел достаточно сильное совпадение."
-    else:
-        base = (
-            f"Trend Radar selected this signal: Trend Score {trend.get('trend_score', '')}, "
-            f"Brand Fit {trend.get('brand_fit_score', '')}, Content Potential {trend.get('content_potential', '')}, "
-            f"Repeat Risk {trend.get('repeat_risk', '')}. Rubric: {rubric}."
-        )
-        if platform != "LinkedIn":
-            base = (
-                f"Trend Radar выбрал этот сигнал: Trend Score {trend.get('trend_score', '')}, "
-                f"Brand Fit {trend.get('brand_fit_score', '')}, Content Potential {trend.get('content_potential', '')}, "
-                f"Repeat Risk {trend.get('repeat_risk', '')}. Рубрика: {rubric}."
-            )
-    return " ".join(part for part in (base, strategy_note) if part)
-
-
-def _why_ai_chose_topic(platform: str, rubric: str, trend: dict[str, object] | None) -> str:
-    if not trend:
-        return "Trend Radar fallback: evergreen Knowledge topic selected." if platform == "LinkedIn" else "Fallback Trend Radar: выбрана evergreen-тема из Knowledge."
-    if platform == "LinkedIn":
-        return f"Chosen because the trend fits {platform}, rubric {rubric}, Brand Fit {trend.get('brand_fit_score', '')}, Content Potential {trend.get('content_potential', '')}, Trend Score {trend.get('trend_score', '')}, Repeat Risk {trend.get('repeat_risk', '')}."
-    return f"Выбрано, потому что тренд подходит площадке {platform}, рубрике {rubric}, Brand Fit {trend.get('brand_fit_score', '')}, Content Potential {trend.get('content_potential', '')}, Trend Score {trend.get('trend_score', '')}, Repeat Risk {trend.get('repeat_risk', '')}."
 
 
 def _editorial_topic_from_signal(signal: str, platform: str, rubric: str) -> str:
@@ -5352,30 +4916,6 @@ def render_idea_detail(idea: Idea, planned: str = "") -> str:
     )
 
 
-def _idea_card(idea: Idea) -> str:
-    platforms = ", ".join(idea.platforms) or "площадка не выбрана"
-    return f"""
-    <article class="knowledge-card">
-      <div>
-        <h3><a href="/ideas/{escape(idea.id)}">{escape(idea.title)}</a></h3>
-        <p>{escape(idea.description)}</p>
-        <div class="doc-meta">
-          <span>{escape(_status_ru(idea.status))}</span>
-          <span>{escape(_source_ru(idea.source))}</span>
-          <span>{escape(platforms)}</span>
-          <span>{escape(idea.created_at)}</span>
-        </div>
-      </div>
-      <div class="doc-actions">
-        <form method="post" action="/ideas/plan/{escape(idea.id)}">
-          <button class="ghost" type="submit" data-busy="Добавляю…">В контент-план</button>
-        </form>
-        <a class="open-link" href="/ideas/{escape(idea.id)}">Открыть</a>
-      </div>
-    </article>
-    """
-
-
 def _save_idea_form(title: str, description: str, source: str, platforms: tuple[str, ...], label: str = "Сохранить в Идеи") -> str:
     platform_text = ", ".join(platforms)
     return f"""
@@ -5987,67 +5527,6 @@ def _materials_for_topic(topic: BriefItem, materials: tuple[RelatedKnowledge, ..
       <p class="label">Полезные материалы/кейсы</p>
       <ul>{rows}</ul>
     </div>
-    """
-
-
-def _brief_card(item: BriefItem) -> str:
-    ui_state = _load_ui_state()
-    key = _item_key(item.title)
-    refinement = _refinement_entry(ui_state, key)
-    action = _refinement_action(refinement)
-    title = str(refinement.get("title") or _refined_title(item.title, action))
-    summary = str(refinement.get("text") or _refined_text(item.summary, action))
-    reason = item.reason
-    platform = _platform_for_item(item) or "площадка не выбрана"
-    tags = "".join(f"<span>{escape(_status_ru(tag))}</span>" for tag in item.tags)
-    refinement_notice = _refinement_notice(refinement)
-    return f"""
-    <article class="card" id="{escape(key)}">
-      <div class="card-head">
-        <h3>{escape(title)}</h3>
-        <strong>{escape(platform)}</strong>
-      </div>
-      <p>{escape(summary)}</p>
-      <p class="label">Почему актуальна сейчас</p>
-      <p class="why">{escape(reason)}</p>
-      <p class="label">Подходит для площадки</p>
-      <div class="topic-platform">{escape(platform)}</div>
-      <div class="action">{escape(item.action)}</div>
-      {refinement_notice}
-      <div class="topic-actions">
-        {_save_idea_form(item.title, item.summary, "Daily Brief", item.tags, label="Использовать")}
-        {_refinement_bar(key, item.title, item.summary, "topic")}
-      </div>
-      <div class="tags">{tags}</div>
-    </article>
-    """
-
-
-
-
-def _decisions_section(brief: DailyBrief, ui_state: dict[str, object]) -> str:
-    # Accepted decisions leave the main screen; only open ones stay in "Мои решения".
-    pending = [
-        item
-        for item in brief.approvals
-        if _approval_status(ui_state, _item_key(item.title)) != "accepted"
-    ]
-    if not pending:
-        return ""
-    cards = "".join(_approval_card(item, ui_state) for item in pending)
-    return f"""
-    <section class="block" id="decisions">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">решения</p>
-          <h2>Мои решения</h2>
-        </div>
-        <span>{len(pending)} на решение</span>
-      </div>
-      <div class="approval-grid">
-        {cards}
-      </div>
-    </section>
     """
 
 
