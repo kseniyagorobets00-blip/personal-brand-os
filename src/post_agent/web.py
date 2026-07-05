@@ -1023,10 +1023,10 @@ def _author_base_panel(profile: dict[str, object], status: object) -> str:
           <button type="submit">Обновить профиль автора</button>
         </form>
       </section>
-      <section class="hero-cards">
-        <div class="summary-card"><span>Документы</span><strong>{escape(str(source_counts.get("documents", 0)))}</strong></div>
-        <div class="summary-card"><span>Кейсы</span><strong>{escape(str(source_counts.get("cases", 0)))}</strong></div>
-        <div class="summary-card"><span>Идеи</span><strong>{escape(str(source_counts.get("ideas", 0)))}</strong></div>
+      <section class="stat-row">
+        <div class="stat-card"><span>Документы</span><strong>{escape(str(source_counts.get("documents", 0)))}</strong></div>
+        <div class="stat-card"><span>Кейсы</span><strong>{escape(str(source_counts.get("cases", 0)))}</strong></div>
+        <div class="stat-card"><span>Идеи</span><strong>{escape(str(source_counts.get("ideas", 0)))}</strong></div>
       </section>
       {_author_base_editor(profile)}
       <section class="grid two">
@@ -1329,16 +1329,16 @@ def render_author_brain(profile: dict[str, object], status: object, refreshed: b
         <button type="submit">Обновить профиль автора</button>
       </form>
     </section>
-    <section class="hero-cards">
-      <div class="summary-card">
+    <section class="stat-row">
+      <div class="stat-card">
         <span>Документы</span>
         <strong>{escape(str(source_counts.get("documents", 0)))}</strong>
       </div>
-      <div class="summary-card">
+      <div class="stat-card">
         <span>Кейсы</span>
         <strong>{escape(str(source_counts.get("cases", 0)))}</strong>
       </div>
-      <div class="summary-card">
+      <div class="stat-card">
         <span>Идеи</span>
         <strong>{escape(str(source_counts.get("ideas", 0)))}</strong>
       </div>
@@ -1822,24 +1822,24 @@ def render_trend_radar(cache: dict[str, object], saved: bool = False, stale: boo
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">редактор идей</p>
+        <p class="eyebrow">сигналы и тренды</p>
         <h1>Радар трендов</h1>
         <p class="page-hint">Свежие темы и сигналы, отобранные под ваши площадки.</p>
       </div>
       {_global_nav("trends")}
     </header>
     {saved_notice}
-    <section class="today-card">
-      <div class="today-main">
-        <p class="eyebrow">сегодня AI рекомендует</p>
-        <h2>Лучшая тема для редакционного решения</h2>
-      </div>
-      {main_card}
-      <div class="today-actions">
+    <section class="block">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">сегодня AI рекомендует</p>
+          <h2>Лучшая тема для редакционного решения</h2>
+        </div>
         <form method="post" action="/trend-radar/refresh">
           <button type="submit">Обновить радар</button>
         </form>
       </div>
+      {main_card}
     </section>
     <section class="block">
       <div class="section-title">
@@ -6744,6 +6744,34 @@ def _styles() -> str:
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 14px;
       margin: 34px 0 24px;
+    }
+    .stat-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 28px 0 24px;
+    }
+    .stat-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: var(--paper);
+      border: 1px solid var(--line-soft);
+      border-radius: var(--radius-sm);
+      padding: 18px 20px;
+    }
+    .stat-card span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .stat-card strong {
+      font-size: 34px;
+      line-height: 1;
+      font-weight: 720;
+      color: var(--accent);
     }
     .summary-card {
       min-height: 190px;
