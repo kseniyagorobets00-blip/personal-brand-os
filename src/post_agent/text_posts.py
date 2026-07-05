@@ -149,14 +149,22 @@ class TextPostRepository:
         return changed
 
     def add_archive(self, title: str, platform: str, publication_date: str, text: str) -> TextPost:
+        return self._add_manual("archive", "published", title, platform, publication_date, text)
+
+    def add_planned(self, title: str, platform: str, publication_date: str, text: str) -> TextPost:
+        return self._add_manual("planned", "draft", title, platform, publication_date, text)
+
+    def _add_manual(
+        self, tab: str, status: str, title: str, platform: str, publication_date: str, text: str
+    ) -> TextPost:
         item = {
             "id": uuid4().hex,
-            "tab": "archive",
+            "tab": tab,
             "title": title.strip() or "Без названия",
             "platform": platform.strip(),
             "publication_date": publication_date.strip(),
             "text": text.strip(),
-            "status": "published",
+            "status": status,
             "source": "manual",
             "source_key": "",
             "created_at": _now(),

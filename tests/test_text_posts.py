@@ -46,6 +46,29 @@ class TextPostRepositoryTests(unittest.TestCase):
         self.assertEqual(ai_posts[0]["title"], "Published post")
         self.assertEqual(ai_posts[0]["text"], "Archive text")
 
+    def test_add_planned_creates_editable_draft_in_planned_tab(self) -> None:
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            post = repository.add_planned("Мой пост", "LinkedIn", "2026-07-10", "Черновик текста")
+            planned = repository.list_posts("planned")
+
+        self.assertEqual(post.tab, "planned")
+        self.assertEqual(post.status, "draft")
+        self.assertEqual(post.source, "manual")
+        self.assertEqual([p.id for p in planned], [post.id])
+
+    def test_planned_tab_offers_manual_creation_and_detail_has_editor_tools(self) -> None:
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            post = repository.add_planned("Мой пост", "LinkedIn", "2026-07-10", "Текст")
+            list_html = render_text_posts_page(repository, {"tab": ["planned"]}, {})
+            detail_html = render_text_post_detail(post)
+
+        self.assertIn("/texts/planned/add", list_html)
+        self.assertIn("Скопировать текст", detail_html)
+        self.assertIn("char-count", detail_html)
+        self.assertIn("confirm(", detail_html)
+
     def test_text_posts_ui_renders_list_and_detail(self) -> None:
         plan = {
             "week_start": "2026-07-06",

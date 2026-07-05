@@ -370,10 +370,11 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Location", redirect_target)
             self.end_headers()
             return
-        if path == "/texts/archive/add":
+        if path in ("/texts/archive/add", "/texts/planned/add"):
             length = int(self.headers.get("Content-Length", "0"))
             data = parse_qs(self.rfile.read(length).decode("utf-8"))
-            post = self.text_posts.add_archive(
+            adder = self.text_posts.add_archive if path.endswith("/archive/add") else self.text_posts.add_planned
+            post = adder(
                 title=data.get("title", [""])[0],
                 platform=data.get("platform", [""])[0],
                 publication_date=data.get("publication_date", [""])[0],
@@ -2886,7 +2887,13 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
     page_count = max(1, (len(posts) + per_page - 1) // per_page)
     page = max(1, min(page, page_count))
     visible = posts[(page - 1) * per_page : page * per_page]
-    rows = "".join(_text_post_row(post) for post in visible) or "<div class=\"empty\">Пока здесь нет текстов.</div>"
+    empty_html = (
+        "<div class=\"empty\">Здесь пока пусто. Тексты появляются автоматически из контент-плана "
+        "или добавьте новый вручную ниже.</div>"
+        if tab == "planned"
+        else "<div class=\"empty\">В архиве пока пусто. Добавьте опубликованный пост вручную ниже.</div>"
+    )
+    rows = "".join(_text_post_row(post) for post in visible) or empty_html
     saved = query.get("saved", ["0"])[0] == "1"
     deleted = query.get("deleted", ["0"])[0] == "1"
     notice = "<div class=\"notice\">Сохранено.</div>" if saved else ""
@@ -2940,7 +2947,7 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
       <div class="knowledge-list">{rows}</div>
       {_pagination('/texts', tab, search, platform, page, page_count, week_start, week_end)}
     </section>
-    {'' if tab == 'planned' else _manual_archive_form()}
+    {_manual_planned_form() if tab == 'planned' else _manual_archive_form()}
   </main>
 </body>
 </html>"""
@@ -2979,15 +2986,38 @@ def render_text_post_detail(post: TextPost) -> str:
           {_date_input("publication_date", "Дата публикации", post.publication_date)}
           {_select("status", "Статус", post.status, list(TEXT_POST_STATUSES))}
         </div>
-        {_textarea("text", "Полный текст", post.text)}
+        <p class="mode-hint">Статус «Утверждено» означает, что этот текст готов — Дневной бриф будет предлагать именно его.</p>
+        <label class="editor-label">
+          <span>Полный текст</span>
+          <textarea id="post-text" name="text" rows="16" placeholder="Пишите пост здесь…">{escape(post.text)}</textarea>
+        </label>
+        <div class="editor-bar">
+          <p class="editor-meta"><span id="char-count">0</span> символов · <span id="word-count">0</span> слов</p>
+          <button id="copy-text" class="ghost" type="button">Скопировать текст</button>
+        </div>
         <div class="form-actions">
           <button name="action" value="save" type="submit">Сохранить</button>
           {archive_action}
-          <button class="ghost danger-text" name="action" value="delete" type="submit">Удалить</button>
+          <button class="ghost danger-text" name="action" value="delete" type="submit"
+            onclick="return confirm('Удалить этот текст безвозвратно? Действие нельзя отменить.');">Удалить</button>
           <a href="/texts?tab={escape(back_tab)}">Назад к списку</a>
         </div>
       </section>
     </form>
+    <script>(function(){{
+      var t=document.getElementById('post-text');
+      var cc=document.getElementById('char-count'), wc=document.getElementById('word-count');
+      function upd(){{if(!t)return;var v=t.value;if(cc)cc.textContent=v.length;
+        if(wc)wc.textContent=v.trim()?v.trim().split(/\\s+/).length:0;}}
+      if(t){{t.addEventListener('input',upd);upd();}}
+      var b=document.getElementById('copy-text');
+      if(b&&t){{b.addEventListener('click',function(){{
+        if(!navigator.clipboard){{t.select();document.execCommand('copy');}}
+        else{{navigator.clipboard.writeText(t.value);}}
+        b.textContent='Скопировано ✓';
+        setTimeout(function(){{b.textContent='Скопировать текст';}},1500);
+      }});}}
+    }})();</script>
   </main>
 </body>
 </html>"""
@@ -3022,6 +3052,25 @@ def _manual_archive_form() -> str:
         </div>
         {_textarea("text", "Полный текст", "")}
         <button type="submit">Добавить в архив</button>
+      </form>
+    </section>
+    """
+
+
+def _manual_planned_form() -> str:
+    return f"""
+    <section class="knowledge-upload">
+      <p class="eyebrow">написать с нуля</p>
+      <h2>Новый текст</h2>
+      <p class="mode-hint">Создайте пост, которого нет в контент-плане. Он появится во вкладке «Запланировано».</p>
+      <form class="profile-form compact-editor" method="post" action="/texts/planned/add">
+        <div class="form-grid">
+          {_input("title", "Название", "")}
+          {_select("platform", "Площадка", "", CONTENT_PLATFORMS)}
+          {_date_input("publication_date", "Дата публикации", today_moscow().isoformat())}
+        </div>
+        {_textarea("text", "Полный текст", "")}
+        <button type="submit">Создать текст</button>
       </form>
     </section>
     """
@@ -7292,6 +7341,33 @@ def _styles() -> str:
       color: var(--muted);
       font-size: 0.92rem;
       margin: 4px 0 12px;
+    }
+    .editor-label { display: block; }
+    .editor-label span {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .editor-label textarea {
+      width: 100%;
+      min-height: 320px;
+      resize: vertical;
+      line-height: 1.6;
+      font-size: 15px;
+    }
+    .editor-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin: 8px 0 4px;
+    }
+    .editor-meta {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin: 0;
     }
     .pointer-note {
       color: var(--muted);
