@@ -2784,7 +2784,6 @@ def _week_group_card(group_key: str, items: list[object]) -> str:
         <div class="week-publication">
           <strong>{escape(str(getattr(item, "platform", "")))}</strong>
           <span>{escape(str(getattr(item, "topic", "")))}</span>
-          <em>{escape(_status_ru(str(getattr(item, "status", ""))))}</em>
         </div>
         """
         for item in items
@@ -2792,7 +2791,6 @@ def _week_group_card(group_key: str, items: list[object]) -> str:
     return f"""
     <article class="week-item">
       <span>{escape(day)}</span>
-      <strong>{escape(date_text)}</strong>
       {rows}
     </article>
     """
