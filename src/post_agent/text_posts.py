@@ -30,6 +30,7 @@ class TextPost:
     source_key: str
     created_at: str
     updated_at: str
+    brief: str = ""
 
 
 class TextPostRepository:
@@ -67,6 +68,16 @@ class TextPostRepository:
                 existing["title"] = title
                 existing["platform"] = platform
                 existing["publication_date"] = str(publication.get("date") or existing.get("publication_date", "")).strip()
+                existing["brief"] = _publication_brief(publication)
+                # Clean up posts whose text was auto-filled with the brief (summary/note)
+                # before text and brief were separated — but never touch text the user typed.
+                current_text = existing.get("text", "").strip()
+                legacy_autofill = {
+                    str(publication.get("summary", "")).strip(),
+                    str(publication.get("note", "")).strip(),
+                } - {""}
+                if current_text and current_text in legacy_autofill:
+                    existing["text"] = _publication_text(publication)
                 if existing.get("tab") != "archive":
                     existing["tab"] = tab
                 if tab == "archive" and existing.get("status") != "published":
@@ -82,6 +93,7 @@ class TextPostRepository:
                     "platform": platform,
                     "publication_date": str(publication.get("date", "")).strip(),
                     "text": _publication_text(publication),
+                    "brief": _publication_brief(publication),
                     "status": "published" if tab == "archive" else "draft",
                     "source": "content_plan",
                     "source_key": source_key,
@@ -247,6 +259,7 @@ class TextPostRepository:
             source_key=str(item.get("source_key", "")),
             created_at=str(item.get("created_at", "")),
             updated_at=str(item.get("updated_at", "")),
+            brief=str(item.get("brief", "")),
         )
 
 
@@ -261,7 +274,26 @@ def source_key_for_publication(publication: dict[str, object]) -> str:
 
 
 def _publication_text(publication: dict[str, object]) -> str:
-    return str(publication.get("draft") or publication.get("summary") or publication.get("note") or "").strip()
+    # Only the real post body (the generated/written draft). Brief info lives separately.
+    return str(publication.get("draft") or "").strip()
+
+
+def _publication_brief(publication: dict[str, object]) -> str:
+    """The generation context (task) — kept out of the post body, shown read-only."""
+    fields = (
+        ("Цель", "goal"),
+        ("Угол", "angle"),
+        ("Главная мысль", "main_thought"),
+        ("Краткое содержание", "summary"),
+        ("Заметка", "note"),
+    )
+    lines = []
+    for label, key in fields:
+        # Collapse any internal newlines so each field stays a single, cleanly labelled line.
+        value = " ".join(str(publication.get(key, "")).split())
+        if value:
+            lines.append(f"{label}: {value}")
+    return "\n".join(lines)
 
 
 def _publication_to_dict(publication: object) -> dict[str, object]:

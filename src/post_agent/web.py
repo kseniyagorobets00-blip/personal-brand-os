@@ -2977,6 +2977,25 @@ def render_text_post_detail(post: TextPost) -> str:
         if post.tab == "planned"
         else ""
     )
+    brief_html = ""
+    if post.brief.strip():
+        rows = ""
+        for line in post.brief.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if ":" in line:
+                label, _, value = line.partition(":")
+                rows += f"<p><b>{escape(label)}:</b>{escape(value)}</p>"
+            else:
+                rows += f"<p>{escape(line)}</p>"
+        brief_html = (
+            "<section class=\"text-brief\">"
+            "<p class=\"eyebrow\">задание из контент-плана</p>"
+            "<p class=\"brief-hint\">Это подсказка, о чём писать. Сам пост пишите в поле ниже.</p>"
+            f"<div class=\"brief-lines\">{rows}</div>"
+            "</section>"
+        )
     return f"""<!doctype html>
 <html lang="ru">
 <head>
@@ -3009,8 +3028,9 @@ def render_text_post_detail(post: TextPost) -> str:
           {_select("status", "Статус", post.status, list(TEXT_POST_STATUSES))}
         </div>
         <p class="mode-hint">Статус «Утверждено» означает, что этот текст готов — Дневной бриф будет предлагать именно его.</p>
+        {brief_html}
         <label class="editor-label">
-          <span>Полный текст</span>
+          <span>Текст публикации</span>
           <textarea id="post-text" name="text" rows="16" placeholder="Пишите пост здесь…">{escape(post.text)}</textarea>
         </label>
         <div class="editor-bar">
@@ -7557,6 +7577,20 @@ def _styles() -> str:
       margin: 0;
     }
     .editor-bar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .text-brief {
+      border: 1px solid var(--line-soft);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius-sm);
+      background: var(--paper-soft);
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+    .text-brief .eyebrow { margin-bottom: 4px; }
+    .brief-hint { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+    .brief-lines { display: grid; gap: 6px; }
+    .brief-lines p { font-size: 14px; line-height: 1.5; color: var(--muted); }
+    .brief-lines b { color: var(--ink); font-weight: 640; margin-right: 4px; }
+    body.focus-on .text-brief { display: none; }
     /* ===== Focus Mode: distraction-free writing ===== */
     .focus-bar { display: none; }
     body.focus-on { padding-left: 0; }

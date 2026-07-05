@@ -93,8 +93,58 @@ class TextPostRepositoryTests(unittest.TestCase):
         self.assertIn("Тексты", list_html)
         self.assertIn("Запланировано", list_html)
         self.assertIn("AI exposes CX gaps", list_html)
-        self.assertIn("Полный текст", detail_html)
+        self.assertIn("Текст публикации", detail_html)
         self.assertIn("Перенести в архив", detail_html)
+
+    def test_text_field_holds_only_the_draft_and_brief_is_separate(self) -> None:
+        plan = {
+            "planned_publications": [
+                {
+                    "date": "2026-07-06",
+                    "platform": "LinkedIn",
+                    "topic": "CX operations",
+                    "summary": "Разобрать, почему CX ломается на передаче ответственности",
+                    "goal": "Показать экспертизу",
+                    "status": "planned",
+                }
+            ]
+        }
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            repository.sync_from_content_plan(plan)
+            post = repository.list_posts("planned")[0]
+            detail_html = render_text_post_detail(post)
+
+        # No draft yet -> the post body stays empty; the brief carries the task.
+        self.assertEqual(post.text, "")
+        self.assertIn("Разобрать, почему CX ломается", post.brief)
+        self.assertIn("Показать экспертизу", post.brief)
+        self.assertIn("задание из контент-плана", detail_html)
+        # The brief text must not leak into the editable post body textarea.
+        body = detail_html.split("name=\"text\"", 1)[-1].split("</textarea>", 1)[0]
+        self.assertNotIn("Разобрать, почему CX ломается", body)
+
+    def test_sync_replaces_legacy_autofilled_text_but_keeps_real_draft(self) -> None:
+        plan = {
+            "planned_publications": [
+                {
+                    "date": "2026-07-06",
+                    "platform": "LinkedIn",
+                    "topic": "CX operations",
+                    "summary": "Краткое содержание",
+                    "draft": "Настоящий текст поста.",
+                    "status": "planned",
+                }
+            ]
+        }
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            # Simulate a post left over from the old logic where text = summary.
+            repository.add_planned("CX operations", "LinkedIn", "2026-07-06", "Краткое содержание")
+            repository.sync_from_content_plan(plan)
+            post = repository.list_posts("planned")[0]
+
+        self.assertEqual(post.text, "Настоящий текст поста.")
 
 
 if __name__ == "__main__":
