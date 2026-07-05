@@ -2746,10 +2746,6 @@ def _editorial_strategy_panel(strategy: dict[str, object]) -> str:
         for index, item in enumerate(_normalize_strategy_entries(strategy.get("weekly_template", [])))
     )
     updated = str(strategy.get("updated_at", "")).strip() or "Используется дефолтная стратегия"
-    rubric_rules = "".join(
-        f"<li><strong>{escape(rubric)}</strong>: {escape('; '.join(rules))}</li>"
-        for rubric, rules in RUBRIC_LIBRARY.items()
-    )
     return f"""
       <section class="block" id="editorial-strategy">
         <div class="section-title">
@@ -2763,10 +2759,7 @@ def _editorial_strategy_panel(strategy: dict[str, object]) -> str:
           <section class="profile-section">
             <p class="eyebrow">недельный шаблон</p>
             <div class="strategy-grid">{rows}</div>
-            <details class="strategy-rules">
-              <summary>Правила рубрик</summary>
-              <ul>{rubric_rules}</ul>
-            </details>
+            <p class="state-note">Правила рубрик редактируются на странице «Правила бота».</p>
             <div class="form-actions">
               <button class="ghost" name="plan_action" value="save_strategy" type="submit">Сохранить стратегию</button>
               <button name="plan_action" value="strategy_plan" type="submit">Создать план по стратегии</button>
