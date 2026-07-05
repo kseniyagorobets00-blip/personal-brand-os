@@ -77,14 +77,6 @@ class Draft:
 
 
 @dataclass(frozen=True)
-class ApprovalItem:
-    title: str
-    decision: str
-    recommendation: str
-    risk: str
-
-
-@dataclass(frozen=True)
 class RelatedKnowledge:
     document_id: str
     title: str
@@ -126,7 +118,6 @@ class DailyBrief:
     recommendations: tuple[BriefItem, ...]
     ideas: tuple[BriefItem, ...]
     drafts: tuple[Draft, ...]
-    approvals: tuple[ApprovalItem, ...]
     content_plan: ContentPlan
     related_knowledge: tuple[RelatedKnowledge, ...]
     memory_notes: tuple[str, ...] = field(default_factory=tuple)
@@ -246,7 +237,6 @@ class DailyBriefService:
             recommendations=self._recommendations(topics, ideas, content_plan),
             ideas=ideas,
             drafts=self._drafts(topics, ideas, author_profile, author_brain),
-            approvals=self._approvals(seed, topics),
             content_plan=content_plan,
             related_knowledge=related_knowledge,
             memory_notes=tuple(seed.get("memory_notes", ())),
@@ -410,26 +400,6 @@ class DailyBriefService:
             "Клиент в этот момент чувствует не отдельную ошибку, а отсутствие предсказуемости.\n\n"
             "Именно поэтому сильный экспертный бренд в Operations и Customer Experience строится не на общих словах про сервис, а на способности показывать причину: где система теряет управляемость и что нужно изменить, чтобы результат стал повторяемым."
         )
-
-    def _approvals(self, seed: dict[str, Any], topics: tuple[BriefItem, ...]) -> tuple[ApprovalItem, ...]:
-        approvals = [
-            ApprovalItem(
-                title="Подтвердить главный фокус дневного брифа",
-                decision=f"Использовать тему «{topics[0].title}» как главный фокус дня." if topics else "Пропустить публикационную реакцию сегодня.",
-                recommendation="Рекомендую подтвердить: тема хорошо связывает рынок с вашей экспертной территорией.",
-                risk="Если выбрать слишком широкий угол, текст может стать похож на общий комментарий о трендах.",
-            )
-        ]
-        for item in seed.get("approval_items", ()):
-            approvals.append(
-                ApprovalItem(
-                    title=str(item["title"]),
-                    decision=str(item["decision"]),
-                    recommendation=str(item["recommendation"]),
-                    risk=str(item["risk"]),
-                )
-            )
-        return tuple(approvals[:3])
 
     def _related_knowledge(
         self,

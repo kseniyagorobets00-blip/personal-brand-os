@@ -17,7 +17,6 @@ from .author_brain import THEME_WEIGHT_RULE, AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository, list_to_text, text_to_list
 from .daily_brief import (
     DEFAULT_CONTENT_PLAN_PATH,
-    ApprovalItem,
     BriefItem,
     ContentPlan,
     DailyBrief,
@@ -483,18 +482,6 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 location = f"/texts/{post_id}?saved=1"
             self.send_response(303)
             self.send_header("Location", location)
-            self.end_headers()
-            return
-        if path == "/daily-brief/approval":
-            length = int(self.headers.get("Content-Length", "0"))
-            data = parse_qs(self.rfile.read(length).decode("utf-8"))
-            state = _load_ui_state()
-            approvals = state.setdefault("approvals", {})
-            if isinstance(approvals, dict):
-                approvals[data.get("item_key", [""])[0]] = data.get("status", ["pending"])[0]
-            _save_ui_state(state)
-            self.send_response(303)
-            self.send_header("Location", "/daily-brief#decisions")
             self.end_headers()
             return
         if path == "/daily-brief/refine":
@@ -2165,7 +2152,6 @@ def _today_card(
     idea_text = str(refinement.get("text") or idea_text)
     refinement_notice = _refinement_notice(refinement)
     publication_rows = _today_publication_rows(brief.topics, brief.content_plan)
-    skip_key = _item_key("пропустить сегодня")
     return f"""
     <section class="today-card" id="{escape(item_key)}">
       <div class="today-main">
@@ -2217,11 +2203,6 @@ def _today_card(
           <input type="hidden" name="text" value="{escape(idea_text)}">
           <input type="hidden" name="kind" value="today">
           <button class="secondary" type="submit">Другой вариант</button>
-        </form>
-        <form method="post" action="/daily-brief/approval">
-          <input type="hidden" name="item_key" value="{escape(skip_key)}">
-          <input type="hidden" name="status" value="deferred">
-          <button class="ghost" type="submit">Пропустить сегодня</button>
         </form>
       </div>
     </section>
@@ -5067,14 +5048,13 @@ def _stories_from_text(text: str) -> list[dict[str, object]]:
 
 def _load_ui_state() -> dict[str, object]:
     if not UI_STATE_PATH.exists():
-        return {"approvals": {}, "refinements": {}}
+        return {"refinements": {}}
     try:
         state = json.loads(UI_STATE_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
-        return {"approvals": {}, "refinements": {}}
+        return {"refinements": {}}
     if not isinstance(state, dict):
-        return {"approvals": {}, "refinements": {}}
-    state.setdefault("approvals", {})
+        return {"refinements": {}}
     state.setdefault("refinements", {})
     return state
 
@@ -5530,46 +5510,6 @@ def _materials_for_topic(topic: BriefItem, materials: tuple[RelatedKnowledge, ..
     """
 
 
-def _approval_card(item: ApprovalItem, ui_state: dict[str, object] | None = None) -> str:
-    ui_state = ui_state or _load_ui_state()
-    key = _item_key(item.title)
-    status = _approval_status(ui_state, key)
-    # Once a decision is accepted, drop the action buttons — the status chip is the record.
-    if status == "accepted":
-        actions = (
-            "<div class=\"approval-actions\">"
-            "<form method=\"post\" action=\"/daily-brief/approval\">"
-            f"<input type=\"hidden\" name=\"item_key\" value=\"{escape(key)}\">"
-            "<input type=\"hidden\" name=\"status\" value=\"pending\">"
-            "<button class=\"ghost\" type=\"submit\">Изменить решение</button>"
-            "</form></div>"
-        )
-    else:
-        actions = f"""
-      <div class="approval-actions">
-        <form method="post" action="/daily-brief/approval">
-          <input type="hidden" name="item_key" value="{escape(key)}">
-          <input type="hidden" name="status" value="accepted">
-          <button type="submit">Принять</button>
-        </form>
-        <form method="post" action="/daily-brief/approval">
-          <input type="hidden" name="item_key" value="{escape(key)}">
-          <input type="hidden" name="status" value="deferred">
-          <button class="secondary" type="submit">Вернуться позже</button>
-        </form>
-      </div>"""
-    return f"""
-    <article class="approval" id="{escape(key)}">
-      <h3>{escape(item.title)}</h3>
-      <div class="decision-status {_decision_status_class(status)}">{escape(_decision_status_ru(status))}</div>
-      <p><b>Решение:</b> {escape(item.decision)}</p>
-      <p><b>Рекомендация:</b> {escape(item.recommendation)}</p>
-      <p class="risk"><b>Риск:</b> {escape(item.risk)}</p>
-      {actions}
-    </article>
-    """
-
-
 def _refinement_bar(item_key: str, title: str, text: str, kind: str) -> str:
     buttons = "".join(
         f"""
@@ -5799,30 +5739,6 @@ def _refinement_notice(refinement: dict[str, object]) -> str:
     if refinement.get("status") == "error":
         return _ai_error_note(refinement.get("error", ""), "обновить черновик")
     return f"<div class=\"state-note\">Обновлено: {escape(action)}.</div>"
-
-
-def _approval_status(state: dict[str, object], item_key: str) -> str:
-    approvals = state.get("approvals", {})
-    if not isinstance(approvals, dict):
-        return "pending"
-    status = str(approvals.get(item_key, "pending"))
-    return status if status in {"pending", "accepted", "deferred"} else "pending"
-
-
-def _decision_status_ru(status: str) -> str:
-    statuses = {
-        "pending": "Ожидает решения",
-        "accepted": "Принято",
-        "deferred": "Отложено",
-    }
-    return statuses.get(status, status)
-
-
-def _decision_status_class(status: str) -> str:
-    return {
-        "accepted": "is-accepted",
-        "deferred": "is-deferred",
-    }.get(status, "is-pending")
 
 
 def _styles() -> str:
@@ -6892,7 +6808,7 @@ def _styles() -> str:
       line-height: 1.55;
       overflow-wrap: anywhere;
     }
-    .state-note, .decision-status {
+    .state-note {
       margin-top: 12px;
       display: inline-flex;
       max-width: 100%;
@@ -6905,14 +6821,6 @@ def _styles() -> str:
       font-size: 13px;
       font-weight: 680;
       overflow-wrap: anywhere;
-    }
-    .decision-status.is-deferred {
-      background: rgba(240, 190, 90, .12);
-      color: #e6c979;
-    }
-    .decision-status.is-pending {
-      background: var(--paper-soft);
-      color: var(--muted);
     }
     .error-note {
       background: rgba(240, 96, 74, .12);
