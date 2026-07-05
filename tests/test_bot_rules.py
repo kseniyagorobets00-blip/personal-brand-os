@@ -80,3 +80,31 @@ def test_author_brain_uses_edited_rules(temp_data):
     assert brain["allowed_thinking_modes"] == ["Observation", "Story"]
     assert brain["forbidden_openings"] == ["запретное начало"]
     assert brain["anti_repeat_rules"] == ["без повторов"]
+
+
+def test_edited_modes_drive_mode_selection(temp_data):
+    from post_agent.thinking_engine import ThinkingEngine
+
+    # Remove the mode ("Framework") the VC heuristic would normally force; add a custom one.
+    bot_rules.save_bot_rules(
+        {
+            "thinking_modes": ["Observation", "Инсайт", "Case"],
+            "thinking_rules": "x",
+            "forbidden_openings": "y",
+            "anti_repeat_rules": "z",
+            "theme_weight_rule": "w",
+            "platform_rules": {},
+        }
+    )
+    brain = AuthorBrain(author_profile={}, writing_dna={}, documents=[], cases=[], ideas=[]).build({"platform": "VC", "topic": "обычная тема"})
+    # Framework was removed, so neither selector may force it.
+    assert brain["thinking_mode"] in ["Observation", "Инсайт", "Case"]
+    assert brain["thinking_mode"] != "Framework"
+
+    result = ThinkingEngine().think({"target_publication": {"platform": "VC", "topic": "обычная тема"}, "author_brain": brain})
+    assert result["mode"] in ["Observation", "Инсайт", "Case"]
+    assert result["mode"] != "Framework"
+
+    # A custom mode is honoured when the brain/AI suggests it.
+    suggested = ThinkingEngine().think({"target_publication": {"platform": "Telegram", "topic": "нейтрально"}, "author_brain": {"allowed_thinking_modes": ["Инсайт", "Observation"], "thinking_mode": "Инсайт"}})
+    assert suggested["mode"] == "Инсайт"

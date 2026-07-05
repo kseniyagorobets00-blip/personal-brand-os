@@ -69,17 +69,23 @@ class ThinkingEngine:
         return result.to_dict()
 
     def _mode(self, platform: str, topic: str, summary: str, cases: object, author_brain: dict[str, object]) -> str:
-        if isinstance(cases, list) and cases:
-            return "Case"
+        # Use the editable thinking modes ("Правила бота", carried on author_brain)
+        # so custom/edited modes are honoured and removed modes are never forced.
+        raw_allowed = author_brain.get("allowed_thinking_modes", THINKING_MODES)
+        allowed = [str(mode).strip() for mode in raw_allowed if str(mode).strip()] if isinstance(raw_allowed, (list, tuple)) else list(THINKING_MODES)
+        allowed = allowed or list(THINKING_MODES)
         text = f"{topic} {summary}".lower()
-        if any(word in text for word in ("ошибка", "миф", "не работает", "хаос")):
-            return "Provocation"
-        if platform == "VC":
-            return "Framework"
-        if any(word in text for word in ("ситуация", "разговор", "наблюдение")):
-            return "Observation"
+        candidates: list[tuple[bool, str]] = [
+            (isinstance(cases, list) and bool(cases), "Case"),
+            (any(word in text for word in ("ошибка", "миф", "не работает", "хаос")), "Provocation"),
+            (platform == "VC", "Framework"),
+            (any(word in text for word in ("ситуация", "разговор", "наблюдение")), "Observation"),
+        ]
+        for matched, mode in candidates:
+            if matched and mode in allowed:
+                return mode
         suggested = str(author_brain.get("thinking_mode", ""))
-        return suggested if suggested in THINKING_MODES else "Observation"
+        return suggested if suggested in allowed else allowed[0]
 
     def _today_context(self, platform: str, topic: str, goal: str) -> str:
         return f"Сегодня в плане стоит {platform}: {topic}. Цель: {goal}".strip()

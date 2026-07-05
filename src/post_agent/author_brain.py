@@ -332,18 +332,21 @@ class AuthorBrain:
         return patterns[:4]
 
     def _select_mode(self, platform: str, query: str) -> str:
+        # Respect the editable thinking modes ("Правила бота"): never return a mode
+        # the user removed, and fall back within their list rather than a hardcoded default.
+        allowed = _as_str_list(self._rules().get("thinking_modes", [])) or list(THINKING_MODES)
         lowered = query.lower()
-        if self._case_candidates(query):
-            return "Case"
-        if platform == "VC":
-            return "Framework"
-        if any(word in lowered for word in ("ошибка", "хаос", "миф", "не работает", "mistake", "chaos", "myth")):
-            return "Provocation"
-        if any(word in lowered for word in ("наблюдение", "ситуация", "пример", "observation", "example")):
-            return "Observation"
-        if platform in {"Telegram", "РЎРµС‚РєР°", "Сетка"}:
-            return "Reflection"
-        return "Observation"
+        candidates: list[tuple[bool, str]] = [
+            (bool(self._case_candidates(query)), "Case"),
+            (platform == "VC", "Framework"),
+            (any(word in lowered for word in ("ошибка", "хаос", "миф", "не работает", "mistake", "chaos", "myth")), "Provocation"),
+            (any(word in lowered for word in ("наблюдение", "ситуация", "пример", "observation", "example")), "Observation"),
+            (platform in {"Telegram", "Сетка"}, "Reflection"),
+        ]
+        for matched, mode in candidates:
+            if matched and mode in allowed:
+                return mode
+        return allowed[0]
 
     def _corpus(self) -> str:
         parts: list[str] = []
