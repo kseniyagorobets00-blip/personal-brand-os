@@ -113,6 +113,16 @@ class DailyBriefTests(unittest.TestCase):
         self.assertTrue(brief.topics)
         self.assertTrue(all("из контент-плана" in item.tags for item in brief.topics))
 
+    def test_how_it_works_page_maps_the_pipeline(self) -> None:
+        from post_agent.web import render_how_it_works
+
+        html = render_how_it_works()
+        for block in ("Как это связано", "Правила бота", "Author Brain", "Thinking Engine", "Входящие памяти"):
+            self.assertIn(block, html)
+        # legend explains the guard/gate markers
+        self.assertIn("жёсткая проверка", html)
+        self.assertIn("ручной шлюз", html)
+
     def test_flag_duplicate_cells_marks_near_duplicates(self) -> None:
         from post_agent.web import _flag_duplicate_cells
 

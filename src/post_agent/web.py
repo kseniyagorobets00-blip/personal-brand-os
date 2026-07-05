@@ -162,6 +162,9 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             query = parse_qs(urlparse(self.path).query)
             self._send_html(render_bot_rules(load_bot_rules(), saved=query.get("saved", ["0"])[0] == "1"))
             return
+        if path == "/how-it-works":
+            self._send_html(render_how_it_works())
+            return
         if path == "/author-brain":
             self.send_response(303)
             self.send_header("Location", "/author-profile?tab=base")
@@ -618,6 +621,7 @@ def _global_nav(active: str = "", extra: str = "") -> str:
         ("Идеи", "/ideas", "ideas"),
         ("Профиль автора", "/author-profile", "profile"),
         ("Правила бота", "/bot-rules", "bot-rules"),
+        ("Как это связано", "/how-it-works", "how"),
     )
     items = "".join(
         f"<a class=\"{'active' if key == active else ''}\" href=\"{escape(href)}\">{escape(label)}</a>"
@@ -4176,6 +4180,66 @@ def _thinking_mode_rows(modes: object) -> str:
     return rows
 
 
+def render_how_it_works() -> str:
+    stages = [
+        ("🟢", "Знания", "Память", "/knowledge", "Документы и кейсы, которые вы загружаете.", "Питают Граф знаний и Author Brain."),
+        ("⏳", "Входящие памяти", "Профиль автора → Правила", "/author-profile?tab=rules", "Новое знание сначала ждёт подтверждения.", "Влияет на AI только после того, как вы нажмёте «Принять»."),
+        ("⚙️", "Граф знаний", "", "", "Связи между темами, компаниями и кейсами.", "Строится автоматически из принятой памяти."),
+        ("🟢 ✅", "Правила бота", "Правила бота", "/bot-rules", "Правила мышления, запрещённые начала, правила площадок, режимы, анти-повтор, вес тем.", "Единый источник для AI. Есть жёсткие проверки: язык, режимы, площадки, повторы."),
+        ("🟢", "ДНК письма", "Профиль автора → ДНК", "/author-profile?tab=dna", "Как автор пишет: тон, структура, лексика.", "Питает Author Brain."),
+        ("⚙️", "Author Brain", "", "", "Модель мышления автора: темы, кейсы, идеи.", "Собирается из Знаний, ДНК письма, Уроков и Правил бота."),
+        ("🟢 ⏳", "Уроки (обучение)", "Профиль автора → Правила", "/author-profile?tab=rules", "Правила, выученные из ваших правок и решений.", "Влияют на AI только принятые уроки."),
+        ("🟢 ✅", "Стратегия · Радар трендов · Контент-план", "Контент-план", "/content-plan", "Что и когда публиковать.", "Тренды подбираются к ячейкам плана в коде; повторы проверяются автоматически."),
+        ("⚙️ ✅", "Thinking Engine", "", "", "Выбирает режим мышления и угол публикации.", "Выбирает только из ваших режимов (Правила бота)."),
+        ("⚙️ ✅", "Сборка подсказки → AI", "", "", "Всё, что выше, собирается в одну подсказку и уходит в AI.", "Черновик проверяется на язык и запрещённые начала."),
+    ]
+    cards = []
+    for icon, title, where_label, where_href, what, feeds in stages:
+        where = f'<a href="{escape(where_href)}">{escape(where_label)}</a>' if where_href else '<span class="hw-auto">считается автоматически</span>'
+        cards.append(
+            f"""
+      <div class="hw-stage">
+        <div class="hw-icon">{icon}</div>
+        <div class="hw-body">
+          <div class="hw-head"><h3>{escape(title)}</h3><span class="hw-where">{where}</span></div>
+          <p class="hw-what">{escape(what)}</p>
+          <p class="hw-feeds">{escape(feeds)}</p>
+        </div>
+      </div>"""
+        )
+    flow = '<div class="hw-arrow">↓</div>'.join(cards)
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Как это связано - Personal Brand OS</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">карта системы</p>
+        <h1>Как это связано</h1>
+      </div>
+      {_global_nav("how")}
+    </header>
+    <section class="block">
+      <p>Путь от ваших знаний и правил до готовой публикации. Каждый блок показывает, что это, где редактируется и на что влияет.</p>
+      <div class="hw-legend">
+        <span>🟢 редактируете вы</span>
+        <span>⚙️ считается автоматически</span>
+        <span>✅ есть жёсткая проверка в коде</span>
+        <span>⏳ ручной шлюз — влияет на AI после подтверждения</span>
+      </div>
+      <div class="hw-flow">{flow}</div>
+    </section>
+  </main>
+</body>
+</html>"""
+
+
 def _bot_rules_form_to_raw(data: dict[str, list[str]]) -> dict[str, object]:
     def first(key: str) -> str:
         return data.get(key, [""])[0]
@@ -6769,6 +6833,18 @@ def _styles() -> str:
     }
     .pointer-note a { font-weight: 680; }
     .repeat-note { color: #9a6a12; background: #fff6e6; border-radius: 8px; padding: 6px 10px; }
+    .hw-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 14px 0 20px; color: var(--muted); font-size: 0.9rem; }
+    .hw-flow { display: flex; flex-direction: column; align-items: stretch; }
+    .hw-stage { display: flex; gap: 14px; padding: 16px; border: 1px solid rgba(120,120,120,0.2); border-radius: 14px; background: rgba(120,120,120,0.04); }
+    .hw-icon { flex: 0 0 auto; font-size: 1.1rem; white-space: nowrap; }
+    .hw-body { flex: 1 1 auto; }
+    .hw-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .hw-head h3 { margin: 0; }
+    .hw-where a { font-weight: 680; }
+    .hw-where .hw-auto, .hw-auto { color: var(--muted); font-size: 0.88rem; }
+    .hw-what { margin: 6px 0 4px; }
+    .hw-feeds { color: var(--muted); font-size: 0.92rem; margin: 0; }
+    .hw-arrow { text-align: center; color: var(--muted); font-size: 1.1rem; line-height: 1.6; }
     @media (prefers-color-scheme: dark) { .repeat-note { color: #f0c975; background: rgba(240,190,90,0.12); } }
     .gates-banner {
       display: flex;
