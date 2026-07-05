@@ -33,6 +33,7 @@ from .knowledge import KnowledgeBase, KnowledgeSearchResult, SUPPORTED_EXTENSION
 from .knowledge_graph import KnowledgeGraph
 from .learning import LearningCenter, lessons_for_prompt
 from .memory import MemoryInbox
+from .text_posts import TEXT_POST_STATUSES, TextPost, TextPostRepository
 from .trend_radar import TrendRadar
 from .writing_dna import WritingDNARepository, writing_dna_form_to_raw
 
@@ -119,6 +120,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
     learning_center = LearningCenter()
     knowledge_base = KnowledgeBase()
     idea_vault = IdeaVault()
+    text_posts = TextPostRepository()
     author_brain_repository = AuthorBrainRepository()
     trend_radar = TrendRadar(learning_center=learning_center)
     ai_context_engine = AIContextEngine(
@@ -130,6 +132,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         knowledge_graph=knowledge_graph,
         learning_center=learning_center,
         idea_vault=idea_vault,
+        text_post_repository=text_posts,
     )
     ai_pipeline = AIPipeline(
         knowledge_base=knowledge_base,
@@ -224,6 +227,20 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             action_status = query.get("status", [""])[0]
             plan = _content_plan_with_query_period(_load_content_plan_raw(), query)
             self._send_html(render_content_plan_page(plan, saved=saved, view=view, action_status=action_status))
+            return
+        if path == "/texts":
+            query = parse_qs(urlparse(self.path).query)
+            plan = _content_plan_with_query_period(_load_content_plan_raw(), query)
+            self.text_posts.sync_from_content_plan(plan)
+            self._send_html(render_text_posts_page(self.text_posts, query, plan))
+            return
+        if path.startswith("/texts/"):
+            post_id = path.rsplit("/", 1)[-1]
+            post = self.text_posts.get(post_id)
+            if not post:
+                self.send_error(404, "Not Found")
+                return
+            self._send_html(render_text_post_detail(post))
             return
         if path == "/knowledge":
             query_params = parse_qs(urlparse(self.path).query)
@@ -351,6 +368,49 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             redirect_target = _save_content_plan_form(data)
             self.send_response(303)
             self.send_header("Location", redirect_target)
+            self.end_headers()
+            return
+        if path == "/texts/archive/add":
+            length = int(self.headers.get("Content-Length", "0"))
+            data = parse_qs(self.rfile.read(length).decode("utf-8"))
+            post = self.text_posts.add_archive(
+                title=data.get("title", [""])[0],
+                platform=data.get("platform", [""])[0],
+                publication_date=data.get("publication_date", [""])[0],
+                text=data.get("text", [""])[0],
+            )
+            self.send_response(303)
+            self.send_header("Location", f"/texts/{post.id}?saved=1")
+            self.end_headers()
+            return
+        if path.startswith("/texts/"):
+            post_id = path.rsplit("/", 1)[-1]
+            length = int(self.headers.get("Content-Length", "0"))
+            data = parse_qs(self.rfile.read(length).decode("utf-8"))
+            action = data.get("action", ["save"])[0]
+            post = self.text_posts.get(post_id)
+            if not post:
+                self.send_error(404, "Not Found")
+                return
+            if action == "archive":
+                self.text_posts.move_to_archive(post_id)
+                location = "/texts?tab=archive&saved=1"
+            elif action == "delete":
+                tab = post.tab
+                self.text_posts.delete(post_id)
+                location = f"/texts?tab={tab}&deleted=1"
+            else:
+                self.text_posts.update(
+                    post_id=post_id,
+                    title=data.get("title", [""])[0],
+                    platform=data.get("platform", [""])[0],
+                    publication_date=data.get("publication_date", [""])[0],
+                    text=data.get("text", [""])[0],
+                    status=data.get("status", ["draft"])[0],
+                )
+                location = f"/texts/{post_id}?saved=1"
+            self.send_response(303)
+            self.send_header("Location", location)
             self.end_headers()
             return
         if path == "/daily-brief/approval":
@@ -650,6 +710,7 @@ def _global_nav(active: str = "", extra: str = "") -> str:
     links = (
         ("Дневной бриф", "/daily-brief", "daily"),
         ("Контент-план", "/content-plan", "content"),
+        ("Тексты", "/texts", "texts"),
         ("Радар трендов", "/trend-radar", "trends"),
         ("Память", "/knowledge", "knowledge"),
         ("Идеи", "/ideas", "ideas"),
@@ -2809,6 +2870,212 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
   </main>
 </body>
 </html>"""
+
+
+def render_text_posts_page(repository: TextPostRepository, query: dict[str, list[str]], plan: dict[str, object]) -> str:
+    tab = query.get("tab", ["planned"])[0]
+    tab = tab if tab in {"planned", "archive"} else "planned"
+    search = query.get("q", [""])[0].strip()
+    platform = query.get("platform", [""])[0].strip()
+    page = _positive_int(query.get("page", ["1"])[0], 1)
+    week_start, week_end = _content_plan_period(plan)
+    posts = repository.list_posts(tab=tab, query=search, platform=platform)
+    if tab == "planned":
+        posts = _filter_text_posts_by_period(posts, week_start, week_end)
+    per_page = 10
+    page_count = max(1, (len(posts) + per_page - 1) // per_page)
+    page = max(1, min(page, page_count))
+    visible = posts[(page - 1) * per_page : page * per_page]
+    rows = "".join(_text_post_row(post) for post in visible) or "<div class=\"empty\">Пока здесь нет текстов.</div>"
+    saved = query.get("saved", ["0"])[0] == "1"
+    deleted = query.get("deleted", ["0"])[0] == "1"
+    notice = "<div class=\"notice\">Сохранено.</div>" if saved else ""
+    if deleted:
+        notice += "<div class=\"notice\">Удалено.</div>"
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Тексты - Personal Brand OS</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">редакция</p>
+        <h1>Тексты</h1>
+        <p class="page-hint">Рабочее место для запланированных публикаций и архива опубликованных постов.</p>
+      </div>
+      {_global_nav("texts")}
+    </header>
+    {notice}
+    <div class="view-switch">
+      <a class="{'active' if tab == 'planned' else ''}" href="/texts?tab=planned">Запланировано</a>
+      <a class="{'active' if tab == 'archive' else ''}" href="/texts?tab=archive">Архив</a>
+    </div>
+    <form class="period-picker text-filter" method="get" action="/texts">
+      <input type="hidden" name="tab" value="{escape(tab)}">
+      {'<label><span>Месяц</span><input type="month" name="month" value="' + escape(_month_for_input(week_start)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
+      {'<label><span>Начало периода</span><input type="date" name="week_start" value="' + escape(_date_for_input(week_start)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
+      {'<label><span>Конец периода</span><input type="date" name="week_end" value="' + escape(_date_for_input(week_end)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
+      <label><span>Поиск по названию</span><input type="search" name="q" value="{escape(search)}" placeholder="Название поста"></label>
+      <label><span>Площадка</span><select name="platform">
+        <option value="">Все площадки</option>
+        {_platform_options(platform)}
+      </select></label>
+      <button class="ghost" type="submit">Найти</button>
+      <a class="secondary-link" href="/texts?tab={escape(tab)}">Сбросить</a>
+    </form>
+    <section class="text-list">
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">{'запланированные тексты' if tab == 'planned' else 'архив публикаций'}</p>
+          <h2>{'Запланировано' if tab == 'planned' else 'Архив'}</h2>
+          {'<p class="page-hint">Период: ' + escape(_format_week_range(week_start, week_end)) + '</p>' if tab == 'planned' else ''}
+        </div>
+        <span>{len(posts)} всего</span>
+      </div>
+      <div class="knowledge-list">{rows}</div>
+      {_pagination('/texts', tab, search, platform, page, page_count, week_start, week_end)}
+    </section>
+    {'' if tab == 'planned' else _manual_archive_form()}
+  </main>
+</body>
+</html>"""
+
+
+def render_text_post_detail(post: TextPost) -> str:
+    back_tab = post.tab
+    archive_action = (
+        '<button class="ghost" name="action" value="archive" type="submit">Перенести в архив</button>'
+        if post.tab == "planned"
+        else ""
+    )
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(post.title)} - Тексты</title>
+  <style>{_styles()}</style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">текст публикации</p>
+        <h1>{escape(post.title)}</h1>
+        <p class="page-hint">{escape(post.platform)} · {escape(_format_text_date(post.publication_date))}</p>
+      </div>
+      {_global_nav("texts")}
+    </header>
+    <form class="profile-form" method="post" action="/texts/{escape(post.id)}">
+      <section class="profile-section">
+        <div class="form-grid">
+          {_input("title", "Название", post.title)}
+          {_select("platform", "Площадка", post.platform, CONTENT_PLATFORMS)}
+          {_date_input("publication_date", "Дата публикации", post.publication_date)}
+          {_select("status", "Статус", post.status, list(TEXT_POST_STATUSES))}
+        </div>
+        {_textarea("text", "Полный текст", post.text)}
+        <div class="form-actions">
+          <button name="action" value="save" type="submit">Сохранить</button>
+          {archive_action}
+          <button class="ghost danger-text" name="action" value="delete" type="submit">Удалить</button>
+          <a href="/texts?tab={escape(back_tab)}">Назад к списку</a>
+        </div>
+      </section>
+    </form>
+  </main>
+</body>
+</html>"""
+
+
+def _text_post_row(post: TextPost) -> str:
+    return f"""
+    <article class="knowledge-card text-row">
+      <a href="/texts/{escape(post.id)}">
+        <h3>{escape(post.title)}</h3>
+        <div class="doc-meta">
+          <span>{escape(post.platform or "Без площадки")}</span>
+          <span>{escape(_format_text_date(post.publication_date))}</span>
+          <span>{escape(_status_ru(post.status))}</span>
+        </div>
+      </a>
+      <a class="open-link" href="/texts/{escape(post.id)}">Открыть</a>
+    </article>
+    """
+
+
+def _manual_archive_form() -> str:
+    return f"""
+    <section class="knowledge-upload">
+      <p class="eyebrow">добавить вручную</p>
+      <h2>Добавить пост в архив</h2>
+      <form class="profile-form compact-editor" method="post" action="/texts/archive/add">
+        <div class="form-grid">
+          {_input("title", "Название", "")}
+          {_select("platform", "Площадка", "", CONTENT_PLATFORMS)}
+          {_date_input("publication_date", "Дата публикации", today_moscow().isoformat())}
+        </div>
+        {_textarea("text", "Полный текст", "")}
+        <button type="submit">Добавить в архив</button>
+      </form>
+    </section>
+    """
+
+
+def _platform_options(selected: str) -> str:
+    return "".join(
+        f"<option value=\"{escape(platform)}\" {'selected' if platform == selected else ''}>{escape(platform)}</option>"
+        for platform in CONTENT_PLATFORMS
+    )
+
+
+def _pagination(base: str, tab: str, search: str, platform: str, page: int, page_count: int, week_start: str = "", week_end: str = "") -> str:
+    if page_count <= 1:
+        return ""
+    params = f"tab={quote(tab)}&q={quote(search)}&platform={quote(platform)}"
+    if tab == "planned":
+        params += f"&week_start={quote(week_start)}&week_end={quote(week_end)}"
+    prev_link = f"{base}?{params}&page={page - 1}" if page > 1 else ""
+    next_link = f"{base}?{params}&page={page + 1}" if page < page_count else ""
+    prev_html = f"<a href=\"{escape(prev_link)}\">← Назад</a>" if prev_link else "<span>← Назад</span>"
+    next_html = f"<a href=\"{escape(next_link)}\">Вперед →</a>" if next_link else "<span>Вперед →</span>"
+    return f"<nav class=\"pagination\">{prev_html}<strong>{page} / {page_count}</strong>{next_html}</nav>"
+
+
+def _filter_text_posts_by_period(posts: list[TextPost], start: str, end: str) -> list[TextPost]:
+    parsed_start = parse_plan_date(start)
+    parsed_end = parse_plan_date(end)
+    if not parsed_start and not parsed_end:
+        return posts
+    result = []
+    for post in posts:
+        parsed = parse_plan_date(post.publication_date)
+        if not parsed:
+            continue
+        if parsed_start and parsed < parsed_start:
+            continue
+        if parsed_end and parsed > parsed_end:
+            continue
+        result.append(post)
+    return result
+
+
+def _format_text_date(value: str) -> str:
+    parsed = parse_plan_date(value)
+    return parsed.strftime("%d.%m.%Y") if parsed else (value or "без даты")
+
+
+def _positive_int(value: str, default: int) -> int:
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
 
 
 def _editorial_strategy_panel(strategy: dict[str, object]) -> str:
@@ -5100,10 +5367,11 @@ def _status_ru(status: str) -> str:
             "idea": "Идея",
             "planned": "Запланировано",
             "suggested": "Идея",
+            "draft": "Черновик",
             "drafted": "В работе",
             "in_progress": "В работе",
             "review": "В работе",
-            "approved": "В работе",
+            "approved": "Утверждено",
             "published": "Опубликовано",
             "archived": "Архив",
             "needs_ai_plan": "Идея",
@@ -5368,7 +5636,7 @@ def _publication_format_instruction(publication_format: str) -> str:
 
 def _select(name: str, label: str, selected: str, options: tuple[str, ...] | list[str]) -> str:
     option_html = "".join(
-        f"<option value=\"{escape(option)}\" {'selected' if option == selected else ''}>{escape(_status_ru(option) if name.endswith('_status') else option)}</option>"
+        f"<option value=\"{escape(option)}\" {'selected' if option == selected else ''}>{escape(_status_ru(option) if name.endswith('_status') or name == 'status' else option)}</option>"
         for option in options
     )
     return f"""
@@ -5410,6 +5678,7 @@ def _section(title: str, items: tuple[BriefItem, ...], kind: str) -> str:
 
 
 def _drafts_to_prepare_section(brief: DailyBrief, ai_result: dict[str, object] | None = None) -> str:
+    TextPostRepository().sync_from_content_plan(_load_content_plan_raw())
     cards = "".join(
         _draft_to_prepare_card(topic, draft, brief, ai_result if index == 0 else None)
         for index, (topic, draft) in enumerate(zip(brief.topics, brief.drafts))
@@ -5452,6 +5721,10 @@ def _draft_to_prepare_card(
     platform = str(getattr(publication, "platform", "")) or draft.platform
     if not _text_matches_platform(ai_draft, platform):
         ai_draft = ""
+    approved_post = TextPostRepository().approved_for_publication(publication)
+    if approved_post:
+        title = approved_post.title
+        draft_text = approved_post.text
     goal = str(getattr(publication, "goal", "")) or topic.action
     summary = str(getattr(publication, "summary", "")) or topic.summary
     materials = _materials_for_topic(topic, brief.related_knowledge)
@@ -5475,7 +5748,7 @@ def _draft_to_prepare_card(
       </div>
       <p class="label">Краткая структура</p>
       <p>{escape(_draft_structure(platform, summary))}</p>
-      <p class="label">Первый черновик текста</p>
+      <p class="label">{'Утвержденный текст из раздела «Тексты»' if approved_post else 'Первый черновик текста'}</p>
       <pre>{escape(draft_text)}</pre>
       {_thinking_transparency_block(ai_result)}
       {_writing_feedback_block(key, title, draft_text)}
@@ -7135,6 +7408,57 @@ def _styles() -> str:
       color: var(--muted);
       margin-top: 8px;
     }
+    .text-list {
+      margin-top: 28px;
+    }
+    .text-filter {
+      grid-template-columns: minmax(220px, 1fr) minmax(180px, max-content) max-content max-content;
+    }
+    .text-row {
+      align-items: center;
+    }
+    .text-row h3 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 1.35;
+    }
+    .text-row .doc-meta {
+      margin-bottom: 0;
+    }
+    .secondary-link {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 680;
+      text-decoration: none;
+      align-self: center;
+      padding: 10px 0;
+    }
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-top: 20px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 680;
+    }
+    .pagination a, .pagination span {
+      border: 1px solid var(--line-soft);
+      border-radius: 999px;
+      padding: 8px 12px;
+      text-decoration: none;
+      color: var(--ink);
+      min-width: 78px;
+      text-align: center;
+    }
+    .pagination span {
+      color: var(--muted);
+      background: var(--paper-soft);
+    }
+    .compact-editor {
+      margin-top: 16px;
+    }
     .doc-meta {
       display: flex;
       flex-wrap: wrap;
@@ -7225,7 +7549,7 @@ def _styles() -> str:
       .calendar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .calendar-day.muted { display: none; }
       .today-card { grid-template-columns: 1fr; }
-      .draft-grid, .approval-grid, .plan-list, .form-grid, .edit-row, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .draft-grid, .approval-grid, .plan-list, .form-grid, .edit-row, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .plan-meta-grid { grid-template-columns: 1fr; }
       .knowledge-card { display: grid; }
     }
@@ -7248,7 +7572,7 @@ def _styles() -> str:
       .meta { justify-content: flex-start; }
       .nav-wrap { align-items: flex-start; width: 100%; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
-      .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid { grid-template-columns: 1fr; }
+      .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter { grid-template-columns: 1fr; }
       .calendar-weekdays { display: none; }
       .calendar-grid { grid-template-columns: 1fr; }
       .calendar-day { min-height: auto; }

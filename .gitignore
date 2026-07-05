@@ -20,6 +20,7 @@ data/idea_vault/
 data/knowledge/
 data/learning/
 data/memory/
+data/text_posts/
 data/trend_radar/
 data/ui_state.json
 !data/seeds/

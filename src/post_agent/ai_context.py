@@ -13,6 +13,7 @@ from .knowledge import KnowledgeBase
 from .knowledge_graph import KnowledgeGraph
 from .learning import LearningCenter, lessons_for_prompt
 from .memory import MemoryInbox
+from .text_posts import TextPostRepository
 from .trend_radar import DEFAULT_TREND_CACHE_PATH
 from .writing_dna import WritingDNARepository
 
@@ -33,6 +34,7 @@ class AIContextEngine:
         knowledge_graph: KnowledgeGraph | None = None,
         learning_center: LearningCenter | None = None,
         idea_vault: IdeaVault | None = None,
+        text_post_repository: TextPostRepository | None = None,
         seed_repository: SeedRepository | None = None,
         editorial_strategy_path: Path = DEFAULT_EDITORIAL_STRATEGY_PATH,
         trend_cache_path: Path = DEFAULT_TREND_CACHE_PATH,
@@ -45,6 +47,7 @@ class AIContextEngine:
         self.knowledge_graph = knowledge_graph or KnowledgeGraph()
         self.learning_center = learning_center or LearningCenter()
         self.idea_vault = idea_vault or IdeaVault()
+        self.text_post_repository = text_post_repository or TextPostRepository()
         self.seed_repository = seed_repository or SeedRepository()
         self.editorial_strategy_path = editorial_strategy_path
         self.trend_cache_path = trend_cache_path
@@ -55,6 +58,7 @@ class AIContextEngine:
         cases = self.knowledge_base.list_cases()
         ideas = self.idea_vault.list_ideas()
         content_plan = self._load_content_plan()
+        self.text_post_repository.sync_from_content_plan(content_plan)
         writing_dna = self.writing_dna_repository.load_raw()
         author_profile = self.author_profile_repository.load_raw()
         lessons = self.learning_center.list_lessons("accepted")
@@ -85,6 +89,7 @@ class AIContextEngine:
             "idea_vault": [idea.__dict__ for idea in ideas[:20]],
             "recent_drafts": self._recent_publications(content_plan, statuses={"in_progress", "drafted"}),
             "recent_topics": self._recent_publications(content_plan, statuses={"planned", "published", "in_progress", "drafted"}),
+            "published_posts": self.text_post_repository.published_for_ai(),
             "month_focus": str(content_plan.get("month_focus", "")),
             "week_focus": str(content_plan.get("focus", "")),
             "selected": {
