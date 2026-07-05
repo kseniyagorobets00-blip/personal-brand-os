@@ -272,49 +272,6 @@ class DailyBriefService:
             for item in ranked[:4]
         )
 
-    def _topics_from_sources(
-        self,
-        sources: tuple[dict[str, Any], ...],
-        content_plan: ContentPlan,
-    ) -> tuple[BriefItem, ...]:
-        topic_map: dict[str, dict[str, Any]] = {}
-        for source in sources:
-            for topic in source.get("topics", ()):
-                current = topic_map.setdefault(
-                    topic,
-                    {
-                        "score": 0,
-                        "sources": 0,
-                        "tags": set(),
-                        "best_reason": source.get("why_it_matters", ""),
-                    },
-                )
-                plan_bonus = self._topic_plan_bonus(topic, content_plan)
-                current["score"] += self._score(source) + plan_bonus
-                current["sources"] += 1
-                current["tags"].update(source.get("tags", ()))
-                current["tags"].update(self._topic_plan_tags(topic, content_plan))
-                if self._score(source) > current.get("best_score", 0):
-                    current["best_score"] = self._score(source)
-                    current["best_reason"] = source.get("why_it_matters", "")
-
-        ranked_topics = sorted(
-            topic_map.items(),
-            key=lambda item: (item[1]["score"], item[1]["sources"]),
-            reverse=True,
-        )
-        return tuple(
-            BriefItem(
-                title=topic,
-                summary=self._topic_summary(topic),
-                reason=self._topic_reason(topic, str(meta["best_reason"]), content_plan),
-                action=self._topic_action(topic, content_plan),
-                score=min(98, round(meta["score"] / max(1, meta["sources"]))),
-                tags=tuple(sorted(meta["tags"]))[:4],
-            )
-            for topic, meta in ranked_topics[:4]
-        )
-
     def _selected_publications(self, content_plan: ContentPlan) -> tuple[PlannedPublication, ...]:
         today = today_moscow()
         todays = tuple(
@@ -459,30 +416,6 @@ class DailyBriefService:
             "Именно поэтому сильный экспертный бренд в Operations и Customer Experience строится не на общих словах про сервис, а на способности показывать причину: где система теряет управляемость и что нужно изменить, чтобы результат стал повторяемым."
         )
 
-    def _legacy_drafts(
-        self,
-        topics: tuple[BriefItem, ...],
-        ideas: tuple[BriefItem, ...],
-        author_profile: AuthorProfile,
-    ) -> tuple[Draft, ...]:
-        primary = topics[0]
-        idea = ideas[0] if ideas else None
-        empty_brain: dict[str, object] = {}
-        return (
-            Draft(
-                platform="LinkedIn",
-                title=primary.title,
-                angle=self._platform_angle("LinkedIn", author_profile),
-                text=self._linkedin_draft(primary, idea, author_profile, empty_brain),
-            ),
-            Draft(
-                platform="Telegram",
-                title=idea.title if idea else primary.title,
-                angle=self._platform_angle("Telegram", author_profile),
-                text=self._telegram_draft(primary, idea, author_profile, empty_brain),
-            ),
-        )
-
     def _approvals(self, seed: dict[str, Any], topics: tuple[BriefItem, ...]) -> tuple[ApprovalItem, ...]:
         approvals = [
             ApprovalItem(
@@ -599,14 +532,6 @@ class DailyBriefService:
                 return tag
         return "LinkedIn"
 
-    def _topic_plan_bonus(self, topic: str, content_plan: ContentPlan) -> int:
-        publication = self._planned_publication_for_topic(topic, content_plan)
-        if publication and publication.status in {"planned", "suggested", "drafted", "in_progress", "idea"}:
-            return 12
-        if self._topic_matches_pillar(topic, content_plan):
-            return 6
-        return -8
-
     def _idea_plan_bonus(self, idea: dict[str, Any], content_plan: ContentPlan) -> int:
         related_topics = idea.get("related_topics", ())
         if any(self._planned_publication_for_topic(topic, content_plan) for topic in related_topics):
@@ -615,31 +540,12 @@ class DailyBriefService:
             return 4
         return -4
 
-    def _topic_plan_tags(self, topic: str, content_plan: ContentPlan) -> tuple[str, ...]:
-        publication = self._planned_publication_for_topic(topic, content_plan)
-        if publication:
-            return (publication.platform, publication.status)
-        if self._topic_matches_pillar(topic, content_plan):
-            return ("plan-adjacent",)
-        return ("skipped",)
-
     def _idea_plan_tags(self, idea: dict[str, Any], content_plan: ContentPlan) -> tuple[str, ...]:
         for topic in idea.get("related_topics", ()):
             publication = self._planned_publication_for_topic(topic, content_plan)
             if publication:
                 return (publication.platform, publication.status)
         return ("plan-adjacent",) if self._idea_matches_pillar(idea, content_plan) else ("skipped",)
-
-    def _topic_reason(self, topic: str, base_reason: str, content_plan: ContentPlan) -> str:
-        publication = self._planned_publication_for_topic(topic, content_plan)
-        if publication:
-            return (
-                f"{base_reason} Тема предложена сегодня, потому что стоит в плане недели "
-                f"для {publication.platform} со статусом {_status_label(publication.status)}."
-            )
-        if self._topic_matches_pillar(topic, content_plan):
-            return f"{base_reason} Тема не стоит в расписании напрямую, но поддерживает один из pillars недели."
-        return f"{base_reason} Тема не входит в текущий план, поэтому ее лучше отложить, если не нужен быстрый рыночный комментарий."
 
     def _idea_reason(self, idea: dict[str, Any], content_plan: ContentPlan) -> str:
         base = str(idea["why_now"])
@@ -660,16 +566,6 @@ class DailyBriefService:
             publication = content_plan.planned_publications[0]
             return f"{idea['next_step']} Связать с планом недели: {publication.platform}, статус {_status_label(publication.status)}."
         return f"{idea['next_step']} Если не связано с планом недели, оставить в хранилище идей."
-
-    def _topic_action(self, topic: str, content_plan: ContentPlan) -> str:
-        publication = self._planned_publication_for_topic(topic, content_plan)
-        if publication:
-            return f"Готовить для {publication.platform}: {publication.note}"
-        if "AI" in topic:
-            return "Подготовить пост с сильным тезисом, если нужен рыночный комментарий; иначе отложить."
-        if "SOP" in topic:
-            return "Развить в короткую серию о сервисной дисциплине."
-        return "Использовать как основу для главного черновика дня."
 
     def _planned_publication_for_topic(self, topic: str, content_plan: ContentPlan) -> PlannedPublication | None:
         for publication in content_plan.planned_publications:
@@ -705,18 +601,6 @@ class DailyBriefService:
         if not rule:
             return "Черновик учитывает общий Author Profile."
         return f"Черновик учитывает правило платформы: {rule}"
-
-    def _style_note(self, author_profile: AuthorProfile, platform: str) -> str:
-        favorite = ", ".join(author_profile.vocabulary.favorite_words[:3])
-        rule = _bot_platform_rule(platform)
-        platform_rule = f" Правило платформы: {rule}" if rule else ""
-        return (
-            f"Стиль: {author_profile.structure.post_structure}; "
-            f"вступление — {author_profile.structure.intro_length}; "
-            f"тон — {author_profile.tone.directness}; "
-            f"опорная лексика: {favorite}."
-            f"{platform_rule}"
-        )
 
     def _linkedin_draft(self, topic: BriefItem, idea: BriefItem | None, author_profile: AuthorProfile, author_brain: dict[str, object]) -> str:
         idea_line = f"\n\nЭта мысль особенно хорошо раскрывается через идею: {idea.title}." if idea else ""

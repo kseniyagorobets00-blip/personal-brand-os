@@ -7,7 +7,6 @@ from .author_profile import DEFAULT_AUTHOR_PROFILE_PATH
 from .ai_pipeline import AIPipeline, load_ai_status
 from .daily_brief import DailyBriefService
 from .export import export_daily_brief
-from .generator import PostGenerator
 from .production import run_production_check
 from .web import run_server
 
@@ -18,15 +17,6 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run Personal Brand OS tools.",
     )
     subparsers = parser.add_subparsers(dest="command")
-
-    generate = subparsers.add_parser("generate", help="Generate post variants from a topic.")
-    generate.add_argument("topic", help="Post topic")
-    generate.add_argument(
-        "--platform",
-        choices=("linkedin", "setka"),
-        default="linkedin",
-        help="Target platform tone constraints",
-    )
 
     subparsers.add_parser("daily-brief", help="Print today's Daily Brief summary.")
     subparsers.add_parser("ai-refresh", help="Run AI Pipeline once and save the result.")
@@ -103,16 +93,7 @@ def main() -> None:
         print(path.resolve())
         return
 
-    if args.command is None:
-        parser.print_help()
-        return
-
-    generator = PostGenerator()
-    variants = generator.generate(topic=args.topic, platform=args.platform)
-
-    for variant in variants:
-        print(f"\n=== {variant.name.upper()} ===\n")
-        print(variant.text)
+    parser.print_help()
 
 
 if __name__ == "__main__":
