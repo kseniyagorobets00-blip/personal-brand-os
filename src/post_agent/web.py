@@ -7527,41 +7527,44 @@ def _styles() -> str:
     .plan-row > summary {
       list-style: none;
       cursor: pointer;
-      display: flex;
-      align-items: flex-start;
-      gap: 14px;
-      padding: 14px 16px;
+      display: grid;
+      grid-template-columns: 190px 96px minmax(0, 1fr) 160px 14px;
+      grid-template-areas: "date platform topic status chev";
+      align-items: start;
+      gap: 14px 16px;
+      padding: 15px 16px;
     }
     .plan-row > summary::-webkit-details-marker { display: none; }
     .plan-row-date {
+      grid-area: date;
       color: var(--muted);
       font-size: 13px;
       font-weight: 680;
       white-space: nowrap;
-      flex: 0 0 auto;
-      min-width: 150px;
+      line-height: 1.4;
     }
     .plan-row-platform {
+      grid-area: platform;
       color: var(--accent);
       font-size: 13px;
       font-weight: 700;
       white-space: nowrap;
-      flex: 0 0 auto;
+      line-height: 1.4;
     }
     .plan-row-topic {
-      flex: 1 1 auto;
+      grid-area: topic;
       min-width: 0;
       white-space: normal;
       overflow-wrap: anywhere;
       line-height: 1.4;
       color: var(--ink);
     }
-    .plan-row-date, .plan-row-platform { padding-top: 1px; }
-    .plan-row .status-badge { flex: 0 0 auto; align-self: flex-start; }
+    .plan-row .status-badge { grid-area: status; justify-self: start; align-self: start; white-space: nowrap; }
     .plan-row > summary::after {
       content: "▾";
+      grid-area: chev;
       color: var(--muted);
-      flex: 0 0 auto;
+      line-height: 1.4;
       transition: transform .2s ease;
     }
     .plan-row[open] > summary::after { transform: rotate(180deg); }
@@ -8052,9 +8055,17 @@ def _styles() -> str:
       .meta { justify-content: flex-start; }
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
       .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .memory-categories, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter, .plan-fields { grid-template-columns: 1fr; }
-      .plan-row-head { flex-wrap: wrap; gap: 6px 12px; }
-      .plan-row-date { min-width: 0; }
-      .plan-row-topic { flex-basis: 100%; white-space: normal; }
+      .plan-row > summary {
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+          "topic topic"
+          "date chev"
+          "platform status";
+        gap: 8px 12px;
+        align-items: center;
+      }
+      .plan-row-topic { font-weight: 600; }
+      .plan-row .status-badge { justify-self: end; }
       .calendar-weekdays { display: none; }
       .calendar-grid { grid-template-columns: 1fr; }
       .calendar-day { min-height: auto; }
