@@ -5719,13 +5719,18 @@ def _approval_card(item: ApprovalItem, ui_state: dict[str, object] | None = None
     ui_state = ui_state or _load_ui_state()
     key = _item_key(item.title)
     status = _approval_status(ui_state, key)
-    return f"""
-    <article class="approval" id="{escape(key)}">
-      <h3>{escape(item.title)}</h3>
-      <div class="decision-status {_decision_status_class(status)}">{escape(_decision_status_ru(status))}</div>
-      <p><b>Решение:</b> {escape(item.decision)}</p>
-      <p><b>Рекомендация:</b> {escape(item.recommendation)}</p>
-      <p class="risk"><b>Риск:</b> {escape(item.risk)}</p>
+    # Once a decision is accepted, drop the action buttons — the status chip is the record.
+    if status == "accepted":
+        actions = (
+            "<div class=\"approval-actions\">"
+            "<form method=\"post\" action=\"/daily-brief/approval\">"
+            f"<input type=\"hidden\" name=\"item_key\" value=\"{escape(key)}\">"
+            "<input type=\"hidden\" name=\"status\" value=\"pending\">"
+            "<button class=\"ghost\" type=\"submit\">Изменить решение</button>"
+            "</form></div>"
+        )
+    else:
+        actions = f"""
       <div class="approval-actions">
         <form method="post" action="/daily-brief/approval">
           <input type="hidden" name="item_key" value="{escape(key)}">
@@ -5737,7 +5742,15 @@ def _approval_card(item: ApprovalItem, ui_state: dict[str, object] | None = None
           <input type="hidden" name="status" value="deferred">
           <button class="secondary" type="submit">Вернуться позже</button>
         </form>
-      </div>
+      </div>"""
+    return f"""
+    <article class="approval" id="{escape(key)}">
+      <h3>{escape(item.title)}</h3>
+      <div class="decision-status {_decision_status_class(status)}">{escape(_decision_status_ru(status))}</div>
+      <p><b>Решение:</b> {escape(item.decision)}</p>
+      <p><b>Рекомендация:</b> {escape(item.recommendation)}</p>
+      <p class="risk"><b>Риск:</b> {escape(item.risk)}</p>
+      {actions}
     </article>
     """
 
