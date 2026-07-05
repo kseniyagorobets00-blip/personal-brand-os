@@ -99,8 +99,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
         "<title>Что-то пошло не так</title></head>"
-        "<body style=\"font-family: system-ui, -apple-system, sans-serif; background:#15181b;"
-        " color:#e8e6e0; margin:0; min-height:100vh; display:flex; align-items:center;"
+        "<body style=\"font-family: system-ui, -apple-system, sans-serif; background:#121317;"
+        " color:#ecebf0; margin:0; min-height:100vh; display:flex; align-items:center;"
         " justify-content:center;\">"
         "<div style=\"max-width:440px; padding:32px; text-align:center;\">"
         "<div style=\"font-size:44px; margin-bottom:14px;\" aria-hidden=\"true\">🙂</div>"
@@ -108,7 +108,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         "<p style=\"color:#9aa09a; margin:0 0 22px; line-height:1.5;\">Возможно, ссылка устарела или"
         " такой страницы больше нет. Ничего страшного — вернитесь на главную и продолжайте работу.</p>"
         "<a href=\"/daily-brief\" style=\"display:inline-block; padding:12px 22px; border-radius:999px;"
-        " background:#5aa091; color:#15181b; text-decoration:none; font-weight:700;\">На главную</a>"
+        " background:#f0604a; color:#fff; text-decoration:none; font-weight:700;\">На главную</a>"
         "<p style=\"color:#5a615c; margin:18px 0 0; font-size:12px;\">Код: %(code)d</p>"
         "</div></body></html>"
     )
@@ -6338,34 +6338,23 @@ def _decision_status_class(status: str) -> str:
 def _styles() -> str:
     return """
     :root {
-      color-scheme: light;
-      --bg: #f7f6f2;
-      --paper: #fffefa;
-      --paper-soft: #fbfaf6;
-      --paper-rgb: 255, 254, 250;
-      --ink: #20231f;
-      --muted: #747a72;
-      --line: #e4e0d7;
-      --line-soft: #ece8df;
-      --accent: #315f56;
-      --accent-soft: #eef5f2;
-      --risk: #8c4637;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        color-scheme: dark;
-        --bg: #15181b;
-        --paper: #1c2024;
-        --paper-soft: #20252a;
-        --paper-rgb: 44, 50, 56;
-        --ink: #e8e6e0;
-        --muted: #9aa09a;
-        --line: #333a3f;
-        --line-soft: #2a3034;
-        --accent: #5aa091;
-        --accent-soft: #1e2b28;
-        --risk: #d98a72;
-      }
+      color-scheme: dark;
+      /* Luxury Editorial OS — deep warm graphite with a coral accent. */
+      --bg: #121317;
+      --paper: #1b1d23;
+      --paper-soft: #23252e;
+      --paper-rgb: 27, 29, 35;
+      --ink: #ecebf0;
+      --muted: #989ba8;
+      --line: #2f323d;
+      --line-soft: #262933;
+      --accent: #f0604a;
+      --accent-strong: #ff7358;
+      --accent-soft: rgba(240, 96, 74, .14);
+      --risk: #e6a15f;
+      --radius: 14px;
+      --radius-sm: 10px;
+      --shadow: 0 18px 46px rgba(0, 0, 0, .38);
     }
     * { box-sizing: border-box; }
     html { overflow-x: hidden; }
@@ -6434,19 +6423,24 @@ def _styles() -> str:
       font-size: 13px;
     }
     .meta a, .form-actions a, .open-link {
-      color: var(--accent);
+      color: var(--ink);
       text-decoration: none;
       border: 1px solid var(--line);
       border-radius: 999px;
-      padding: 7px 11px;
-      background: rgba(var(--paper-rgb),.45);
+      padding: 7px 12px;
+      background: var(--paper-soft);
       font-weight: 680;
+      transition: border-color .16s ease, background .16s ease, color .16s ease;
+    }
+    .meta a:hover, .form-actions a:hover, .open-link:hover {
+      border-color: var(--accent);
+      color: var(--ink);
     }
     .global-nav {
       max-width: 760px;
     }
     .meta a.active {
-      color: white;
+      color: #fff;
       background: var(--accent);
       border-color: var(--accent);
     }
@@ -6504,7 +6498,7 @@ def _styles() -> str:
       min-height: 190px;
       background: rgba(var(--paper-rgb), .86);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 20px;
       box-shadow: 0 10px 30px rgba(45, 42, 35, .03);
       min-width: 0;
@@ -6550,11 +6544,11 @@ def _styles() -> str:
       grid-template-columns: minmax(280px, .9fr) minmax(0, 1.35fr);
       gap: 28px;
       margin: 34px 0 26px;
-      padding: 28px;
-      background: rgba(var(--paper-rgb), .9);
+      padding: 30px;
+      background: var(--paper);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
-      box-shadow: 0 14px 38px rgba(45, 42, 35, .04);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
     }
     .today-main h2 {
       font-size: 18px;
@@ -6602,7 +6596,7 @@ def _styles() -> str:
       gap: 18px;
       align-items: flex-start;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: rgba(var(--paper-rgb), .68);
       padding: 14px;
     }
@@ -6642,7 +6636,7 @@ def _styles() -> str:
     }
     .score-grid div {
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 14px;
       background: var(--paper-soft);
     }
@@ -6662,24 +6656,26 @@ def _styles() -> str:
       display: inline-flex;
       min-height: 42px;
       align-items: center;
-      color: white;
+      color: #fff;
       background: var(--accent);
       border-radius: 999px;
-      padding: 10px 14px;
+      padding: 10px 16px;
       text-decoration: none;
       font-weight: 680;
       font-size: 13px;
+      transition: background .16s ease;
     }
+    .primary-action:hover { background: var(--accent-strong); }
     .ai-panel {
       display: flex;
       justify-content: space-between;
       gap: 18px;
       align-items: center;
       margin: 28px 0 0;
-      padding: 18px 20px;
+      padding: 20px 22px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
-      background: rgba(var(--paper-rgb), .78);
+      border-radius: var(--radius);
+      background: var(--paper);
       flex-wrap: wrap;
     }
     .ai-panel h2 {
@@ -6691,10 +6687,10 @@ def _styles() -> str:
       font-size: 14px;
     }
     .ai-running {
-      background: #fbf3e7;
+      background: rgba(240, 190, 90, .10);
     }
     .ai-error, .ai-not_configured {
-      background: #fff6f2;
+      background: rgba(240, 96, 74, .10);
     }
     .ai-diagnostics {
       flex-basis: 100%;
@@ -6758,7 +6754,7 @@ def _styles() -> str:
       gap: 16px;
       padding: 16px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: rgba(var(--paper-rgb), .72);
     }
     .trend-item p {
@@ -6813,20 +6809,25 @@ def _styles() -> str:
       gap: 14px;
     }
     .card, .draft, .approval, .memory {
-      background: rgba(var(--paper-rgb), .86);
+      background: var(--paper);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
-      padding: 20px;
-      box-shadow: 0 10px 30px rgba(45, 42, 35, .035);
+      border-radius: var(--radius);
+      padding: 22px;
+      box-shadow: var(--shadow);
       min-width: 0;
+      transition: border-color .18s ease, transform .18s ease;
+    }
+    .card:hover, .draft:hover, .approval:hover {
+      border-color: var(--line);
+      transform: translateY(-1px);
     }
     .content-plan {
-      background: rgba(var(--paper-rgb), .72);
+      background: var(--paper);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
-      padding: 22px;
+      border-radius: var(--radius);
+      padding: 24px;
       margin: 18px 0 34px;
-      box-shadow: 0 10px 30px rgba(45, 42, 35, .025);
+      box-shadow: var(--shadow);
     }
     .compact-plan {
       margin-top: 0;
@@ -6842,7 +6843,7 @@ def _styles() -> str:
       gap: 6px;
       padding: 14px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: var(--paper-soft);
       min-width: 0;
     }
@@ -6908,7 +6909,7 @@ def _styles() -> str:
       gap: 14px;
       padding: 14px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: var(--paper-soft);
     }
     .plan-item p {
@@ -6943,20 +6944,20 @@ def _styles() -> str:
       align-self: end;
     }
     .status-idea {
-      color: #8a6a10;
-      background: #fff7d8;
+      color: #e6c979;
+      background: rgba(230, 201, 121, .14);
     }
     .status-planned {
-      color: #285c8f;
-      background: #eaf3ff;
+      color: #86b7e6;
+      background: rgba(134, 183, 230, .14);
     }
     .status-in_progress {
-      color: #9a5a12;
-      background: #fff0df;
+      color: #e0a76a;
+      background: rgba(224, 167, 106, .14);
     }
     .status-published {
-      color: #2d6b45;
-      background: #e8f6ed;
+      color: #7bcf9a;
+      background: rgba(123, 207, 154, .14);
     }
     .strategy-grid {
       display: grid;
@@ -6973,7 +6974,7 @@ def _styles() -> str:
       align-items: center;
       gap: 10px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 10px 12px;
       background: var(--paper-soft);
       font-weight: 700;
@@ -6995,7 +6996,7 @@ def _styles() -> str:
     }
     .today-reco {
       margin-top: 16px;
-      color: #303630;
+      color: var(--ink);
     }
     .card-head, .draft-meta, .approval-actions {
       display: flex;
@@ -7029,7 +7030,7 @@ def _styles() -> str:
     .draft-materials {
       margin-top: 16px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: var(--paper-soft);
       padding: 14px;
     }
@@ -7074,23 +7075,30 @@ def _styles() -> str:
       border: 0;
       border-radius: 999px;
       background: var(--accent);
-      color: white;
-      padding: 10px 14px;
+      color: #fff;
+      padding: 10px 16px;
       font: inherit;
       font-size: 13px;
       font-weight: 680;
       cursor: pointer;
       min-height: 42px;
       touch-action: manipulation;
+      transition: background .16s ease, border-color .16s ease, color .16s ease;
     }
+    button:hover { background: var(--accent-strong); }
     button.secondary, button.ghost {
       background: transparent;
       color: var(--ink);
       border: 1px solid var(--line);
     }
+    button.secondary:hover, button.ghost:hover {
+      background: var(--paper-soft);
+      border-color: var(--accent);
+      color: var(--ink);
+    }
     button.ghost {
       color: var(--muted);
-      padding: 7px 10px;
+      padding: 7px 12px;
       font-weight: 620;
     }
     .tags {
@@ -7114,10 +7122,10 @@ def _styles() -> str:
       margin: 16px 0 0;
       white-space: pre-wrap;
       font: inherit;
-      color: #2e332e;
+      color: var(--ink);
       background: var(--paper-soft);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 18px;
       overflow-wrap: anywhere;
     }
@@ -7134,17 +7142,17 @@ def _styles() -> str:
       font-weight: 680;
     }
     .decision-status.is-deferred {
-      background: #fbf3e7;
-      color: #8a5b1f;
+      background: rgba(240, 190, 90, .12);
+      color: #e6c979;
     }
     .decision-status.is-pending {
       background: var(--paper-soft);
       color: var(--muted);
     }
     .error-note {
-      background: #fff5f1;
-      border-color: #f1c8b8;
-      color: var(--risk);
+      background: rgba(240, 96, 74, .12);
+      border-color: rgba(240, 96, 74, .35);
+      color: #f0917d;
     }
     .error-detail {
       margin-top: 8px;
@@ -7162,14 +7170,14 @@ def _styles() -> str:
     .memory ul {
       margin: 14px 0 0;
       padding-left: 20px;
-      color: #343934;
+      color: var(--muted);
     }
     .notice {
       margin: 28px 0 0;
       background: var(--accent-soft);
       color: var(--accent);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 14px 16px;
       font-weight: 680;
     }
@@ -7180,11 +7188,11 @@ def _styles() -> str:
     }
     .knowledge-upload {
       margin: 32px 0;
-      background: rgba(var(--paper-rgb), .86);
+      background: var(--paper);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
-      padding: 22px;
-      box-shadow: 0 10px 30px rgba(45, 42, 35, .025);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
     }
     .memory-categories {
       display: grid;
@@ -7195,7 +7203,7 @@ def _styles() -> str:
     .memory-category {
       background: rgba(var(--paper-rgb), .72);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 16px;
       color: var(--ink);
       text-decoration: none;
@@ -7247,7 +7255,7 @@ def _styles() -> str:
       margin: 18px 0 0;
       padding: 16px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: rgba(var(--paper-rgb), .72);
     }
     .period-picker input {
@@ -7275,7 +7283,7 @@ def _styles() -> str:
     .calendar-day {
       min-height: 118px;
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 10px;
       background: rgba(var(--paper-rgb), .72);
       min-width: 0;
@@ -7296,7 +7304,7 @@ def _styles() -> str:
       gap: 2px;
       margin-top: 6px;
       padding: 8px;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: var(--accent-soft);
       color: var(--ink);
       text-decoration: none;
@@ -7379,7 +7387,7 @@ def _styles() -> str:
       background: rgba(120,120,120,0.06);
     }
     .pointer-note a { font-weight: 680; }
-    .repeat-note { color: #9a6a12; background: #fff6e6; border-radius: 8px; padding: 6px 10px; }
+    .repeat-note { color: #f0c975; background: rgba(240,190,90,0.12); border-radius: var(--radius-sm); padding: 6px 10px; }
     .hw-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 14px 0 20px; color: var(--muted); font-size: 0.9rem; }
     .hw-flow { display: flex; flex-direction: column; align-items: stretch; }
     .hw-stage { display: flex; gap: 14px; padding: 16px; border: 1px solid rgba(120,120,120,0.2); border-radius: 14px; background: rgba(120,120,120,0.04); }
@@ -7392,7 +7400,6 @@ def _styles() -> str:
     .hw-what { margin: 6px 0 4px; }
     .hw-feeds { color: var(--muted); font-size: 0.92rem; margin: 0; }
     .hw-arrow { text-align: center; color: var(--muted); font-size: 1.1rem; line-height: 1.6; }
-    @media (prefers-color-scheme: dark) { .repeat-note { color: #f0c975; background: rgba(240,190,90,0.12); } }
     .gates-banner {
       display: flex;
       align-items: center;
@@ -7400,12 +7407,12 @@ def _styles() -> str:
       gap: 16px;
       flex-wrap: wrap;
       padding: 14px 18px;
-      border-radius: 14px;
-      background: #fff6e6;
-      border: 1px solid #f0d9a8;
+      border-radius: var(--radius);
+      background: rgba(240,190,90,0.12);
+      border: 1px solid rgba(240,190,90,0.35);
     }
-    .gates-text strong { display: block; color: #7a5a12; }
-    .gates-text span { color: #9a7b3a; font-size: 0.92rem; }
+    .gates-text strong { display: block; color: #f0c975; }
+    .gates-text span { color: #c9a960; font-size: 0.92rem; }
     .gates-action {
       flex: 0 0 auto;
       font-weight: 680;
@@ -7414,11 +7421,6 @@ def _styles() -> str:
       border-radius: 999px;
       background: var(--accent);
       color: #fff;
-    }
-    @media (prefers-color-scheme: dark) {
-      .gates-banner { background: rgba(240,190,90,0.12); border-color: rgba(240,190,90,0.35); }
-      .gates-text strong { color: #f0c975; }
-      .gates-text span { color: #c9a960; }
     }
     .mode-list {
       display: grid;
@@ -7467,7 +7469,7 @@ def _styles() -> str:
     .knowledge-card, .document-view {
       background: rgba(var(--paper-rgb), .86);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 18px;
     }
     .knowledge-card {
@@ -7562,7 +7564,7 @@ def _styles() -> str:
     .empty {
       color: var(--muted);
       border: 1px dashed var(--line);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 24px;
       background: rgba(var(--paper-rgb),.35);
       text-align: center;
@@ -7572,11 +7574,11 @@ def _styles() -> str:
       border-color: rgba(140, 70, 55, .3);
     }
     .profile-section {
-      background: rgba(var(--paper-rgb), .86);
+      background: var(--paper);
       border: 1px solid var(--line-soft);
-      border-radius: 8px;
-      padding: 22px;
-      box-shadow: 0 10px 30px rgba(45, 42, 35, .025);
+      border-radius: var(--radius);
+      padding: 24px;
+      box-shadow: var(--shadow);
     }
     .form-grid {
       display: grid;
@@ -7593,14 +7595,17 @@ def _styles() -> str:
     input, textarea {
       width: 100%;
       border: 1px solid var(--line);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       background: var(--paper-soft);
       color: var(--ink);
       padding: 11px 12px;
       font: inherit;
       resize: vertical;
       min-height: 44px;
+      transition: border-color .16s ease;
     }
+    input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
+    input:focus, textarea:focus, select:focus { border-color: var(--accent); }
     select {
       width: 100%;
       border: 1px solid var(--line);
@@ -7610,6 +7615,7 @@ def _styles() -> str:
       padding: 9px 12px;
       font: inherit;
       min-height: 44px;
+      transition: border-color .16s ease;
     }
     .form-actions {
       display: flex;
@@ -7667,13 +7673,5 @@ def _styles() -> str:
       .approval-actions, .refine, .form-actions, .today-actions, .topic-actions { display: grid; grid-template-columns: 1fr; }
       .approval-actions button, .refine button, .form-actions button, .form-actions a, .today-actions button, .today-actions a, .topic-actions button, .ai-panel button { width: 100%; justify-content: center; text-align: center; }
       .summary-card { min-height: auto; }
-    }
-    /* Dark-mode overrides for the few warm-tint surfaces; placed last so source order wins. */
-    @media (prefers-color-scheme: dark) {
-      .ai-running { background: rgba(240,190,90,.12); }
-      .ai-error, .ai-not_configured { background: rgba(217,138,114,.12); }
-      .status-idea { color: #e0c06a; background: rgba(224,192,90,.14); }
-      .status-in_progress { color: #e0a76a; background: rgba(224,167,106,.14); }
-      .error-note { background: rgba(217,138,114,.12); border-color: rgba(217,138,114,.35); }
     }
     """
