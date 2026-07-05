@@ -2791,8 +2791,8 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
         <div class="state-note">Период: {escape(_format_week_range(week_start, week_end))}</div>
         {_textarea("focus", "Фокус недели", plan.get("focus", ""))}
         <input type="hidden" name="today_recommendation" value="{escape(str(plan.get("today_recommendation", "")))}">
-        {_textarea("content_pillars", "Опорные темы", list_to_text(plan.get("content_pillars", [])))}
-        {_textarea("platform_targets", "Площадки", list_to_text(plan.get("platform_targets", [])))}
+        <input type="hidden" name="content_pillars" value="{escape(list_to_text(plan.get("content_pillars", [])))}">
+        <input type="hidden" name="platform_targets" value="{escape(list_to_text(plan.get("platform_targets", [])))}">
       </section>
       <section class="profile-section">
         <p class="eyebrow">публикации</p>

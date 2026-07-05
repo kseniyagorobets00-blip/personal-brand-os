@@ -183,7 +183,7 @@ class DailyBriefTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "sources.json").write_text('{"sources": [], "ideas": [], "approval_items": []}', encoding="utf-8")
-            future = (date.today() + timedelta(days=5)).isoformat()
+            future = (today_moscow() + timedelta(days=5)).isoformat()
             (root / "content_plan.json").write_text(
                 json.dumps(
                     {
