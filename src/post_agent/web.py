@@ -1607,17 +1607,40 @@ def _ai_synthesize_trends(
     if not gateway.is_configured() or not signals:
         return []
     profile = author_brain.get("profile", author_brain) if isinstance(author_brain, dict) else {}
-    themes = []
-    if isinstance(profile, dict):
-        for theme in profile.get("main_themes", [])[:10] if isinstance(profile.get("main_themes"), list) else []:
-            themes.append(theme.get("name", "") if isinstance(theme, dict) else str(theme))
+    profile = profile if isinstance(profile, dict) else {}
+
+    def _names(value: object, limit: int) -> list[str]:
+        items: list[str] = []
+        if isinstance(value, list):
+            for entry in value[:limit]:
+                if isinstance(entry, dict):
+                    items.append(str(entry.get("name") or entry.get("idea") or entry.get("title") or ""))
+                else:
+                    items.append(str(entry))
+        return [item for item in items if item.strip()]
+
+    themes = _names(profile.get("main_themes"), 12)
+    key_ideas = _names(profile.get("key_ideas"), 12)
+    author_cases = [
+        str(case.get("title") or case.get("project") or case.get("company") or "")
+        for case in (profile.get("cases", []) if isinstance(profile.get("cases"), list) else [])
+        if isinstance(case, dict)
+    ]
+    author_cases = [c for c in author_cases if c.strip()][:8]
+    principles = _names(profile.get("author_principles"), 8)
+    observations = _names(profile.get("author_observations"), 8)
     pillars = content_plan.get("content_pillars", [])
+    expertise = ", ".join(themes[:6]) or "Operations, Customer Experience, Hospitality, AI в бизнесе, управленческие системы"
     author_context = {
-        "main_themes": [t for t in themes if t],
+        "main_themes": themes,
+        "key_ideas": key_ideas,
+        "author_cases": author_cases,
+        "author_principles": principles,
+        "author_observations": observations,
         "week_focus": str(content_plan.get("focus", "")),
         "month_focus": str(content_plan.get("month_focus", "")),
         "content_pillars": [str(p) for p in pillars] if isinstance(pillars, list) else [],
-        "expertise": "Operations, Customer Experience, Hospitality, AI в бизнесе, управленческие системы",
+        "expertise": expertise,
     }
     trimmed_signals = [
         {
@@ -1632,18 +1655,24 @@ def _ai_synthesize_trends(
         response = _complete_json_with_retry(
             gateway,
             system_prompt=(
-                "Ты AI-аналитик трендов и Chief Content Officer для эксперта по операциям, "
-                "клиентскому опыту, гостеприимству, AI в бизнесе и управленческим системам. "
-                "Тебе дают свежие заголовки и аннотации из мировых СМИ и отраслевых источников. "
-                "Твоя задача — не пересказывать отдельные новости, а СИНТЕЗИРОВАТЬ глобальные тренды: "
-                "объединять похожие сигналы в 6-10 крупных тем, релевантных экспертной территории автора, "
-                "и для каждой дать авторский редакционный угол. Отвечай строго JSON."
+                "Ты редакционный стратег КОНКРЕТНОГО автора, а не универсальный AI-аналитик новостей. "
+                "Свежие сигналы СМИ — это только сырьё. Главное — темы, ключевые идеи, кейсы, принципы и "
+                "наблюдения автора из его КОНТЕКСТА. Отбирай и формулируй тренды через призму автора: "
+                "бери только то, что реально пересекается с его экспертной территорией и взглядами, и "
+                "отбрасывай сигналы, к которым автору нечего добавить от себя. "
+                "Не пересказывай новости и не выдавай общие отраслевые обзоры — синтезируй тренды, которые "
+                "автор мог бы раскрыть своим голосом, опираясь на свои идеи и кейсы. Отвечай строго JSON."
             ),
             user_prompt=(
-                "СВЕЖИЕ СИГНАЛЫ ИЗ СМИ (JSON):\n"
-                f"{json.dumps(trimmed_signals, ensure_ascii=False)}\n\n"
-                "КОНТЕКСТ АВТОРА (JSON):\n"
+                "КОНТЕКСТ АВТОРА — ГЛАВНЫЙ ОРИЕНТИР (JSON):\n"
                 f"{json.dumps(author_context, ensure_ascii=False)}\n\n"
+                "СВЕЖИЕ СИГНАЛЫ ИЗ СМИ — ТОЛЬКО СЫРЬЁ ДЛЯ ПРИВЯЗКИ (JSON):\n"
+                f"{json.dumps(trimmed_signals, ensure_ascii=False)}\n\n"
+                "ПРАВИЛА ОТБОРА:\n"
+                "1. Каждый тренд ОБЯЗАН пересекаться хотя бы с одной main_theme, key_idea или экспертизой автора.\n"
+                "2. Если сигнал не связан с территорией автора — не включай его, даже если он громкий.\n"
+                "3. author_angle и expertise_connection формулируй через конкретные идеи/кейсы автора, а не общими словами.\n"
+                "4. Лучше 5-8 по-настоящему релевантных автору трендов, чем 10 общих. Сортируй по релевантности автору.\n\n"
                 "Верни строго JSON вида: {\"trends\": [ {\n"
                 "  \"title\": \"редакционная формулировка глобального тренда (не заголовок новости)\",\n"
                 "  \"category\": \"AI|Operations|Customer Experience|Hospitality|Management\",\n"
@@ -2869,9 +2898,12 @@ def _generate_post_text(title: str, platform: str, brief: str) -> dict[str, obje
         response = _complete_json_with_retry(
             gateway,
             system_prompt=(
-                "Ты AI Chief Content Officer для Personal Brand OS. "
-                "Напиши готовый к публикации пост от лица автора строго по брифу и в его стиле "
-                "(Author Brain, Writing DNA, правила площадки). Не добавляй пояснений от себя. "
+                "Ты пишешь от лица КОНКРЕТНОГО автора, а не как универсальный AI-копирайтер. "
+                "Опирайся прежде всего на его материал из контекста: ключевые идеи, кейсы, наблюдения, "
+                "принципы, темы и Writing DNA. Это не общий экспертный пост из интернета, а ход мысли "
+                "именно этого автора: его формулировки, его примеры, его взгляд. "
+                "Не добавляй общих мест, банальностей и «универсальных советов», которых нет в его картине мира. "
+                "Соблюдай правила площадки и запрещённые начала. Не добавляй пояснений от себя. "
                 "Ответь строго JSON с единственным полем draft."
             ),
             user_prompt=(
@@ -2879,9 +2911,11 @@ def _generate_post_text(title: str, platform: str, brief: str) -> dict[str, obje
                 f"Язык: {language}. {_language_policy_for_platform(norm_platform)}\n"
                 f"Тема: {title}\n"
                 f"Задание (бриф):\n{brief or '—'}\n\n"
-                "Напиши полный текст поста: сильное начало без запрещённых клише, "
-                "структура по правилам рубрики, живой авторский тон, без общих мест.\n"
-                f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
+                "МАТЕРИАЛ АВТОРА — ГЛАВНЫЙ ИСТОЧНИК (JSON). Строй пост на нём, а не на общих знаниях:\n"
+                f"{json.dumps(context, ensure_ascii=False)}\n\n"
+                "Напиши полный текст поста: сильное начало без запрещённых клише, структура по правилам "
+                "рубрики, живой авторский тон, конкретика из материала автора вместо общих мест. "
+                "Если по теме есть подходящие идеи/кейсы/наблюдения автора — используй именно их.\n"
                 "Верни строго JSON: {\"draft\": \"полный текст поста\"}."
             ),
             action="text_post_generate",
@@ -2922,10 +2956,12 @@ def _revise_post_text(current_text: str, instruction: str, title: str, platform:
         response = _complete_json_with_retry(
             gateway,
             system_prompt=(
-                "Ты AI-редактор для Personal Brand OS. Тебе дают ГОТОВЫЙ текст поста автора и "
+                "Ты AI-редактор конкретного автора. Тебе дают ГОТОВЫЙ текст поста автора и "
                 "точные правки от автора. Внеси ИМЕННО эти правки, сохрани авторский текст, тон и "
-                "структуру там, где правки их не затрагивают. Не переписывай пост с нуля, не добавляй "
-                "пояснений от себя, соблюдай Writing DNA и правила площадки. Ответь строго JSON с полем draft."
+                "структуру там, где правки их не затрагивают. Не переписывай пост с нуля. "
+                "Где нужно что-то добавить — бери материал автора из контекста (его идеи, кейсы, наблюдения), "
+                "а не общие формулировки из интернета. Не добавляй пояснений от себя, соблюдай Writing DNA и "
+                "правила площадки. Ответь строго JSON с полем draft."
             ),
             user_prompt=(
                 f"Площадка: {norm_platform}\n"
@@ -2933,7 +2969,8 @@ def _revise_post_text(current_text: str, instruction: str, title: str, platform:
                 f"Тема: {title}\n\n"
                 f"ТЕКУЩИЙ ТЕКСТ ПОСТА:\n{current_text}\n\n"
                 f"ПРАВКИ АВТОРА (примени точно и только их):\n{instruction}\n\n"
-                f"Контекст автора и продукта: {json.dumps(context, ensure_ascii=False)}\n\n"
+                "МАТЕРИАЛ АВТОРА для любых добавлений (JSON) — опирайся на него, а не на общие знания:\n"
+                f"{json.dumps(context, ensure_ascii=False)}\n\n"
                 "Верни строго JSON: {\"draft\": \"полный обновлённый текст поста\"}."
             ),
             action="text_post_revise",
