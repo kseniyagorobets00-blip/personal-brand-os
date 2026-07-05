@@ -708,97 +708,6 @@ def render_daily_brief(brief: DailyBrief) -> str:
 </html>"""
 
 
-def render_author_profile(profile: dict[str, object], saved: bool = False) -> str:
-    tone = profile.get("tone", {})
-    structure = profile.get("structure", {})
-    vocabulary = profile.get("vocabulary", {})
-    platform_rules = profile.get("platform_rules", {})
-    platform_goals = profile.get("platform_goals", {})
-    what_not_to_write = profile.get("what_not_to_write", [])
-    examples_and_stories = profile.get("examples_and_stories", [])
-    saved_notice = "<div class=\"notice\">Author Profile сохранен. Новые черновики будут учитывать эти правила.</div>" if saved else ""
-    return f"""<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Author Profile - Personal Brand OS</title>
-  <style>{_styles()}</style>
-</head>
-<body>
-  <main class="shell">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">стиль автора</p>
-        <h1>Author Profile</h1>
-      </div>
-      {_global_nav("profile")}
-    </header>
-    {saved_notice}
-    <form class="profile-form" method="post" action="/author-profile">
-      <section class="profile-section">
-        <p class="eyebrow">тон</p>
-        <div class="form-grid">
-          {_input("formality", "Уровень формальности", tone.get("formality", ""))}
-          {_input("directness", "Прямота", tone.get("directness", ""))}
-          {_input("provocation", "Провокационность", tone.get("provocation", ""))}
-          {_input("emotionality", "Эмоциональность", tone.get("emotionality", ""))}
-        </div>
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">структура</p>
-        <div class="form-grid">
-          {_textarea("post_structure", "Как строятся посты", structure.get("post_structure", ""))}
-          {_textarea("intro_length", "Длина вступления", structure.get("intro_length", ""))}
-          {_textarea("narrative_logic", "Логика повествования", structure.get("narrative_logic", ""))}
-          {_textarea("conclusion", "Вывод", structure.get("conclusion", ""))}
-        </div>
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">лексика</p>
-        <div class="form-grid">
-          {_textarea("favorite_words", "Любимые слова", list_to_text(vocabulary.get("favorite_words", [])))}
-          {_textarea("unwanted_words", "Нежелательные слова", list_to_text(vocabulary.get("unwanted_words", [])))}
-          {_textarea("banned_cliches", "Запрещенные клише", list_to_text(vocabulary.get("banned_cliches", [])))}
-          {_textarea("professional_terms", "Профессиональная терминология", list_to_text(vocabulary.get("professional_terms", [])))}
-        </div>
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">правила площадок</p>
-        <div class="form-grid">
-          {_textarea("platform_linkedin", "LinkedIn", platform_rules.get("LinkedIn", ""))}
-          {_textarea("platform_telegram", "Telegram", platform_rules.get("Telegram", ""))}
-          {_textarea("platform_vc", "VC", platform_rules.get("VC", ""))}
-          {_textarea("platform_setka", "Сетка", platform_rules.get("Сетка", ""))}
-        </div>
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">цели площадок</p>
-        <div class="form-grid">
-          {_textarea("goal_linkedin", "LinkedIn", platform_goals.get("LinkedIn", ""))}
-          {_textarea("goal_telegram", "Telegram", platform_goals.get("Telegram", ""))}
-          {_textarea("goal_vc", "VC", platform_goals.get("VC", ""))}
-          {_textarea("goal_setka", "Сетка", platform_goals.get("Сетка", ""))}
-        </div>
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">чего не писать</p>
-        {_textarea("what_not_to_write", "Правила запретов", list_to_text(what_not_to_write))}
-      </section>
-      <section class="profile-section">
-        <p class="eyebrow">примеры и истории</p>
-        {_textarea("examples_and_stories", "Жизненные примеры и ситуации", _stories_to_text(examples_and_stories))}
-      </section>
-      <div class="form-actions">
-        <button type="submit">Сохранить Author Profile</button>
-        <a href="/daily-brief">Вернуться к дневному брифу</a>
-      </div>
-    </form>
-  </main>
-</body>
-</html>"""
-
-
 def render_author_profile(
     profile: dict[str, object],
     saved: bool = False,
@@ -1066,7 +975,7 @@ def _writing_dna_panel(dna: dict[str, object], profile: dict[str, object]) -> st
           {_textarea("paragraphs", "Структура абзацев", dna.get("paragraphs", ""))}
           {_textarea("allowed_phrases", "Допустимые приемы", list_to_text(dna.get("allowed_phrases", [])))}
           {_textarea("argumentation_patterns", "Паттерны аргументации", list_to_text(dna.get("argumentation_patterns", [])))}
-          {_textarea("forbidden_openings", "Запреты", list_to_text(dna.get("forbidden_openings", [])))}
+          <p class="pointer-note">Запрещённые начала текста теперь редактируются на вкладке <a href="/bot-rules">«Правила бота»</a> — единый источник для AI.</p>
           {_textarea("draft_rule", "Правило первого черновика", dna.get("draft_rule", ""))}
           {_textarea("self_check", "Самопроверка", list_to_text(dna.get("self_check", [])))}
           {_textarea("anti_template_rule", "Не превращать в шаблон", dna.get("anti_template_rule", ""))}
@@ -1514,7 +1423,7 @@ def render_writing_dna(dna: dict[str, object], saved: bool = False) -> str:
       <section class="profile-section">
         <p class="eyebrow">логика рассуждения</p>
         {_textarea("argumentation_patterns", "Паттерны аргументации", list_to_text(dna.get("argumentation_patterns", [])))}
-        {_textarea("forbidden_openings", "Запрещенные AI-вступления", list_to_text(dna.get("forbidden_openings", [])))}
+        <p class="pointer-note">Запрещённые начала текста теперь редактируются на вкладке <a href="/bot-rules">«Правила бота»</a> — единый источник для AI.</p>
       </section>
       <section class="profile-section">
         <p class="eyebrow">первый черновик</p>
@@ -6708,6 +6617,16 @@ def _styles() -> str:
       font-size: 0.92rem;
       margin: 4px 0 12px;
     }
+    .pointer-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.5;
+      padding: 12px 14px;
+      border: 1px dashed rgba(120,120,120,0.35);
+      border-radius: 12px;
+      background: rgba(120,120,120,0.06);
+    }
+    .pointer-note a { font-weight: 680; }
     .mode-list {
       display: grid;
       gap: 10px;

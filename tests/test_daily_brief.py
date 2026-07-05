@@ -328,7 +328,9 @@ class DailyBriefTests(unittest.TestCase):
 
         self.assertIn("Writing DNA", html)
         self.assertIn("Как рождаются публикации", html)
-        self.assertIn("Запрещенные AI-вступления", html)
+        # Forbidden openings now live in a single place ("Правила бота"); the DNA page points there.
+        self.assertNotIn("Запрещенные AI-вступления", html)
+        self.assertIn("Запрещённые начала текста теперь редактируются", html)
         self.assertIn("Сохранить Writing DNA", html)
 
     def test_content_plan_page_renders_editable_plan(self) -> None:

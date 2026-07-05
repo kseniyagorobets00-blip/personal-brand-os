@@ -241,7 +241,8 @@ class AuthorBrain:
         return str(goals.get(platform, "")) if isinstance(goals, dict) else ""
 
     def _platform_rule(self, platform: str) -> str:
-        rules = self.author_profile.get("platform_rules", {})
+        # Single source of truth for platform rules: the editable "Правила бота" store.
+        rules = self._rules().get("platform_rules", {})
         return str(rules.get(platform, "")) if isinstance(rules, dict) else ""
 
     def _what_not_to_write(self) -> list[str]:
@@ -250,9 +251,9 @@ class AuthorBrain:
         return [*rules, *[item for item in dna_rules if item], "не начинать с определения понятия", "не звучать как универсальный консультант или ChatGPT"]
 
     def _forbidden_openings(self) -> list[str]:
-        configured = _as_str_list(self.writing_dna.get("forbidden_openings", []))
+        # Single source of truth: the editable "Правила бота" store.
         rules = _as_str_list(self._rules().get("forbidden_openings", []))
-        return configured or rules or list(FORBIDDEN_OPENINGS)
+        return rules or list(FORBIDDEN_OPENINGS)
 
     def _examples_and_stories(self, query: str) -> list[dict[str, object]]:
         stories = self.author_profile.get("examples_and_stories", [])

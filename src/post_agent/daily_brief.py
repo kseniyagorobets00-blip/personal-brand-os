@@ -34,6 +34,14 @@ def today_moscow() -> date:
     return datetime.now(MOSCOW_TZ).date()
 
 
+def _bot_platform_rule(platform: str) -> str:
+    """Platform rule from the single editable source ("Правила бота")."""
+    from .bot_rules import load_bot_rules
+
+    rules = load_bot_rules().get("platform_rules", {})
+    return str(rules.get(platform, "")) if isinstance(rules, dict) else ""
+
+
 def parse_plan_date(value: str) -> date | None:
     raw = value.strip()
     for fmt in PLAN_DATE_FORMATS:
@@ -693,15 +701,15 @@ class DailyBriefService:
         return summaries.get(topic, "Тема связана с текущими сигналами и подходит для экспертной позиции автора.")
 
     def _platform_angle(self, platform: str, author_profile: AuthorProfile) -> str:
-        rule = author_profile.rule_for_platform(platform)
+        rule = _bot_platform_rule(platform)
         if not rule:
             return "Черновик учитывает общий Author Profile."
-        return f"Черновик учитывает правило платформы: {rule.rule}"
+        return f"Черновик учитывает правило платформы: {rule}"
 
     def _style_note(self, author_profile: AuthorProfile, platform: str) -> str:
         favorite = ", ".join(author_profile.vocabulary.favorite_words[:3])
-        rule = author_profile.rule_for_platform(platform)
-        platform_rule = f" Правило платформы: {rule.rule}" if rule else ""
+        rule = _bot_platform_rule(platform)
+        platform_rule = f" Правило платформы: {rule}" if rule else ""
         return (
             f"Стиль: {author_profile.structure.post_structure}; "
             f"вступление — {author_profile.structure.intro_length}; "
