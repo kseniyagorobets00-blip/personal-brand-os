@@ -113,6 +113,22 @@ class DailyBriefTests(unittest.TestCase):
         self.assertTrue(brief.topics)
         self.assertTrue(all("из контент-плана" in item.tags for item in brief.topics))
 
+    def test_gates_banner_surfaces_pending_gates(self) -> None:
+        from post_agent.web import _gates_banner
+
+        # Hidden when nothing is waiting.
+        self.assertEqual(_gates_banner(0, 0), "")
+        # Shown with counts and a link to where to resolve them.
+        banner = _gates_banner(2, 3)
+        self.assertIn("2 материалов памяти", banner)
+        self.assertIn("3 правил обучения", banner)
+        self.assertIn("AI их не использует", banner)
+        self.assertIn("/author-profile?tab=rules", banner)
+        # Only one gate present -> only that one is mentioned.
+        only_memory = _gates_banner(1, 0)
+        self.assertIn("материалов памяти", only_memory)
+        self.assertNotIn("правил обучения", only_memory)
+
     def test_daily_brief_shows_free_day_when_no_publication_today(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)

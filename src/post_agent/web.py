@@ -125,7 +125,13 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/", "/daily-brief"):
-            self._send_html(render_daily_brief(self.service.build_today()))
+            self._send_html(
+                render_daily_brief(
+                    self.service.build_today(),
+                    pending_memory=len(self.memory_inbox.list_items("pending")),
+                    pending_lessons=len(self.learning_center.list_lessons("candidate")),
+                )
+            )
             return
         if path == "/author-profile":
             query = parse_qs(urlparse(self.path).query)
@@ -652,7 +658,26 @@ def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
     server.serve_forever()
 
 
-def render_daily_brief(brief: DailyBrief) -> str:
+def _gates_banner(pending_memory: int, pending_lessons: int) -> str:
+    if pending_memory <= 0 and pending_lessons <= 0:
+        return ""
+    parts: list[str] = []
+    if pending_memory > 0:
+        parts.append(f"{pending_memory} материалов памяти")
+    if pending_lessons > 0:
+        parts.append(f"{pending_lessons} правил обучения")
+    what = " и ".join(parts)
+    return f"""
+    <div class="gates-banner">
+      <div class="gates-text">
+        <strong>{escape(what)} ждут вашего решения.</strong>
+        <span>Пока вы их не подтвердите, AI их не использует.</span>
+      </div>
+      <a class="gates-action" href="/author-profile?tab=rules">Открыть и решить →</a>
+    </div>"""
+
+
+def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lessons: int = 0) -> str:
     primary_topic = brief.topics[0] if brief.topics else None
     primary_idea = brief.ideas[0] if brief.ideas else None
     primary_recommendation = brief.recommendations[0] if brief.recommendations else None
@@ -677,6 +702,8 @@ def render_daily_brief(brief: DailyBrief) -> str:
       </div>
       {_global_nav("daily", brief.brief_date.strftime("%d.%m.%Y"))}
     </header>
+
+    {_gates_banner(pending_memory, pending_lessons)}
 
     {_ai_status_block(ai_status, ai_result)}
 
@@ -6627,6 +6654,33 @@ def _styles() -> str:
       background: rgba(120,120,120,0.06);
     }
     .pointer-note a { font-weight: 680; }
+    .gates-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      padding: 14px 18px;
+      border-radius: 14px;
+      background: #fff6e6;
+      border: 1px solid #f0d9a8;
+    }
+    .gates-text strong { display: block; color: #7a5a12; }
+    .gates-text span { color: #9a7b3a; font-size: 0.92rem; }
+    .gates-action {
+      flex: 0 0 auto;
+      font-weight: 680;
+      text-decoration: none;
+      padding: 9px 16px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #fff;
+    }
+    @media (prefers-color-scheme: dark) {
+      .gates-banner { background: rgba(240,190,90,0.12); border-color: rgba(240,190,90,0.35); }
+      .gates-text strong { color: #f0c975; }
+      .gates-text span { color: #c9a960; }
+    }
     .mode-list {
       display: grid;
       gap: 10px;
