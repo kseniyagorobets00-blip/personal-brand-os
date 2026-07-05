@@ -3268,11 +3268,78 @@ def _merge_strategy_publication(base: dict[str, str], generated: dict[str, objec
     return merged
 
 
+def _match_trend_to_publication(publication: dict[str, object], trend_cache: dict[str, object]) -> dict[str, object] | None:
+    """Deterministically pick the best trend for one plan cell (by platform, rubric, score).
+
+    Gives the AI a concrete trend per cell instead of the whole undifferentiated list.
+    """
+    topics = trend_cache.get("topics", []) if isinstance(trend_cache, dict) else []
+    if not isinstance(topics, list) or not topics:
+        return None
+    platform = _normalize_platform(str(publication.get("platform", "")))
+    rubric = _normalize_rubric(str(publication.get("rubric") or publication.get("pillar") or publication.get("format") or ""))
+
+    def score(topic: dict[str, object]) -> float:
+        if not isinstance(topic, dict):
+            return -100.0
+        value = float(topic.get("trend_score", 0) or 0) + float(topic.get("brand_fit_score", 0) or 0) * 0.5
+        best_formats = [str(item) for item in topic.get("best_formats", []) if isinstance(topic.get("best_formats"), list)]
+        best_rubrics = [str(item) for item in topic.get("best_rubrics", []) if isinstance(topic.get("best_rubrics"), list)]
+        if platform and platform in best_formats:
+            value += 3.0
+        if rubric and rubric in best_rubrics:
+            value += 2.0
+        if str(topic.get("recommendation", "")) == "не брать":
+            value -= 5.0
+        return value
+
+    best = max((topic for topic in topics if isinstance(topic, dict)), key=score, default=None)
+    if best is None or score(best) <= 0:
+        return None
+    ideas = best.get("publication_ideas", {})
+    return {
+        "title": str(best.get("title", "")),
+        "essence": str(best.get("trend_essence", "")),
+        "main_idea": str(best.get("main_idea", "")),
+        "why_now": str(best.get("why_trend", "")),
+        "platform_angle": str(ideas.get(platform, "")) if isinstance(ideas, dict) else "",
+        "trend_score": best.get("trend_score", 0),
+        "brand_fit_score": best.get("brand_fit_score", 0),
+        "recommendation": str(best.get("recommendation", "")),
+    }
+
+
 def _content_plan_ai_context(target: dict[str, object] | None = None) -> dict[str, object]:
     context = DailyBriefRequestHandler.ai_context_engine.build(target or {}, include_local_sources=True)
     context["editorial_strategy"] = _load_editorial_strategy()
     context["rubric_library"] = RUBRIC_LIBRARY
     context["accepted_lessons"] = lessons_for_prompt(DailyBriefRequestHandler.learning_center.list_lessons("accepted"))
+    trend_cache = context.get("trend_radar", {})
+    trend_cache = trend_cache if isinstance(trend_cache, dict) else {}
+    if target:
+        matched = _match_trend_to_publication(target, trend_cache)
+        if matched:
+            context["matched_trend"] = matched
+    # Per-cell trend matches for the whole-week generator, so trend -> plan is wired in code.
+    content_plan = context.get("content_plan", {})
+    publications = content_plan.get("planned_publications", []) if isinstance(content_plan, dict) else []
+    trend_matches = []
+    if isinstance(publications, list):
+        for item in publications:
+            if not isinstance(item, dict):
+                continue
+            matched = _match_trend_to_publication(item, trend_cache)
+            if matched:
+                trend_matches.append(
+                    {
+                        "date": str(item.get("date", "")),
+                        "platform": str(item.get("platform", "")),
+                        "rubric": str(item.get("rubric", item.get("pillar", ""))),
+                        "matched_trend": matched,
+                    }
+                )
+    if trend_matches:
+        context["trend_matches"] = trend_matches
     return context
 
 
@@ -3700,6 +3767,9 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
                     "нельзя выносить английское название в тему для русской площадки. Извлеки смысл и сформулируй тему по-русски. "
                     "Английские слова допустимы только как отдельные термины (SOP, CX), но не как английское предложение-заголовок.\n"
                     "Не делай дословный перевод тренда или источника. Извлеки смысл, свяжи с Author Brain, Editorial Strategy, Memory и сформулируй новую редакционную тему под площадку.\n\n"
+                    "Для этой ячейки уже подобран подходящий тренд в поле context.matched_trend (если он есть). "
+                    "Возьми его за отправную точку: используй его смысл (essence, main_idea, platform_angle), но переформулируй под площадку и на её языке. "
+                    "Если matched_trend пустой — используй evergreen-тему из Knowledge.\n\n"
                     f"Правила рубрики: {_publication_format_instruction(rubric)}\n\n"
                     "Сначала внутри себя сформируй 3 варианта идеи. Проверь каждый по Author Brain, Editorial Strategy, площадке, "
                     "новизне, риску повтора, наличию сильного кейса/аргумента и актуальности Trend Radar. "
@@ -3795,8 +3865,9 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
                     "Для русских площадок тема (topic) тоже должна быть на русском: даже если материал в Knowledge или кейс назван по-английски (например «SOP-as-service-care»), нельзя выносить английское название в тему — извлеки смысл и сформулируй по-русски. "
                     "Нельзя копировать или дословно переводить заголовок тренда; нужно извлечь смысл и создать новую редакционную тему под площадку, рубрику, Author Brain и Writing DNA.\n\n"
                     "Алгоритм выбора для каждого дня: Editorial Strategy -> Trend Radar -> Author Brain -> Knowledge -> Memory -> Writing DNA -> Anti-Repetition -> AI Context -> Content Plan. "
-                    "Для каждой ячейки сначала используй trend fields: used_trend, trend_score, brand_fit_score, content_potential, repeat_risk. "
-                    "Если used_trend пустой, используй evergreen Knowledge fallback.\n\n"
+                    "Для каждой ячейки в context.trend_matches уже подобран конкретный тренд (matched_trend) по её дате, площадке и рубрике. "
+                    "Сопоставь ячейку с её matched_trend по date/platform и используй его смысл (essence, main_idea, platform_angle) как отправную точку, переформулировав под площадку и её язык. "
+                    "Если для ячейки нет matched_trend — используй evergreen Knowledge fallback.\n\n"
                     "Можно генерировать только topic, angle, goal, main_thought, summary, note и draft. "
                     "date, day, platform, rubric, pillar и format должны остаться как в шаблоне.\n\n"
                     "Алгоритм качества: для каждой ячейки сформируй 2-3 варианта идеи; проверь Author Brain, Editorial Strategy, "
