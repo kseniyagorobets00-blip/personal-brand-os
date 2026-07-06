@@ -450,7 +450,8 @@ class DailyBriefTests(unittest.TestCase):
         )
 
         self.assertIn("Контент-план", html)
-        self.assertIn("Сохранить план", html)
+        # The bottom bar keeps only «Утвердить план» — the redundant save button is gone.
+        self.assertNotIn("Сохранить план", html)
         self.assertIn("Утвердить план", html)
         self.assertIn("Создать план по стратегии", html)
         self.assertIn("Настроить стратегию", html)
@@ -493,53 +494,52 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(plan["week_end"], "2026-06-30")
         self.assertEqual(plan["week"], "01.06.2026 - 30.06.2026")
 
-    def test_content_plan_calendar_view_groups_same_day_publications(self) -> None:
-        html = render_content_plan_page(
-            {
-                "week_start": "2026-06-22",
-                "week_end": "2026-06-28",
-                "focus": "CX через Operations",
-                "content_pillars": ["Operations", "Customer Experience"],
-                "platform_targets": ["LinkedIn", "Telegram"],
-                "today_recommendation": "Подготовить пост",
-                "planned_publications": [
-                    {"date": "26.06.2026", "platform": "LinkedIn", "topic": "Первая тема", "status": "planned", "goal": "", "summary": "", "note": ""},
-                    {"date": "26.06.2026", "platform": "Telegram", "topic": "Вторая тема", "status": "drafted", "goal": "", "summary": "", "note": ""},
-                ],
-            },
-            view="calendar",
-        )
-
-        self.assertIn("Календарь", html)
-        self.assertIn("#publication-0", html)
-        self.assertIn("#publication-1", html)
-        self.assertIn("Первая тема", html)
-        self.assertIn("Вторая тема", html)
-
-    def test_calendar_shows_only_the_current_week_not_past_published(self) -> None:
-        # Published posts keep their past dates; they must not accumulate in the
-        # week calendar. Only publications inside [week_start, week_end] appear.
+    def test_calendar_shows_all_published_posts_newest_first(self) -> None:
+        # The calendar is the full publishing history, sourced from the archive
+        # (passed in as published_posts), independent of the current week.
         html = render_content_plan_page(
             {
                 "week_start": "2026-06-22",
                 "week_end": "2026-06-28",
                 "planned_publications": [
-                    {"date": "2026-06-24", "platform": "LinkedIn", "topic": "Эта неделя", "status": "planned"},
-                    {"date": "2026-06-10", "platform": "Telegram", "topic": "Старый опубликованный", "status": "published"},
-                    {"date": "2026-06-01", "platform": "VC", "topic": "Ещё старее", "status": "published"},
+                    {"date": "2026-06-24", "platform": "LinkedIn", "topic": "Черновик недели", "status": "planned"},
                 ],
             },
             view="calendar",
+            published_posts=[
+                {"date": "2026-06-10", "platform": "Telegram", "topic": "Старый пост", "summary": "s1"},
+                {"date": "2026-05-01", "platform": "VC", "topic": "Совсем старый", "summary": "s2"},
+                {"date": "2026-06-25", "platform": "LinkedIn", "topic": "Свежий пост", "summary": "s3"},
+            ],
         )
 
-        # Isolate the calendar grid — the editable list below it is a separate block.
         calendar = html.split('class="block calendar-block"', 1)[1].split("</section>", 1)[0]
-        self.assertIn("Эта неделя", calendar)
-        self.assertNotIn("Старый опубликованный", calendar)
-        self.assertNotIn("Ещё старее", calendar)
-        self.assertIn("1 публикаций", calendar)
+        # Every published post appears, regardless of the current week.
+        self.assertIn("Старый пост", calendar)
+        self.assertIn("Совсем старый", calendar)
+        self.assertIn("Свежий пост", calendar)
+        self.assertIn("3 опубликовано", calendar)
+        # The unpublished weekly draft is NOT in the calendar — it belongs to the list.
+        self.assertNotIn("Черновик недели", calendar)
+        # Newest date first.
+        self.assertLess(calendar.index("Свежий пост"), calendar.index("Старый пост"))
+        self.assertLess(calendar.index("Старый пост"), calendar.index("Совсем старый"))
 
-        self.assertIn('<details class="calendar-publication">', html)
+    def test_list_tab_shows_only_current_week_publications(self) -> None:
+        # The list is scoped to [week_start, week_end]; out-of-week items are hidden.
+        html = render_content_plan_page(
+            {
+                "week_start": "2026-06-22",
+                "week_end": "2026-06-28",
+                "planned_publications": [
+                    {"date": "2026-06-24", "platform": "LinkedIn", "topic": "Тема недели", "status": "planned"},
+                    {"date": "2026-06-10", "platform": "Telegram", "topic": "Прошлая неделя", "status": "published"},
+                ],
+            },
+        )
+
+        self.assertIn("Тема недели", html)
+        self.assertNotIn("Прошлая неделя", html)
 
     def test_compact_content_plan_hides_past_publications(self) -> None:
         today = today_moscow()
@@ -670,6 +670,51 @@ class DailyBriefTests(unittest.TestCase):
         # Publications are preserved from storage, not rebuilt from the form.
         self.assertEqual(len(saved["planned_publications"]), 1)
         self.assertEqual(saved["planned_publications"][0]["topic"], "Stored post")
+
+    def test_approve_keeps_out_of_week_published_history(self) -> None:
+        # The list form only carries this week's rows. Approving must rebuild the
+        # week from the form yet keep publications dated outside the week (history).
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "week_start": "2026-06-22",
+                        "week_end": "2026-06-28",
+                        "planned_publications": [
+                            {"date": "2026-06-24", "platform": "LinkedIn", "topic": "Эта неделя", "status": "planned"},
+                            {"date": "2026-06-10", "platform": "Telegram", "topic": "Опубликован ранее", "status": "published"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            form = {
+                "view": ["list"],
+                "plan_action": ["approve"],
+                "week_start": ["2026-06-22"],
+                "week_end": ["2026-06-28"],
+                "focus": ["Focus"],
+                "content_pillars": [""],
+                "platform_targets": [""],
+                "today_recommendation": [""],
+                # Only the current-week row is in the form (the list hides the rest).
+                "pub_0_date": ["2026-06-24"],
+                "pub_0_platform": ["LinkedIn"],
+                "pub_0_topic": ["Эта неделя"],
+                "pub_0_status": ["in_progress"],
+            }
+
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path):
+                _save_content_plan_form(form)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        topics = {p["topic"] for p in saved["planned_publications"]}
+        self.assertIn("Эта неделя", topics)
+        self.assertIn("Опубликован ранее", topics)
+        # Approve no longer force-resets an edited status back to "planned".
+        week_item = next(p for p in saved["planned_publications"] if p["topic"] == "Эта неделя")
+        self.assertEqual(week_item["status"], "in_progress")
 
     def test_content_plan_next_stage_advances_publication_status(self) -> None:
         with TemporaryDirectory() as directory:

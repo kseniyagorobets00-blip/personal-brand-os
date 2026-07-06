@@ -241,7 +241,8 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             view = query.get("view", ["list"])[0]
             action_status = query.get("status", [""])[0]
             plan = _content_plan_with_query_period(_load_content_plan_raw(), query)
-            self._send_html(render_content_plan_page(plan, saved=saved, view=view, action_status=action_status))
+            published_posts = _published_posts_for_calendar(plan) if view == "calendar" else None
+            self._send_html(render_content_plan_page(plan, saved=saved, view=view, action_status=action_status, published_posts=published_posts))
             return
         if path == "/texts":
             query = parse_qs(urlparse(self.path).query)
@@ -2346,7 +2347,7 @@ def _week_group_card(day: date, items: list[PlannedPublication]) -> str:
     """
 
 
-def render_content_plan_page(plan: dict[str, object], saved: bool = False, view: str = "list", action_status: str = "") -> str:
+def render_content_plan_page(plan: dict[str, object], saved: bool = False, view: str = "list", action_status: str = "", published_posts: list | None = None) -> str:
     notice = "<div class=\"notice\">Контент-план сохранен.</div>" if saved else ""
     if action_status == "updated":
         notice += "<div class=\"notice\">Обновлено.</div>"
@@ -2357,11 +2358,13 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     if plan.get("ai_error"):
         notice += _ai_error_note(plan.get("ai_error"), "составить план")
     publications = plan.get("planned_publications", [])
-    rows = "".join(_content_plan_edit_row(item, index) for index, item in enumerate(publications))
-    new_index = len(publications) if isinstance(publications, list) else 0
     week_start, week_end = _content_plan_period(plan)
+    # The list tab shows only the selected week; the calendar shows all published posts.
+    week_publications, _ = _split_week_publications(publications, week_start, week_end)
+    rows = "".join(_content_plan_edit_row(item, index) for index, item in enumerate(week_publications))
+    new_index = len(week_publications)
     view = "calendar" if view == "calendar" else "list"
-    calendar_block = _content_plan_calendar(publications, week_start, week_end) if view == "calendar" else ""
+    calendar_block = _content_plan_published_calendar(published_posts or []) if view == "calendar" else ""
     content = f"""
     {notice}
     <div class="view-switch">
@@ -2406,7 +2409,6 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
       <section class="profile-section">
         <p class="eyebrow">действия</p>
         <div class="form-actions">
-          <button name="plan_action" value="save" type="submit">Сохранить план</button>
           <button name="plan_action" value="approve" type="submit">Утвердить план</button>
           <button class="ghost" name="plan_action" value="strategy_plan" type="submit">Создать план по стратегии</button>
           <a href="/author-profile?tab=strategy">Настроить стратегию</a>
@@ -2925,71 +2927,70 @@ def _content_plan_edit_row(item: object, index: int) -> str:
     """
 
 
-def _content_plan_calendar(publications: object, week_start: str = "", week_end: str = "") -> str:
-    items = publications if isinstance(publications, list) else []
-    # The plan is week-scoped: show only the current week so published posts from
-    # earlier weeks (they keep their past dates) never accumulate in the calendar.
-    start = parse_plan_date(week_start)
-    end = parse_plan_date(week_end)
-    if not start:
-        dates = [d for d in (parse_plan_date(str(i.get("date", ""))) for i in items if isinstance(i, dict)) if d]
-        start = min(dates) if dates else today_moscow()
-    if not end or end < start:
-        end = start + timedelta(days=6)
-    if (end - start).days > 13:
-        end = start + timedelta(days=6)
-    by_day: dict[str, list[tuple[int, dict[str, object]]]] = {}
-    count = 0
-    for index, item in enumerate(items):
-        if not isinstance(item, dict):
+def _content_plan_published_calendar(published_posts: object) -> str:
+    """The calendar is the full publishing history: every post ever published,
+    grouped by date (newest first). It reads from the archive, so it keeps real
+    past dates and never loses history when the weekly plan is regenerated."""
+    posts = published_posts if isinstance(published_posts, list) else []
+    dated = []
+    for post in posts:
+        if not isinstance(post, dict):
             continue
-        parsed = parse_plan_date(str(item.get("date", "")))
-        if parsed and start <= parsed <= end:
-            by_day.setdefault(parsed.isoformat(), []).append((index, item))
-            count += 1
+        parsed = parse_plan_date(str(post.get("date", "")))
+        if parsed:
+            dated.append((parsed, post))
+    dated.sort(key=lambda pair: pair[0], reverse=True)
     weekday_labels = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+    groups: dict[str, list[dict[str, object]]] = {}
+    order: list[date] = []
+    for parsed, post in dated:
+        key = parsed.isoformat()
+        if key not in groups:
+            groups[key] = []
+            order.append(parsed)
+        groups[key].append(post)
     days = []
-    current = start
-    while current <= end:
-        day_items = "".join(_calendar_publication(index, item) for index, item in by_day.get(current.isoformat(), []))
+    for parsed in order:
+        day_posts = "".join(_calendar_publication(post) for post in groups[parsed.isoformat()])
         days.append(
             f"""
             <div class="calendar-day">
-              <strong>{weekday_labels[current.weekday()]}, {current.strftime('%d.%m')}</strong>
-              {day_items or '<span class="calendar-empty">—</span>'}
+              <strong>{weekday_labels[parsed.weekday()]}, {parsed.strftime('%d.%m.%Y')}</strong>
+              {day_posts}
             </div>
             """
         )
-        current += timedelta(days=1)
+    body = (
+        f'<div class="calendar-grid week">{"".join(days)}</div>'
+        if days
+        else '<div class="empty">Пока нет опубликованных постов. Они появятся здесь, когда пост перейдёт в статус «Опубликовано».</div>'
+    )
     return f"""
     <section class="block calendar-block">
       <div class="section-title">
         <div>
-          <p class="eyebrow">календарь недели</p>
-          <h2>{start.strftime('%d.%m')} — {end.strftime('%d.%m.%Y')}</h2>
+          <p class="eyebrow">опубликовано</p>
+          <h2>Все публикации</h2>
         </div>
-        <span>{count} публикаций</span>
+        <span>{len(dated)} опубликовано</span>
       </div>
-      <div class="calendar-grid week">{''.join(days)}</div>
+      {body}
     </section>
     """
 
 
-def _calendar_publication(index: int, item: dict[str, object]) -> str:
-    platform = str(item.get("platform", ""))
-    topic = str(item.get("topic", ""))
-    status = _status_ru(str(item.get("status", "")))
-    goal = str(item.get("goal", ""))
-    summary = str(item.get("summary", "") or item.get("note", ""))
+def _calendar_publication(post: dict[str, object]) -> str:
+    platform = str(post.get("platform", ""))
+    topic = str(post.get("topic", ""))
+    summary = str(post.get("summary", ""))
     short_topic = _short_text(topic or "Без темы", 44)
     return f"""
     <details class="calendar-publication">
       <summary>
-        <span>{escape(platform)} · {escape(status)}</span>
+        <span>{escape(platform)}</span>
         <b>{escape(short_topic)}</b>
       </summary>
-      <p>{escape(summary or goal or topic)}</p>
-      <a href="#publication-{index}">Редактировать</a>
+      <p>{escape(summary or topic)}</p>
     </details>
     """
 
@@ -3080,6 +3081,52 @@ def _content_plan_period(plan: dict[str, object]) -> tuple[str, str]:
         parsed_start = parse_plan_date(start)
         end = (parsed_start + timedelta(days=6)).isoformat() if parsed_start else start
     return start, end
+
+
+def _split_week_publications(
+    publications: object, week_start: str, week_end: str
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Split the plan into the items shown in the week list vs. everything else.
+
+    The list tab is scoped to the selected period [week_start, week_end]. Items
+    dated outside that window (e.g. already-published posts from earlier weeks)
+    stay in storage but are not shown in the editable list. Undated items stay in
+    the list so a freshly added publication is never hidden."""
+    items = publications if isinstance(publications, list) else []
+    start = parse_plan_date(week_start)
+    end = parse_plan_date(week_end)
+    inside: list[dict[str, object]] = []
+    outside: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        parsed = parse_plan_date(str(item.get("date", "")))
+        if start and end and parsed and not (start <= parsed <= end):
+            outside.append(item)
+        else:
+            inside.append(item)
+    return inside, outside
+
+
+def _published_posts_for_calendar(plan: dict[str, object]) -> list[dict[str, str]]:
+    """Every post ever published, as simple dated cards for the calendar.
+
+    Sourced from the Texts archive (which also absorbs plan items marked
+    published), so history survives weekly plan regeneration and date refreshes."""
+    repository = TextPostRepository()
+    repository.sync_from_content_plan(plan)
+    posts = []
+    for post in repository.list_posts("archive"):
+        summary = (post.text[:160].strip() if post.text.strip() else post.brief.strip())
+        posts.append(
+            {
+                "date": post.publication_date,
+                "platform": post.platform,
+                "topic": post.title,
+                "summary": summary,
+            }
+        )
+    return posts
 
 
 def _normalize_plan_date_value(value: str) -> str:
@@ -3503,6 +3550,12 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
     if not week_end:
         parsed_start = parse_plan_date(week_start)
         week_end = (parsed_start + timedelta(days=6)).isoformat() if parsed_start else week_start
+    # The list only shows the current week, so the form only carries this week's rows.
+    # Keep every publication outside the window (published history, other weeks) so a
+    # save never silently drops it.
+    preserved_out_of_week = _split_week_publications(
+        _load_content_plan_raw().get("planned_publications", []), week_start, week_end
+    )[1]
     delete_index = _action_index(action, "delete_pub_")
     next_index = _action_index(action, "next_pub_")
     publications = []
@@ -3523,8 +3576,6 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         if not (topic or platform or publication_date):
             continue
         status = _normalize_publication_status(value(f"pub_{index}_status"))
-        if action == "approve":
-            status = "planned"
         if next_index == index:
             status = _next_publication_status(status)
         publication_rubric = _normalize_rubric(value(f"pub_{index}_pillar") or value(f"pub_{index}_format"))
@@ -3602,6 +3653,10 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             raw["last_action"] = "Редакционная стратегия сохранена."
         elif next_index is not None:
             raw["last_action"] = f"Публикация #{next_index + 1} переведена на следующий этап."
+    # save_focus already keeps the full stored list; every other action rebuilds only
+    # the week from the form, so re-attach the preserved out-of-week publications.
+    if action != "save_focus" and preserved_out_of_week:
+        raw["planned_publications"] = list(raw.get("planned_publications", [])) + preserved_out_of_week
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     anchor = ""
     target_index = _action_index(action, "generate_pub_")
