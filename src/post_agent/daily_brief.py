@@ -159,9 +159,14 @@ def refresh_stale_content_plan(plan: dict[str, Any], today: date) -> dict[str, A
     if not isinstance(publications, list) or not publications:
         return plan
 
+    # Only the working (not-yet-published) items roll forward. Published posts are
+    # history: their dates are facts, so keep them fixed — otherwise the shift would
+    # rewrite real publish dates and corrupt the archive/calendar.
     dated_items: list[tuple[date, int, dict[str, Any]]] = []
     for index, item in enumerate(publications):
         if not isinstance(item, dict):
+            continue
+        if str(item.get("status", "")).strip().lower() in {"published", "archived"}:
             continue
         parsed = parse_plan_date(str(item.get("date", "")))
         if parsed:
@@ -175,18 +180,15 @@ def refresh_stale_content_plan(plan: dict[str, Any], today: date) -> dict[str, A
 
     refreshed = dict(plan)
     refreshed_publications = [dict(item) if isinstance(item, dict) else item for item in publications]
+    latest_shifted = today
     for old_date, index, item in dated_items:
         shifted_date = today + (old_date - first_publication)
         updated_item = dict(item)
         updated_item["date"] = shifted_date.isoformat()
         updated_item["day"] = weekday_name_for_date(shifted_date.isoformat())
         refreshed_publications[index] = updated_item
+        latest_shifted = max(latest_shifted, shifted_date)
 
-    latest_shifted = max(
-        parse_plan_date(str(item.get("date", ""))) or today
-        for item in refreshed_publications
-        if isinstance(item, dict)
-    )
     refreshed["planned_publications"] = refreshed_publications
     refreshed["week_start"] = today.isoformat()
     refreshed["week_end"] = latest_shifted.isoformat()

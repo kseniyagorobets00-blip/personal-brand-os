@@ -256,6 +256,24 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(refreshed["planned_publications"][2]["date"], "2026-07-09")
         self.assertIn("автоматически перенесен", refreshed["last_action"])
 
+    def test_refresh_keeps_published_dates_fixed_and_rolls_only_drafts(self) -> None:
+        # Published posts are history — their real dates must survive the refresh,
+        # otherwise the sync would rewrite the archive/calendar with today's date.
+        plan = {
+            "planned_publications": [
+                {"date": "2026-06-20", "topic": "Published", "status": "published"},
+                {"date": "2026-06-22", "topic": "Draft", "status": "draft"},
+            ],
+        }
+
+        refreshed = refresh_stale_content_plan(plan, date(2026, 7, 5))
+
+        by_topic = {p["topic"]: p["date"] for p in refreshed["planned_publications"]}
+        self.assertEqual(by_topic["Published"], "2026-06-20")  # untouched
+        self.assertEqual(by_topic["Draft"], "2026-07-05")  # rolled to today
+        self.assertEqual(refreshed["week_start"], "2026-07-05")
+        self.assertEqual(refreshed["week_end"], "2026-07-05")
+
     def test_partially_stale_content_plan_is_shifted_when_first_publication_is_past(self) -> None:
         plan = {
             "week": "04-09 июля",
