@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tooling
+        # The PDF/OCR dependencies are imported lazily and are not needed to run
+        # the suite, so CI stays lean with just the test runner and linter.
+        run: python -m pip install --upgrade pip pytest pyflakes
+
+      - name: Lint (pyflakes)
+        run: python -m pyflakes $(find src tests -name '*.py')
+
+      - name: Tests
+        run: PYTHONPATH=src python -m pytest -q

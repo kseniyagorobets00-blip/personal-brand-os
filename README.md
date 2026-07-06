@@ -130,6 +130,15 @@ export PYTHONPATH=src
 python3 -m pytest -q
 ```
 
+Lint (unused imports, undefined names, redefinitions):
+
+```bash
+python3 -m pyflakes $(find src tests -name '*.py')
+```
+
+Both run automatically in CI (`.github/workflows/ci.yml`) on every push and pull
+request, so dead code and unused imports can't slip back in.
+
 Architecture notes:
 
 - `src/post_agent/web.py` — routing and all server-rendered pages. Every page is
