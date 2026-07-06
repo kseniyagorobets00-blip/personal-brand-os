@@ -984,12 +984,15 @@ def _publish_reminder_block() -> str:
     calendar stay accurate. Closes the loop between «I posted this» and the tool."""
     raw = _stored_content_plan()
     today = today_moscow()
+    # Only recently-overdue posts — a two-week window keeps the nudge about
+    # «did you publish this?» and avoids dumping the whole back-catalogue.
+    window_start = today - timedelta(days=14)
     pending = []
     for item in raw.get("planned_publications", []):
         if not isinstance(item, dict):
             continue
         parsed = parse_plan_date(str(item.get("date", "")))
-        if parsed and parsed < today and _normalize_publication_status(str(item.get("status", ""))) != "published":
+        if parsed and window_start <= parsed < today and _normalize_publication_status(str(item.get("status", ""))) != "published":
             pending.append((parsed, item))
     if not pending:
         return ""
@@ -3713,7 +3716,10 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             status = _next_publication_status(status)
         if publish_index == index:
             status = "published"
-            # Mark it published today unless it already has a real (past) publish date.
+        if status == "published":
+            # Stamp today's date on publish unless it already has a real (past) date —
+            # so the «Отметить опубликованным» button and the status dropdown behave
+            # the same way.
             parsed_pub = parse_plan_date(publication_date)
             if not parsed_pub or parsed_pub > today_moscow():
                 publication_date = today_moscow().isoformat()
@@ -3799,8 +3805,9 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
     if action != "save_focus" and preserved_out_of_week:
         raw["planned_publications"] = list(raw.get("planned_publications", [])) + preserved_out_of_week
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    if publish_index is not None:
-        # Push the freshly published post into the archive so the calendar is instantly correct.
+    if publish_index is not None or action == "approve":
+        # Push any freshly published post into the archive so the calendar is instantly
+        # correct — whether it was published via the button or the status dropdown + «Утвердить».
         TextPostRepository().sync_from_content_plan(raw)
     anchor = ""
     target_index = _action_index(action, "generate_pub_")

@@ -810,9 +810,10 @@ class DailyBriefTests(unittest.TestCase):
         # A real past date is the day it was posted — keep it.
         self.assertEqual(item["date"], "2026-06-10")
 
-    def test_publish_reminder_lists_past_unpublished_only(self) -> None:
+    def test_publish_reminder_lists_recent_past_unpublished_only(self) -> None:
         today = today_moscow()
         past = (today - timedelta(days=2)).isoformat()
+        ancient = (today - timedelta(days=30)).isoformat()
         future = (today + timedelta(days=2)).isoformat()
         with TemporaryDirectory() as directory:
             plan_path = Path(directory) / "content_plan.json"
@@ -823,6 +824,7 @@ class DailyBriefTests(unittest.TestCase):
                             {"date": past, "platform": "LinkedIn", "topic": "Прошлый черновик", "status": "approved"},
                             {"date": past, "platform": "Telegram", "topic": "Прошлый опубликованный", "status": "published"},
                             {"date": future, "platform": "VC", "topic": "Будущий пост", "status": "draft"},
+                            {"date": ancient, "platform": "Сетка", "topic": "Древний пост", "status": "draft"},
                         ],
                     }
                 ),
@@ -834,7 +836,42 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Прошлый черновик", html)
         self.assertNotIn("Прошлый опубликованный", html)
         self.assertNotIn("Будущий пост", html)
+        # Older than the two-week window — not shown, so the nudge stays focused.
+        self.assertNotIn("Древний пост", html)
         self.assertIn("/content-plan/publish", html)
+
+    def test_status_dropdown_publish_stamps_today_and_archives(self) -> None:
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            posts_path = Path(directory) / "posts.json"
+            plan_path.write_text(json.dumps({"week_start": "2026-06-22", "week_end": "2999-12-31", "planned_publications": []}), encoding="utf-8")
+            # Approve with the row's status set to «Опубликовано» and a future date.
+            form = {
+                "view": ["list"],
+                "plan_action": ["approve"],
+                "week_start": ["2026-06-22"],
+                "week_end": ["2999-12-31"],
+                "focus": ["Focus"],
+                "content_pillars": [""],
+                "platform_targets": [""],
+                "today_recommendation": [""],
+                "pub_0_date": ["2999-01-01"],
+                "pub_0_platform": ["LinkedIn"],
+                "pub_0_topic": ["Через дропдаун"],
+                "pub_0_status": ["published"],
+            }
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch(
+                "post_agent.web.TextPostRepository", lambda *a, **k: TextPostRepository(posts_path)
+            ):
+                _save_content_plan_form(form)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+                archived = TextPostRepository(posts_path).list_posts("archive")
+
+        item = saved["planned_publications"][0]
+        self.assertEqual(item["status"], "published")
+        self.assertEqual(item["date"], today_moscow().isoformat())
+        # It also landed in the archive immediately (no need to open the calendar first).
+        self.assertIn("Через дропдаун", {p.title for p in archived})
 
     def test_open_text_link_resolves_to_synced_post(self) -> None:
         plan = {
