@@ -24,7 +24,6 @@ from .daily_brief import (
     DailyBriefService,
     Draft,
     PlannedPublication,
-    RelatedKnowledge,
     parse_plan_date,
     refresh_stale_content_plan,
     today_moscow,
@@ -3056,7 +3055,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         {error}
         <div class="form-actions">
           <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/ТЗ</button>
-          <a href="/content-plan/open-text?{_open_text_query(item)}">Открыть текст →</a>
+          <a class="ghost" href="/content-plan/open-text?{_open_text_query(item)}">Открыть текст →</a>
           {'' if status == 'published' else f'<button class="ghost" name="plan_action" value="publish_pub_{index}" type="submit">Отметить опубликованным</button>'}
           <button class="ghost danger-text" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
         </div>
@@ -5586,7 +5585,6 @@ def _draft_to_prepare_card(
         stage = "template"
     goal = str(getattr(publication, "goal", "")) or topic.action
     summary = str(getattr(publication, "summary", "")) or topic.summary
-    materials = _materials_for_topic(topic, brief.related_knowledge)
     refinement_notice = _refinement_notice(refinement)
     tags = "".join(f"<span>{escape(_status_ru(tag))}</span>" for tag in topic.tags)
     text_label = {
@@ -5617,7 +5615,6 @@ def _draft_to_prepare_card(
       <pre>{escape(draft_text)}</pre>
       {_thinking_transparency_block(ai_result)}
       {_writing_feedback_block(key, title, draft_text)}
-      {materials}
       {refinement_notice}
       <div class="topic-actions">
         {_save_idea_form(topic.title, summary, "Daily Brief", topic.tags, label="Использовать")}
@@ -5702,34 +5699,6 @@ def _looks_like_forbidden_draft(text: str) -> bool:
         "основная мысль:",
     )
     return normalized.startswith(forbidden_openings) or any(marker in normalized for marker in forbidden_markers)
-
-
-def _materials_for_topic(topic: BriefItem, materials: tuple[RelatedKnowledge, ...]) -> str:
-    matches = []
-    topic_text = " ".join((topic.title, topic.summary, topic.reason)).lower()
-    for item in materials:
-        material_text = " ".join((item.title, item.reason, item.excerpt)).lower()
-        if any(word and word in material_text for word in re.findall(r"[A-Za-zА-Яа-я]{4,}", topic_text)[:8]):
-            matches.append(item)
-    if not matches:
-        matches = list(materials[:1])
-    if not matches:
-        return ""
-    rows = "".join(
-        f"""
-        <li>
-          <b>{escape(item.title)}</b>
-          <span>{escape(item.reason)}</span>
-        </li>
-        """
-        for item in matches[:2]
-    )
-    return f"""
-    <div class="draft-materials">
-      <p class="label">Полезные материалы/кейсы</p>
-      <ul>{rows}</ul>
-    </div>
-    """
 
 
 def _refinement_bar(item_key: str, title: str, text: str, kind: str) -> str:
@@ -6061,6 +6030,17 @@ def _styles() -> str:
       transition: border-color .16s ease, background .16s ease, color .16s ease;
     }
     .meta a:hover, .form-actions a:hover, .open-link:hover {
+      border-color: var(--accent);
+      color: var(--ink);
+    }
+    /* Links styled as ghost buttons (e.g. «Открыть текст») match the muted buttons beside them. */
+    .form-actions a.ghost {
+      background: transparent;
+      color: var(--muted);
+      font-weight: 620;
+    }
+    .form-actions a.ghost:hover {
+      background: var(--paper-soft);
       border-color: var(--accent);
       color: var(--ink);
     }
