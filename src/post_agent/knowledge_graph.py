@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 from .memory import MemoryInboxItem
 from .storage import data_path

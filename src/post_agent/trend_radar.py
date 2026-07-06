@@ -8,7 +8,6 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
@@ -1111,21 +1110,6 @@ def _platform_fit_reason(source: dict[str, object], content_plan: dict[str, obje
     if not formats:
         return "Площадка не задана, можно адаптировать после выбора формата."
     return f"Лучше всего подходит для: {', '.join(formats)}."
-
-
-def _reason(title: str, plan_bonus: float, documents: list[str], cases: list[str], brain_bonus: float = 0.0) -> str:
-    parts = [f"Тема «{title}» прошла фильтр Thinking Engine."]
-    if plan_bonus > 0:
-        parts.append("Она связана с текущим контент-планом.")
-    if brain_bonus > 0:
-        parts.append("Author Brain подтвердил связь с темами, кейсами и позицией автора.")
-    if documents:
-        parts.append("Есть материалы в Knowledge, которые можно использовать.")
-    if cases:
-        parts.append("Есть подходящие кейсы.")
-    if len(parts) == 1:
-        parts.append("Это можно держать как рыночный угол, но перед публикацией проверить соответствие бренду.")
-    return " ".join(parts)
 
 
 def _tokens(text: str) -> set[str]:

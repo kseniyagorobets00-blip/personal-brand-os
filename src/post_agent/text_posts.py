@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from .storage import data_path
@@ -195,20 +194,6 @@ class TextPostRepository:
         raw.insert(0, item)
         self._write(raw)
         return self._from_raw(item)
-
-    def move_to_archive(self, post_id: str) -> bool:
-        post = self.get(post_id)
-        if not post:
-            return False
-        return self.update(
-            post_id=post.id,
-            title=post.title,
-            platform=post.platform,
-            publication_date=post.publication_date,
-            text=post.text,
-            status="published",
-            tab="archive",
-        )
 
     def delete(self, post_id: str) -> bool:
         raw = self._read()

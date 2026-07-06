@@ -13,7 +13,7 @@ from zipfile import ZipFile
 
 from .knowledge_graph import KnowledgeGraph
 from .memory import MemoryInbox, analyze_memory_text
-from .storage import PROJECT_ROOT as ROOT, data_path, data_root, resolve_data_reference
+from .storage import data_path, data_root, resolve_data_reference
 
 
 DEFAULT_KNOWLEDGE_DIR = data_path("knowledge")

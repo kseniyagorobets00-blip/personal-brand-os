@@ -13,7 +13,7 @@ from .ai_context import AIContextEngine, _target_publication
 from .ai_gateway import AIGateway, AIGatewayError, DEFAULT_ENV_PATH, load_ai_config
 from .author_brain import FORBIDDEN_OPENINGS, AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository
-from .daily_brief import ROOT, SeedRepository
+from .daily_brief import SeedRepository
 from .idea_vault import IdeaVault
 from .knowledge import KnowledgeBase
 from .knowledge_graph import KnowledgeGraph

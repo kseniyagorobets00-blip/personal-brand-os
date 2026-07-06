@@ -11,7 +11,7 @@ from .author_brain import AuthorBrain
 from .author_profile import AuthorProfile, AuthorProfileRepository
 from .knowledge import KnowledgeBase, KnowledgeSearchResult
 from .learning import LearningCenter
-from .storage import PROJECT_ROOT as ROOT, data_path
+from .storage import data_path
 from .writing_dna import WritingDNARepository
 
 

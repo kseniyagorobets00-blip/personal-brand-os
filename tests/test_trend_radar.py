@@ -9,7 +9,7 @@ from post_agent.knowledge import KnowledgeBase, KnowledgeCase, KnowledgeDocument
 from post_agent.learning import LearningCenter
 from post_agent.production import run_production_check
 from post_agent.trend_radar import ExternalFeedSourceProvider, TrendRadar
-from post_agent.web import _add_trend_to_content_plan, render_trend_radar
+from post_agent.web import render_trend_radar
 
 
 class TrendRadarTests(unittest.TestCase):
@@ -121,26 +121,6 @@ class TrendRadarTests(unittest.TestCase):
             lessons = learning.list_lessons("candidate")
 
         self.assertTrue(lessons)
-
-    def test_trend_radar_page_renders_actions(self) -> None:
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            radar = TrendRadar(root / "cache.json", root / "decisions.json", root / "sources.json")
-            with patch.dict("os.environ", {"TREND_RADAR_ENABLE_RSS": "0"}):
-                cache = radar.refresh({}, [], [], [])
-
-        html = render_trend_radar(cache)
-
-        self.assertIn("Trend Radar", html)
-        self.assertIn("Trend Score", html)
-        self.assertIn("Content Potential", html)
-        self.assertIn("Соответствие бренду", html)
-        self.assertIn("Сохранить в Idea Vault", html)
-        self.assertIn("Добавить в Content Plan", html)
-        self.assertIn("Почему AI выбрал эту тему?", html)
-        self.assertIn("Риск повтора", html)
-        self.assertIn("Рекомендация", html)
-        self.assertIn("Техническая информация", html)
 
     def test_trend_radar_page_renders_actions(self) -> None:
         with TemporaryDirectory() as directory:

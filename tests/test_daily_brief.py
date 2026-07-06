@@ -11,7 +11,6 @@ from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublic
 from post_agent.export import export_daily_brief
 from post_agent.web import _author_profile_form_to_raw, _clean_focus_value, _compact_content_plan_block, _content_plan_with_query_period, _mark_plan_publication_published, _publish_reminder_block, _refine_with_ai, _save_content_plan_form, _text_matches_platform, _text_post_for_publication, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
 from post_agent.text_posts import TextPostRepository
-from post_agent.writing_dna import WritingDNARepository
 
 
 def _first_planned_date() -> date:
@@ -511,12 +510,12 @@ class DailyBriefTests(unittest.TestCase):
         self.assertNotIn('type="month" name="month"', html)
         self.assertNotIn("Фокус месяца", html)
 
-    def test_content_plan_period_query_can_open_month(self) -> None:
-        plan = _content_plan_with_query_period({}, {"month": ["2026-06"]})
+    def test_content_plan_period_query_opens_week_range(self) -> None:
+        plan = _content_plan_with_query_period({}, {"week_start": ["2026-06-22"], "week_end": ["2026-06-28"]})
 
-        self.assertEqual(plan["week_start"], "2026-06-01")
-        self.assertEqual(plan["week_end"], "2026-06-30")
-        self.assertEqual(plan["week"], "01.06.2026 - 30.06.2026")
+        self.assertEqual(plan["week_start"], "2026-06-22")
+        self.assertEqual(plan["week_end"], "2026-06-28")
+        self.assertEqual(plan["week"], "22.06.2026 - 28.06.2026")
 
     def test_calendar_shows_all_published_posts_newest_first(self) -> None:
         # The calendar is the full publishing history, sourced from the archive

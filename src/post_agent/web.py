@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,11 +29,11 @@ from .daily_brief import (
     weekday_name_for_date,
 )
 from .idea_vault import IDEA_STATUSES, Idea, IdeaVault
-from .knowledge import KnowledgeBase, KnowledgeSearchResult, SUPPORTED_EXTENSIONS
+from .knowledge import KnowledgeBase, SUPPORTED_EXTENSIONS
 from .knowledge_graph import KnowledgeGraph
-from .learning import LearningCenter, lessons_for_prompt
+from .learning import LearningCenter
 from .memory import MemoryInbox
-from .memory_notes import MEMORY_NOTE_CATEGORIES, MEMORY_NOTE_LABELS, MemoryNote, MemoryNoteStore
+from .memory_notes import MemoryNoteStore
 from .text_posts import TEXT_POST_STATUSES, TextPost, TextPostRepository, source_key_for_publication
 from .trend_radar import TrendRadar
 from .writing_dna import WritingDNARepository, writing_dna_form_to_raw
@@ -2218,7 +2217,7 @@ def _ai_error_note(detail: object, action: str = "сгенерировать т�
 
 
 def _free_day_card(brief: DailyBrief) -> str:
-    return f"""
+    return """
     <section class="today-card free-day">
       <div class="today-main">
         <p class="eyebrow">сегодня</p>
@@ -2550,7 +2549,7 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
     platform = query.get("platform", [""])[0].strip()
     page = _positive_int(query.get("page", ["1"])[0], 1)
     week_start, week_end = _content_plan_period(plan)
-    period_active = any(query.get(key, [""])[0].strip() for key in ("month", "week_start", "week_end"))
+    period_active = any(query.get(key, [""])[0].strip() for key in ("week_start", "week_end"))
     posts = repository.list_posts(tab=tab, query=search, platform=platform)
     if tab == "planned" and period_active:
         posts = _filter_text_posts_by_period(posts, week_start, week_end)
@@ -3176,12 +3175,8 @@ def _load_content_plan_raw() -> dict[str, object]:
 
 
 def _content_plan_with_query_period(plan: dict[str, object], query: dict[str, list[str]]) -> dict[str, object]:
-    month = query.get("month", [""])[0].strip()
-    month_start, month_end = _month_range(month)
     start = _normalize_plan_date_value(query.get("week_start", [""])[0])
     end = _normalize_plan_date_value(query.get("week_end", [""])[0])
-    if month_start and month_end:
-        start, end = month_start, month_end
     if not start and not end:
         return plan
     updated = dict(plan)
@@ -3193,7 +3188,7 @@ def _content_plan_with_query_period(plan: dict[str, object], query: dict[str, li
     updated["week_start"] = week_start
     updated["week_end"] = week_end
     updated["week"] = _format_week_range(week_start, week_end)
-    updated["last_action"] = "Открыт выбранный период. Нажмите «Сохранить план» или «Создать новый план», чтобы закрепить изменения."
+    updated["last_action"] = "Открыт выбранный период. Нажмите «Утвердить план», чтобы закрепить изменения."
     return updated
 
 
@@ -3285,15 +3280,6 @@ def _format_week_range(start: str, end: str) -> str:
 def _date_for_input(value: str) -> str:
     parsed = parse_plan_date(value)
     return parsed.isoformat() if parsed else ""
-
-
-def _month_range(value: str) -> tuple[str, str]:
-    if not re.fullmatch(r"\d{4}-\d{2}", value):
-        return "", ""
-    year, month = (int(part) for part in value.split("-", 1))
-    if month < 1 or month > 12:
-        return "", ""
-    return date(year, month, 1).isoformat(), date(year, month, monthrange(year, month)[1]).isoformat()
 
 
 def _now_iso() -> str:
