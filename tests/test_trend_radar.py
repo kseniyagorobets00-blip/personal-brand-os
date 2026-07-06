@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,7 +9,8 @@ from post_agent.idea_vault import IdeaVault
 from post_agent.knowledge import KnowledgeBase, KnowledgeCase, KnowledgeDocument
 from post_agent.learning import LearningCenter
 from post_agent.production import run_production_check
-from post_agent.trend_radar import ExternalFeedSourceProvider, TrendRadar
+from post_agent.trend_radar import ExternalFeedSourceProvider, TrendRadar, _cap_sources_per_category
+from post_agent import trend_radar as trend_radar_module
 from post_agent.web import render_trend_radar
 
 
@@ -45,6 +47,64 @@ class TrendRadarTests(unittest.TestCase):
         self.assertIn("ai_explanation", first)
         self.assertIn("Внешние", cache["source_status"])
         self.assertIn("source_diagnostics", cache)
+
+    def test_cap_sources_per_category_limits_dominant_family(self) -> None:
+        sources = [{"category": "AI", "title": f"ai {i}", "description": ""} for i in range(9)]
+        sources += [{"category": "Customer Experience", "title": f"cx {i}", "description": ""} for i in range(2)]
+        capped = _cap_sources_per_category(sources, limit=4)
+        cats = [s["category"] for s in capped]
+        self.assertEqual(cats.count("AI"), 4)
+        self.assertEqual(cats.count("Customer Experience"), 2)
+
+    def test_radar_keeps_author_territories_when_only_ai_feeds_reachable(self) -> None:
+        # When only AI feeds are reachable, the radar must not collapse to AI —
+        # the diverse local editorial anchors have to stay in the mix and surface.
+        ai_signals = [
+            {
+                "title": f"AI model release {i}",
+                "description": "A new large language model was announced.",
+                "source": "OpenAI News",
+                "url": "",
+                "sources": ["OpenAI News"],
+                "category": "AI",
+                "why_now": "hot",
+                "reach_base": 8.5,
+                "brand_base": 6.0,
+                "tags": ["ai"],
+            }
+            for i in range(8)
+        ]
+
+        class OnlyAIProvider:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            def fetch(self, status, diagnostics=None):
+                if diagnostics is not None:
+                    diagnostics.append({"name": "OpenAI News", "status": "ok", "fetched_count": len(ai_signals), "error": ""})
+                return list(ai_signals)
+
+        diverse_seed = {
+            "sources": [
+                {"title": "Сервис ломается на передаче ответственности", "description": "operations и customer experience.", "source": "seed", "category": "Operations", "reach_base": 8.0, "brand_base": 9.0, "tags": ["operations"]},
+                {"title": "Персонализация в hospitality против стандартов", "description": "hotel service.", "source": "seed", "category": "Hospitality", "reach_base": 7.5, "brand_base": 9.0, "tags": ["hospitality"]},
+                {"title": "Service design без внедрения", "description": "customer experience service design.", "source": "seed", "category": "Customer Experience", "reach_base": 7.6, "brand_base": 9.0, "tags": ["cx"]},
+            ]
+        }
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed = root / "sources.json"
+            seed.write_text(json.dumps(diverse_seed, ensure_ascii=False), encoding="utf-8")
+            with patch.object(trend_radar_module, "ExternalFeedSourceProvider", OnlyAIProvider):
+                radar = TrendRadar(root / "cache.json", root / "decisions.json", seed)
+                cache = radar.refresh({}, [], [], [])
+
+        categories = [t.get("category") for t in cache["topics"]]
+        non_ai = {c for c in categories if c != "AI"}
+        self.assertTrue(non_ai, "the radar must include the author's non-AI territories")
+        # AI must not dominate the whole radar anymore.
+        self.assertLess(categories.count("AI"), len(categories))
 
     def test_trend_radar_uses_ai_synthesizer_for_global_trends(self) -> None:
         captured: dict[str, object] = {}

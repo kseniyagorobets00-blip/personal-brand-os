@@ -142,7 +142,7 @@ class TrendRadar:
                 for source in sources
             ]
         grouped = self._group_similar_topics(topics)
-        filtered = sorted(grouped, key=lambda item: item.trend_score, reverse=True)[:12]
+        filtered = _balance_topics_by_category(grouped, limit=12)
         generated_at = datetime.now(timezone.utc)
         cache = {
             "generated_at": generated_at.isoformat(timespec="seconds"),
@@ -495,11 +495,13 @@ class TrendRadar:
     def _collect_sources(self, source_status: list[str], source_diagnostics: list[dict[str, object]]) -> list[dict[str, object]]:
         local_sources = self._load_sources()
         external_sources = ExternalFeedSourceProvider().fetch(source_status, source_diagnostics)
-        if external_sources:
-            return _dedupe_sources(external_sources)
         if not external_sources:
             source_status.append("Внешние источники недоступны, используется локальный анализ.")
-        return _dedupe_sources(external_sources + local_sources)
+        # Cap external signals per category, then ALWAYS keep the diverse local
+        # editorial anchors. Otherwise, when only the AI feeds are reachable, the
+        # radar collapses onto AI and drops the author's other territories.
+        balanced_external = _cap_sources_per_category(external_sources, limit=4)
+        return _dedupe_sources(local_sources + balanced_external)
 
     def _group_similar_topics(self, topics: list[TrendTopic]) -> list[TrendTopic]:
         groups: list[TrendTopic] = []
@@ -1178,6 +1180,40 @@ def _dedupe_sources(sources: list[dict[str, object]]) -> list[dict[str, object]]
             continue
         seen.append(tokens)
         result.append(source)
+    return result
+
+
+def _cap_sources_per_category(sources: list[dict[str, object]], limit: int) -> list[dict[str, object]]:
+    """Keep at most `limit` signals per category so one reachable feed family
+    (usually AI) can't crowd out the author's other territories."""
+    counts: dict[str, int] = {}
+    result: list[dict[str, object]] = []
+    for source in sources:
+        category = _category(source)
+        if counts.get(category, 0) >= limit:
+            continue
+        counts[category] = counts.get(category, 0) + 1
+        result.append(source)
+    return result
+
+
+def _balance_topics_by_category(topics: list[TrendTopic], limit: int) -> list[TrendTopic]:
+    """Round-robin across categories so the radar shows the author's whole
+    territory, not just whichever category had the strongest/most signals."""
+    by_category: dict[str, list[TrendTopic]] = {}
+    for topic in sorted(topics, key=lambda item: item.trend_score, reverse=True):
+        key = (topic.category or "Прочее").strip() or "Прочее"
+        by_category.setdefault(key, []).append(topic)
+    # Let the strongest category lead, but give every category a slot before any
+    # category gets a second one.
+    category_order = sorted(by_category, key=lambda key: by_category[key][0].trend_score, reverse=True)
+    result: list[TrendTopic] = []
+    while len(result) < limit and any(by_category[key] for key in category_order):
+        for key in category_order:
+            if by_category[key]:
+                result.append(by_category[key].pop(0))
+                if len(result) >= limit:
+                    break
     return result
 
 
