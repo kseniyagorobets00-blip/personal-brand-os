@@ -36,7 +36,7 @@ from .knowledge_graph import KnowledgeGraph
 from .learning import LearningCenter, lessons_for_prompt
 from .memory import MemoryInbox
 from .memory_notes import MEMORY_NOTE_CATEGORIES, MEMORY_NOTE_LABELS, MemoryNote, MemoryNoteStore
-from .text_posts import TEXT_POST_STATUSES, TextPost, TextPostRepository
+from .text_posts import TEXT_POST_STATUSES, TextPost, TextPostRepository, source_key_for_publication
 from .trend_radar import TrendRadar
 from .writing_dna import WritingDNARepository, writing_dna_form_to_raw
 
@@ -66,7 +66,8 @@ RUBRICS = (
     "Ответ на вопрос",
 )
 PUBLICATION_FORMATS = ("экспертный пост", "короткий пост", "статья", "карусель/пост", "мини-пост", "пост")
-PUBLICATION_STATUSES = ("idea", "planned", "in_progress", "published")
+# One shared 3-stage lifecycle for both the content plan and Тексты.
+PUBLICATION_STATUSES = ("draft", "approved", "published")
 EDITORIAL_STRATEGY_PATH = DEFAULT_CONTENT_PLAN_PATH.parents[1] / "seeds" / "editorial_strategy.json"
 RUBRIC_LIBRARY = {
     "Аналитика": ("проблема", "причина", "закономерность", "управленческий вывод"),
@@ -244,6 +245,20 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             published_posts = _published_posts_for_calendar(plan) if view == "calendar" else None
             self._send_html(render_content_plan_page(plan, saved=saved, view=view, action_status=action_status, published_posts=published_posts))
             return
+        if path == "/content-plan/open-text":
+            query = parse_qs(urlparse(self.path).query)
+            plan = _load_content_plan_raw()
+            self.text_posts.sync_from_content_plan(plan)
+            target = _text_post_for_publication(
+                self.text_posts,
+                query.get("platform", [""])[0],
+                query.get("topic", [""])[0],
+            )
+            location = f"/texts/{target.id}" if target else "/texts?tab=planned"
+            self.send_response(303)
+            self.send_header("Location", location)
+            self.end_headers()
+            return
         if path == "/texts":
             query = parse_qs(urlparse(self.path).query)
             plan = _content_plan_with_query_period(_load_content_plan_raw(), query)
@@ -398,6 +413,14 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Location", "/learning?saved=1")
             self.end_headers()
             return
+        if path == "/content-plan/publish":
+            length = int(self.headers.get("Content-Length", "0"))
+            data = parse_qs(self.rfile.read(length).decode("utf-8"))
+            _mark_plan_publication_published(data.get("platform", [""])[0], data.get("topic", [""])[0])
+            self.send_response(303)
+            self.send_header("Location", "/daily-brief")
+            self.end_headers()
+            return
         if path == "/content-plan":
             length = int(self.headers.get("Content-Length", "0"))
             data = parse_qs(self.rfile.read(length).decode("utf-8"))
@@ -430,7 +453,18 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
                 self.send_error(404, "Not Found")
                 return
             if action == "archive":
-                self.text_posts.move_to_archive(post_id)
+                # «Отметить опубликованным»: publish today unless it already has a real past date.
+                parsed = parse_plan_date(post.publication_date)
+                pub_date = post.publication_date if (parsed and parsed <= today_moscow()) else today_moscow().isoformat()
+                self.text_posts.update(
+                    post_id=post_id,
+                    title=post.title,
+                    platform=post.platform,
+                    publication_date=pub_date,
+                    text=post.text,
+                    status="published",
+                    tab="archive",
+                )
                 location = "/texts?tab=archive&saved=1"
             elif action == "delete":
                 tab = post.tab
@@ -934,6 +968,85 @@ def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
     server.serve_forever()
 
 
+def _stored_content_plan() -> dict[str, object]:
+    """The plan as actually saved on disk, with real dates (no rolling refresh).
+
+    The reminder and the «mark published» flow need true past dates, which the
+    display-time refresh would otherwise shift onto today."""
+    try:
+        plan = json.loads(DEFAULT_CONTENT_PLAN_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return plan if isinstance(plan, dict) else {}
+
+
+def _publish_reminder_block() -> str:
+    """Nudge to mark past-due publications as published, so the archive and the
+    calendar stay accurate. Closes the loop between «I posted this» and the tool."""
+    raw = _stored_content_plan()
+    today = today_moscow()
+    pending = []
+    for item in raw.get("planned_publications", []):
+        if not isinstance(item, dict):
+            continue
+        parsed = parse_plan_date(str(item.get("date", "")))
+        if parsed and parsed < today and _normalize_publication_status(str(item.get("status", ""))) != "published":
+            pending.append((parsed, item))
+    if not pending:
+        return ""
+    pending.sort(key=lambda pair: pair[0], reverse=True)
+    rows = ""
+    for parsed, item in pending[:5]:
+        platform = str(item.get("platform", ""))
+        topic = str(item.get("topic", "")) or "Без темы"
+        rows += f"""
+        <form class="reminder-row" method="post" action="/content-plan/publish">
+          <input type="hidden" name="platform" value="{escape(platform)}">
+          <input type="hidden" name="topic" value="{escape(topic)}">
+          <div class="reminder-info">
+            <span class="reminder-date">{escape(parsed.strftime('%d.%m'))}</span>
+            <span class="reminder-topic">{escape(platform)} · {escape(_short_text(topic, 56))}</span>
+          </div>
+          <button type="submit">Отметить опубликованным</button>
+        </form>
+        """
+    more = f'<p class="reminder-more">…и ещё {len(pending) - 5}</p>' if len(pending) > 5 else ""
+    return f"""
+    <section class="publish-reminder">
+      <div class="reminder-head">
+        <strong>Опубликовала эти посты? Отметь — они уйдут в архив и календарь.</strong>
+        <span>Прошлые публикации без статуса «Опубликовано»</span>
+      </div>
+      <div class="reminder-list">{rows}{more}</div>
+    </section>
+    """
+
+
+def _mark_plan_publication_published(platform: str, topic: str) -> bool:
+    """Mark the matching content-plan publication as published and sync it to the archive."""
+    platform = str(platform).strip()
+    topic = str(topic).strip()
+    raw = _stored_content_plan()
+    today = today_moscow()
+    changed = False
+    for item in raw.get("planned_publications", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("platform", "")).strip() == platform and str(item.get("topic", "")).strip() == topic:
+            item["status"] = "published"
+            parsed = parse_plan_date(str(item.get("date", "")))
+            if not parsed or parsed > today:
+                item["date"] = today.isoformat()
+                item["day"] = weekday_name_for_date(item["date"])
+            changed = True
+    if changed:
+        raw["updated_at"] = _now_iso()
+        raw["last_action"] = "Публикация отмечена опубликованной."
+        DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        TextPostRepository().sync_from_content_plan(raw)
+    return changed
+
+
 def _gates_banner(pending_memory: int, pending_lessons: int) -> str:
     if pending_memory <= 0 and pending_lessons <= 0:
         return ""
@@ -998,6 +1111,8 @@ def render_daily_brief(brief: DailyBrief, pending_memory: int = 0, pending_lesso
     ai_result = load_ai_result()
     content = f"""
     {_gates_banner(pending_memory, pending_lessons)}
+
+    {_publish_reminder_block()}
 
     {_ai_status_block(ai_status, ai_result)}
 
@@ -2401,7 +2516,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
           {_select("new_pub_format", "Формат публикации", "пост", PUBLICATION_FORMATS)}
           {_input("new_pub_note", "Заметка / ТЗ", "")}
           <input type="hidden" name="new_pub_summary" value="">
-          <input type="hidden" name="new_pub_status" value="planned">
+          <input type="hidden" name="new_pub_status" value="draft">
           <button class="ghost" name="plan_action" value="add_publication" type="submit">Добавить публикацию</button>
         </article>
         <input type="hidden" name="new_pub_index" value="{new_index}">
@@ -2461,9 +2576,8 @@ def render_text_posts_page(repository: TextPostRepository, query: dict[str, list
     </div>
     <form class="period-picker text-filter" method="get" action="/texts">
       <input type="hidden" name="tab" value="{escape(tab)}">
-      {'<label><span>Месяц</span><input type="month" name="month" value="' + escape(_month_for_input(week_start)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
-      {'<label><span>Начало периода</span><input type="date" name="week_start" value="' + escape(_date_for_input(week_start)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
-      {'<label><span>Конец периода</span><input type="date" name="week_end" value="' + escape(_date_for_input(week_end)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
+      {'<label><span>Начало недели</span><input type="date" name="week_start" value="' + escape(_date_for_input(week_start)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
+      {'<label><span>Конец недели</span><input type="date" name="week_end" value="' + escape(_date_for_input(week_end)) + '" onchange="this.form.submit()"></label>' if tab == 'planned' else ''}
       <label><span>Поиск по названию</span><input type="search" name="q" value="{escape(search)}" placeholder="Название поста"></label>
       <label><span>Площадка</span><select name="platform">
         <option value="">Все площадки</option>
@@ -2622,7 +2736,7 @@ def render_text_post_detail(
     if revise_error:
         notice += _ai_error_note(revise_error, "внести правки")
     archive_action = (
-        '<button class="ghost" name="action" value="archive" type="submit">Перенести в архив</button>'
+        '<button class="ghost" name="action" value="archive" type="submit">Отметить опубликованным</button>'
         if post.tab == "planned"
         else ""
     )
@@ -2878,6 +2992,29 @@ def _editorial_strategy_row(item: dict[str, object], index: int) -> str:
     """
 
 
+def _open_text_query(item: object) -> str:
+    item = item if isinstance(item, dict) else {}
+    return f"platform={quote(str(item.get('platform', '')))}&topic={quote(str(item.get('topic', '')))}"
+
+
+def _text_post_for_publication(repository: TextPostRepository, platform: str, topic: str) -> TextPost | None:
+    """Find the Тексты post that corresponds to a content-plan publication, so the
+    plan's «Открыть текст» link lands on the same synced item."""
+    platform = str(platform).strip()
+    topic = str(topic).strip()
+    if not (platform or topic):
+        return None
+    source_key = source_key_for_publication({"topic": topic, "platform": platform})
+    posts = repository.list_posts("planned") + repository.list_posts("archive")
+    for post in posts:
+        if post.source_key and post.source_key == source_key:
+            return post
+    for post in posts:
+        if post.title.strip().lower() == topic.lower() and post.platform.strip().lower() == platform.lower():
+            return post
+    return None
+
+
 def _content_plan_edit_row(item: object, index: int) -> str:
     item = item if isinstance(item, dict) else {}
     error = ""
@@ -2910,8 +3047,8 @@ def _content_plan_edit_row(item: object, index: int) -> str:
           {_input(f"pub_{index}_goal", "Цель", item.get("goal", ""))}
           {_select(f"pub_{index}_pillar", "Рубрика", _publication_rubric(item), RUBRICS)}
           {_select(f"pub_{index}_format", "Формат публикации", _publication_format(item), PUBLICATION_FORMATS)}
+          {_select(f"pub_{index}_status", "Статус", status, list(PUBLICATION_STATUSES))}
         </div>
-        <input type="hidden" name="pub_{index}_status" value="{escape(status)}">
         <input type="hidden" name="pub_{index}_summary" value="{escape(str(item.get("summary", item.get("note", ""))))}">
         {_textarea(f"pub_{index}_note", "Заметка / ТЗ", item.get("note", ""))}
         <p class="mode-hint">Полный текст поста готовится в разделе «Тексты» — здесь только тема и ТЗ.</p>
@@ -2919,7 +3056,8 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         {error}
         <div class="form-actions">
           <button class="ghost" name="plan_action" value="generate_pub_{index}" type="submit">Сгенерировать тему/ТЗ</button>
-          <button class="ghost" name="plan_action" value="next_pub_{index}" type="submit">Следующий этап</button>
+          <a href="/content-plan/open-text?{_open_text_query(item)}">Открыть текст →</a>
+          {'' if status == 'published' else f'<button class="ghost" name="plan_action" value="publish_pub_{index}" type="submit">Отметить опубликованным</button>'}
           <button class="ghost danger-text" name="plan_action" value="delete_pub_{index}" type="submit">Удалить</button>
         </div>
       </div>
@@ -3147,11 +3285,6 @@ def _date_for_input(value: str) -> str:
     return parsed.isoformat() if parsed else ""
 
 
-def _month_for_input(value: str) -> str:
-    parsed = parse_plan_date(value)
-    return f"{parsed.year:04d}-{parsed.month:02d}" if parsed else ""
-
-
 def _month_range(value: str) -> tuple[str, str]:
     if not re.fullmatch(r"\d{4}-\d{2}", value):
         return "", ""
@@ -3300,7 +3433,7 @@ def _strategy_publications(strategy: dict[str, object], week_start: str, plan: d
                 "format": publication_format,
                 "pillar": rubric,
                 "rubric": rubric,
-                "status": "planned",
+                "status": "draft",
                 "summary": _localized_summary(platform, trend, evergreen),
                 "note": _trend_selection_note(platform, rubric, trend, str(entry.get("note", ""))),
                 "week_focus": str(plan.get("focus", "")),
@@ -3558,6 +3691,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
     )[1]
     delete_index = _action_index(action, "delete_pub_")
     next_index = _action_index(action, "next_pub_")
+    publish_index = _action_index(action, "publish_pub_")
     publications = []
     indexes = sorted(
         {
@@ -3578,6 +3712,12 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         status = _normalize_publication_status(value(f"pub_{index}_status"))
         if next_index == index:
             status = _next_publication_status(status)
+        if publish_index == index:
+            status = "published"
+            # Mark it published today unless it already has a real (past) publish date.
+            parsed_pub = parse_plan_date(publication_date)
+            if not parsed_pub or parsed_pub > today_moscow():
+                publication_date = today_moscow().isoformat()
         publication_rubric = _normalize_rubric(value(f"pub_{index}_pillar") or value(f"pub_{index}_format"))
         publication_format = _normalize_publication_format(value(f"pub_{index}_format"))
         publications.append(
@@ -3613,7 +3753,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             "format": _normalize_publication_format(value("new_pub_format")),
             "pillar": _normalize_rubric(value("new_pub_pillar") or value("new_pub_format")),
             "rubric": _normalize_rubric(value("new_pub_pillar") or value("new_pub_format")),
-            "status": "planned",
+            "status": "draft",
             "summary": value("new_pub_summary"),
             "note": value("new_pub_note"),
         }
@@ -3653,15 +3793,22 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
             raw["last_action"] = "Редакционная стратегия сохранена."
         elif next_index is not None:
             raw["last_action"] = f"Публикация #{next_index + 1} переведена на следующий этап."
+        elif publish_index is not None:
+            raw["last_action"] = "Публикация отмечена опубликованной — она в архиве и календаре."
     # save_focus already keeps the full stored list; every other action rebuilds only
     # the week from the form, so re-attach the preserved out-of-week publications.
     if action != "save_focus" and preserved_out_of_week:
         raw["planned_publications"] = list(raw.get("planned_publications", [])) + preserved_out_of_week
     DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if publish_index is not None:
+        # Push the freshly published post into the archive so the calendar is instantly correct.
+        TextPostRepository().sync_from_content_plan(raw)
     anchor = ""
     target_index = _action_index(action, "generate_pub_")
     if target_index is None:
         target_index = _action_index(action, "next_pub_")
+    if target_index is None:
+        target_index = publish_index
     if target_index is not None:
         anchor = f"#publication-{target_index}"
     return f"/content-plan?saved=1&status=updated&view={view}{anchor}"
@@ -3873,7 +4020,7 @@ def _add_trend_to_content_plan(topic: dict[str, object]) -> None:
             "format": "пост",
             "pillar": rubric,
             "rubric": rubric,
-            "status": "idea",
+            "status": "draft",
             "summary": _localized_summary(platform, topic, ""),
             "note": _trend_selection_note(platform, rubric, topic, str(topic.get("ai_reason", ""))),
             "used_trend": title,
@@ -3913,7 +4060,7 @@ def _add_idea_to_content_plan(idea: Idea) -> bool:
             "format": "пост",
             "pillar": rubric,
             "rubric": rubric,
-            "status": "idea",
+            "status": "draft",
             "summary": idea.description.strip(),
             "note": f"Идея добавлена в план из хранилища идей (источник: {idea.source}).",
         }
@@ -4011,7 +4158,7 @@ def _generate_content_plan_publication_with_ai(plan: dict[str, object], publicat
         updated["format"] = publication_format
         updated["pillar"] = rubric
         updated["rubric"] = rubric
-        updated["status"] = "in_progress"
+        updated["status"] = "draft"
         updated["note"] = str(response.get("note") or updated.get("note", "")).strip()
         updated["date"] = _normalize_plan_date_value(str(updated.get("date", "")))
         updated["day"] = weekday_name_for_date(str(updated.get("date", "")))
@@ -5278,40 +5425,38 @@ def _publication_rubric(item: object) -> str:
 
 
 def _normalize_publication_status(status: str) -> str:
+    # Collapse every legacy status onto the shared 3-stage lifecycle.
     mapping = {
-        "suggested": "idea",
-        "needs_ai_plan": "idea",
-        "ready_for_review": "in_progress",
-        "review": "in_progress",
-        "approved": "in_progress",
+        "idea": "draft",
+        "planned": "draft",
+        "suggested": "draft",
+        "needs_ai_plan": "draft",
+        "New": "draft",
+        "new": "draft",
+        "in_progress": "draft",
+        "In Progress": "draft",
+        "ready_for_review": "draft",
+        "review": "draft",
+        "drafted": "draft",
+        "Drafted": "draft",
+        "Approved": "approved",
         "Published": "published",
         "Archived": "published",
         "archived": "published",
-        "Drafted": "in_progress",
-        "drafted": "in_progress",
-        "New": "idea",
-        "In Progress": "planned",
     }
     normalized = mapping.get(status, status)
-    return normalized if normalized in PUBLICATION_STATUSES else "planned"
+    return normalized if normalized in PUBLICATION_STATUSES else "draft"
 
 
 def _next_publication_status(status: str) -> str:
-    order = ("idea", "planned", "in_progress", "published")
     current = _normalize_publication_status(status)
-    index = order.index(current) if current in order else 0
-    return order[min(index + 1, len(order) - 1)]
+    index = PUBLICATION_STATUSES.index(current) if current in PUBLICATION_STATUSES else 0
+    return PUBLICATION_STATUSES[min(index + 1, len(PUBLICATION_STATUSES) - 1)]
 
 
 def _status_badge(status: str) -> str:
     normalized = _normalize_publication_status(status)
-    icon = {
-        "idea": "●",
-        "planned": "●",
-        "in_progress": "●",
-        "published": "●",
-    }.get(normalized, "●")
-    return f'<div class="status-badge status-{escape(normalized)}">{icon} {escape(_status_ru(normalized))}</div>'
+    return f'<div class="status-badge status-{escape(normalized)}">● {escape(_status_ru(normalized))}</div>'
 
 
 def _language_for_platform(platform: str) -> str:
@@ -6629,17 +6774,13 @@ def _styles() -> str:
       font-weight: 760;
       align-self: end;
     }
-    .status-idea {
-      color: #e6c979;
-      background: rgba(230, 201, 121, .14);
-    }
-    .status-planned {
-      color: #86b7e6;
-      background: rgba(134, 183, 230, .14);
-    }
-    .status-in_progress {
+    .status-draft {
       color: #e0a76a;
       background: rgba(224, 167, 106, .14);
+    }
+    .status-approved {
+      color: #86b7e6;
+      background: rgba(134, 183, 230, .14);
     }
     .status-published {
       color: #7bcf9a;
@@ -7369,6 +7510,41 @@ def _styles() -> str:
       background: var(--accent);
       color: #fff;
     }
+    .publish-reminder {
+      padding: 16px 18px;
+      border-radius: var(--radius);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      margin-bottom: 4px;
+    }
+    .reminder-head strong { display: block; color: var(--ink); }
+    .reminder-head span { color: var(--muted); font-size: 0.9rem; }
+    .reminder-list { margin-top: 12px; display: grid; gap: 8px; }
+    .reminder-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      background: var(--paper-soft);
+      border: 1px solid var(--line-soft);
+    }
+    .reminder-info { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .reminder-date { color: var(--accent); font-weight: 760; font-size: 0.85rem; }
+    .reminder-topic { color: var(--ink); overflow-wrap: anywhere; }
+    .reminder-row button {
+      flex: 0 0 auto;
+      font-weight: 680;
+      padding: 8px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--accent-soft);
+      color: var(--accent);
+      cursor: pointer;
+    }
+    .reminder-more { margin-top: 6px; color: var(--muted); font-size: 0.88rem; }
     .mode-list {
       display: grid;
       gap: 10px;

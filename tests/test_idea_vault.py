@@ -85,7 +85,7 @@ class IdeaVaultTests(unittest.TestCase):
         self.assertEqual(len(publications), 1)
         self.assertEqual(publications[0]["topic"], "CX держится на операциях")
         self.assertEqual(publications[0]["platform"], "LinkedIn")
-        self.assertEqual(publications[0]["status"], "idea")
+        self.assertEqual(publications[0]["status"], "draft")
 
 
 if __name__ == "__main__":

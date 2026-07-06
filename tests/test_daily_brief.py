@@ -9,7 +9,8 @@ from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, refresh_stale_content_plan, today_moscow, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _clean_focus_value, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, _text_matches_platform, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
+from post_agent.web import _author_profile_form_to_raw, _clean_focus_value, _compact_content_plan_block, _content_plan_with_query_period, _mark_plan_publication_published, _publish_reminder_block, _refine_with_ai, _save_content_plan_form, _text_matches_platform, _text_post_for_publication, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
+from post_agent.text_posts import TextPostRepository
 from post_agent.writing_dna import WritingDNARepository
 
 
@@ -467,8 +468,13 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Дата", html)
 
         self.assertIn("status-badge", html)
-        self.assertIn("Следующий этап", html)
-        self.assertNotIn("<select name=\"pub_0_status\"", html)
+        # The stage stepper is replaced by a visible 3-stage status dropdown and
+        # explicit publish / open-text actions.
+        self.assertNotIn("Следующий этап", html)
+        self.assertIn('name="pub_0_status"', html)
+        self.assertIn("Отметить опубликованным", html)
+        self.assertIn("Открыть текст", html)
+        self.assertIn("/content-plan/open-text", html)
 
     def test_content_plan_page_uses_browser_date_inputs(self) -> None:
         html = render_content_plan_page(
@@ -615,7 +621,7 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(saved["planned_publications"][0]["topic"], "Keep me")
         self.assertEqual(saved["planned_publications"][1]["topic"], "Generated topic")
         self.assertEqual(saved["planned_publications"][1]["day"], "Суббота")
-        self.assertEqual(saved["planned_publications"][1]["status"], "in_progress")
+        self.assertEqual(saved["planned_publications"][1]["status"], "draft")
         self.assertTrue(saved["planned_publications"][1]["updated_at"])
         self.assertTrue(saved["updated_at"])
 
@@ -702,7 +708,7 @@ class DailyBriefTests(unittest.TestCase):
                 "pub_0_date": ["2026-06-24"],
                 "pub_0_platform": ["LinkedIn"],
                 "pub_0_topic": ["Эта неделя"],
-                "pub_0_status": ["in_progress"],
+                "pub_0_status": ["approved"],
             }
 
             with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path):
@@ -712,9 +718,121 @@ class DailyBriefTests(unittest.TestCase):
         topics = {p["topic"] for p in saved["planned_publications"]}
         self.assertIn("Эта неделя", topics)
         self.assertIn("Опубликован ранее", topics)
-        # Approve no longer force-resets an edited status back to "planned".
+        # Approve no longer force-resets an edited status back to "draft".
         week_item = next(p for p in saved["planned_publications"] if p["topic"] == "Эта неделя")
-        self.assertEqual(week_item["status"], "in_progress")
+        self.assertEqual(week_item["status"], "approved")
+
+    def test_publish_button_marks_publication_published(self) -> None:
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            posts_path = Path(directory) / "posts.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "week_start": "2026-06-22",
+                        "week_end": "2999-12-31",
+                        "planned_publications": [
+                            {"date": "2999-01-01", "platform": "LinkedIn", "topic": "Готов к выходу", "status": "approved"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            form = {
+                "view": ["list"],
+                "plan_action": ["publish_pub_0"],
+                "week_start": ["2026-06-22"],
+                "week_end": ["2999-12-31"],
+                "focus": ["Focus"],
+                "content_pillars": [""],
+                "platform_targets": [""],
+                "today_recommendation": [""],
+                "pub_0_date": ["2999-01-01"],
+                "pub_0_platform": ["LinkedIn"],
+                "pub_0_topic": ["Готов к выходу"],
+                "pub_0_status": ["approved"],
+            }
+
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch(
+                "post_agent.web.TextPostRepository", lambda *a, **k: TextPostRepository(posts_path)
+            ):
+                _save_content_plan_form(form)
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        item = saved["planned_publications"][0]
+        self.assertEqual(item["status"], "published")
+        # A future publish date is pulled back to today (it was published now).
+        self.assertEqual(item["date"], today_moscow().isoformat())
+
+    def test_mark_plan_publication_published_keeps_real_past_date(self) -> None:
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            posts_path = Path(directory) / "posts.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "week_start": "2026-06-01",
+                        "week_end": "2026-06-30",
+                        "planned_publications": [
+                            {"date": "2026-06-10", "platform": "Telegram", "topic": "Вчерашний", "status": "draft"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path), patch(
+                "post_agent.web.TextPostRepository", lambda *a, **k: TextPostRepository(posts_path)
+            ):
+                changed = _mark_plan_publication_published("Telegram", "Вчерашний")
+                saved = json.loads(plan_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(changed)
+        item = saved["planned_publications"][0]
+        self.assertEqual(item["status"], "published")
+        # A real past date is the day it was posted — keep it.
+        self.assertEqual(item["date"], "2026-06-10")
+
+    def test_publish_reminder_lists_past_unpublished_only(self) -> None:
+        today = today_moscow()
+        past = (today - timedelta(days=2)).isoformat()
+        future = (today + timedelta(days=2)).isoformat()
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "planned_publications": [
+                            {"date": past, "platform": "LinkedIn", "topic": "Прошлый черновик", "status": "approved"},
+                            {"date": past, "platform": "Telegram", "topic": "Прошлый опубликованный", "status": "published"},
+                            {"date": future, "platform": "VC", "topic": "Будущий пост", "status": "draft"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path):
+                html = _publish_reminder_block()
+
+        self.assertIn("Прошлый черновик", html)
+        self.assertNotIn("Прошлый опубликованный", html)
+        self.assertNotIn("Будущий пост", html)
+        self.assertIn("/content-plan/publish", html)
+
+    def test_open_text_link_resolves_to_synced_post(self) -> None:
+        plan = {
+            "planned_publications": [
+                {"date": "2026-07-08", "platform": "LinkedIn", "topic": "Синхронная тема", "status": "draft"},
+            ]
+        }
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            repository.sync_from_content_plan(plan)
+            found = _text_post_for_publication(repository, "LinkedIn", "Синхронная тема")
+            missing = _text_post_for_publication(repository, "LinkedIn", "Нет такой")
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found.title, "Синхронная тема")
+        self.assertIsNone(missing)
 
     def test_content_plan_next_stage_advances_publication_status(self) -> None:
         with TemporaryDirectory() as directory:
@@ -735,7 +853,7 @@ class DailyBriefTests(unittest.TestCase):
                 "pub_0_topic": ["Post"],
                 "pub_0_goal": [""],
                 "pub_0_pillar": [""],
-                "pub_0_status": ["planned"],
+                "pub_0_status": ["draft"],
                 "pub_0_summary": [""],
                 "pub_0_note": [""],
             }
@@ -745,7 +863,8 @@ class DailyBriefTests(unittest.TestCase):
                 saved = json.loads(plan_path.read_text(encoding="utf-8"))
 
         self.assertEqual(location, "/content-plan?saved=1&status=updated&view=list#publication-0")
-        self.assertEqual(saved["planned_publications"][0]["status"], "in_progress")
+        # Lifecycle is draft -> approved -> published.
+        self.assertEqual(saved["planned_publications"][0]["status"], "approved")
 
     def test_content_plan_publication_regenerates_when_ai_returns_similar_variant(self) -> None:
         class Gateway:

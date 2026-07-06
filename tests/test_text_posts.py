@@ -135,7 +135,7 @@ class TextPostRepositoryTests(unittest.TestCase):
         self.assertIn("Запланировано", list_html)
         self.assertIn("AI exposes CX gaps", list_html)
         self.assertIn("Текст публикации", detail_html)
-        self.assertIn("Перенести в архив", detail_html)
+        self.assertIn("Отметить опубликованным", detail_html)
 
     def test_text_field_holds_only_the_draft_and_brief_is_separate(self) -> None:
         plan = {
