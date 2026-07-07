@@ -17,7 +17,6 @@ from .author_brain import THEME_WEIGHT_RULE, AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository, list_to_text, text_to_list
 from .daily_brief import (
     DEFAULT_CONTENT_PLAN_PATH,
-    ApprovalItem,
     BriefItem,
     ContentPlan,
     DailyBrief,
@@ -25,6 +24,9 @@ from .daily_brief import (
     Draft,
     PlannedPublication,
     RelatedKnowledge,
+    format_moscow_datetime,
+    normalize_plan_focus,
+    now_moscow_iso,
     parse_plan_date,
     refresh_stale_content_plan,
     today_moscow,
@@ -1115,10 +1117,20 @@ def _normalize_author_tab(tab: str) -> str:
     return value if value in {"base", "dna", "strategy"} else "base"
 
 
+def _format_timestamp(value: object, *, date_only: bool = False) -> str:
+    return format_moscow_datetime(value, date_only=date_only)
+
+
+def _normalize_content_plan_fields(plan: dict[str, object]) -> dict[str, object]:
+    normalized = dict(plan)
+    normalized["focus"] = normalize_plan_focus(plan.get("focus", ""))
+    return normalized
+
+
 def _author_base_panel(profile: dict[str, object], status: object) -> str:
     state = _status_label(str(getattr(status, "state", "")))
     message = _status_message(str(getattr(status, "message", "")))
-    updated = str(getattr(status, "updated_at", "")) or str(profile.get("updated_at", ""))
+    updated = _format_timestamp(str(getattr(status, "updated_at", "")) or str(profile.get("updated_at", "")))
     error = str(getattr(status, "error", ""))
     source_counts = profile.get("source_counts", {})
     if not isinstance(source_counts, dict):
@@ -1527,7 +1539,7 @@ def _display_ru(value: str) -> str:
 def _update_item(item: dict[str, object]) -> str:
     return f"""<article class="card">
       <div class="card-head"><h3>{escape(str(item.get("title", "")))}</h3><strong>{escape(_display_ru(str(item.get("type", ""))))}</strong></div>
-      <p>{escape(str(item.get("updated_at", "")))}</p>
+      <p>{escape(_format_timestamp(item.get("updated_at", "")))}</p>
     </article>"""
 
 
@@ -1645,7 +1657,7 @@ def _ai_synthesize_trends(
             "source": str(s.get("source", "")),
             "url": str(s.get("url", "")),
         }
-        for s in signals[:40]
+        for s in signals[:48]
     ]
     try:
         response = _complete_json_with_retry(
@@ -1668,7 +1680,10 @@ def _ai_synthesize_trends(
                 "1. Каждый тренд ОБЯЗАН пересекаться хотя бы с одной main_theme, key_idea или экспертизой автора.\n"
                 "2. Если сигнал не связан с территорией автора — не включай его, даже если он громкий.\n"
                 "3. author_angle и expertise_connection формулируй через конкретные идеи/кейсы автора, а не общими словами.\n"
-                "4. Лучше 5-8 по-настоящему релевантных автору трендов, чем 10 общих. Сортируй по релевантности автору.\n\n"
+                "4. Лучше 5-8 по-настоящему релевантных автору трендов, чем 10 общих. Сортируй по релевантности автору.\n"
+                "5. Не делай все тренды про AI. Если в сигналах есть Hospitality, Operations, CX или Management — обязательно включи их.\n"
+                "6. supporting_sources: используй ТОЛЬКО name и url из входных сигналов. Не выдумывай HBR и другие источники.\n"
+                "7. Для каждого тренда по возможности укажи 2+ разных source из списка сигналов.\n\n"
                 "Верни строго JSON вида: {\"trends\": [ {\n"
                 "  \"title\": \"редакционная формулировка глобального тренда (не заголовок новости)\",\n"
                 "  \"category\": \"AI|Operations|Customer Experience|Hospitality|Management\",\n"
@@ -1760,8 +1775,8 @@ def render_trend_radar(
     topics = cache.get("topics", [])
     if not isinstance(topics, list):
         topics = []
-    generated_at = str(cache.get("generated_at", ""))
-    expires_at = str(cache.get("expires_at", ""))
+    generated_at = _format_timestamp(cache.get("generated_at", ""))
+    expires_at = _format_timestamp(cache.get("expires_at", ""))
     sources = cache.get("sources", [])
     source_text = ", ".join(str(item) for item in sources) if isinstance(sources, list) else ""
     source_status = str(cache.get("source_status", ""))
@@ -1930,7 +1945,7 @@ def _trend_card(topic: object) -> str:
       </div>
       <div class="draft-context-grid">
         <div><p class="label">Источник/источники</p><p>{sources}</p></div>
-        <div><p class="label">Дата обнаружения</p><p>{escape(str(item.get("detected_at", item.get("created_at", ""))))}</p></div>
+        <div><p class="label">Дата обнаружения</p><p>{escape(_format_timestamp(item.get("detected_at", item.get("created_at", ""))))}</p></div>
         <div><p class="label">Почему это тренд</p><p>{escape(str(item.get("why_trend", item.get("why_now", ""))))}</p></div>
         <div><p class="label">Почему это важно</p><p>{escape(str(item.get("why_important", "")))}</p></div>
         <div><p class="label">Уровень хайпа</p><p>{escape(str(item.get("hype_level", "")))}</p></div>
@@ -2354,7 +2369,7 @@ def _ai_status_block(status: object, result: dict[str, object] | None) -> str:
     if status.error:
         details = f"<p class=\"risk\">{escape(status.error)}</p>"
     elif result:
-        details = f"<p>Последний AI-анализ: {escape(str(result.get('generated_at', '')))}</p>"
+        details = f"<p>Последний AI-анализ: {escape(_format_timestamp(result.get('generated_at', '')))}</p>"
     return f"""
     <section class="ai-panel {status_class}">
       <div>
@@ -2444,35 +2459,6 @@ def _ai_list(items: object) -> str:
         else:
             rows.append(f"<li>{escape(str(item))}</li>")
     return f"<ul class=\"ai-list\">{''.join(rows)}</ul>"
-
-
-def _trends_block(items: tuple[BriefItem, ...]) -> str:
-    if not items:
-        return ""
-    cards = "".join(
-        f"""
-        <article class="trend-item">
-          <div>
-            <h3>{escape(item.title)}</h3>
-            <p>{escape(item.summary)}</p>
-          </div>
-          <span>Локальные данные</span>
-        </article>
-        """
-        for item in items[:3]
-    )
-    return f"""
-    <details class="block trends-block secondary-details">
-      <summary>
-        <span class="s-eyebrow">контекст</span>
-        <span class="s-title">Тренды и сигналы</span>
-        <span class="s-hint">Фон для тем — можно посмотреть по желанию</span>
-      </summary>
-      <div class="secondary-body">
-        <div class="trend-list">{cards}</div>
-      </div>
-    </details>
-    """
 
 
 def _ai_error_note(detail: object, action: str = "сгенерировать текст") -> str:
@@ -2754,7 +2740,7 @@ def render_content_plan_page(plan: dict[str, object], saved: bool = False, view:
     if action_status == "updated":
         notice += "<div class=\"notice\">Обновлено.</div>"
     if plan.get("updated_at"):
-        notice += f"<div class=\"state-note\">Последнее обновление: {escape(str(plan.get('updated_at')))}</div>"
+        notice += f"<div class=\"state-note\">Последнее обновление: {escape(_format_timestamp(plan.get('updated_at')))}</div>"
     if plan.get("last_action"):
         notice += f"<div class=\"state-note\">{escape(str(plan.get('last_action')))}</div>"
     if plan.get("ai_error"):
@@ -3241,7 +3227,8 @@ def _editorial_strategy_panel(strategy: dict[str, object]) -> str:
         _editorial_strategy_row(item, index)
         for index, item in enumerate(_normalize_strategy_entries(strategy.get("weekly_template", [])))
     )
-    updated = str(strategy.get("updated_at", "")).strip() or "Используется дефолтная стратегия"
+    updated_raw = str(strategy.get("updated_at", "")).strip()
+    updated = _format_timestamp(updated_raw) if updated_raw else "Используется дефолтная стратегия"
     return f"""
       <section class="block" id="editorial-strategy">
         <div class="section-title">
@@ -3292,7 +3279,7 @@ def _content_plan_edit_row(item: object, index: int) -> str:
         error = _ai_error_note(item.get("ai_error"), "подобрать тему")
     if item.get("repeat_warning"):
         error += f"<div class=\"state-note repeat-note\">⚠ {escape(str(item.get('repeat_warning')))}</div>"
-    updated = f"<div class=\"state-note\">Обновлено: {escape(str(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
+    updated = f"<div class=\"state-note\">Обновлено: {escape(_format_timestamp(item.get('updated_at')))}</div>" if item.get("updated_at") else ""
     day = weekday_name_for_date(str(item.get("date", ""))) or str(item.get("day", ""))
     status = _normalize_publication_status(str(item.get("status", "")))
     topic_text = str(item.get("topic", "")).strip() or "Без темы"
@@ -3406,12 +3393,12 @@ def _short_text(text: str, limit: int) -> str:
 
 
 def _load_content_plan_raw() -> dict[str, object]:
-    plan = json.loads(DEFAULT_CONTENT_PLAN_PATH.read_text(encoding="utf-8"))
-    refreshed = refresh_stale_content_plan(plan, today_moscow())
-    if refreshed != plan:
+    raw = json.loads(DEFAULT_CONTENT_PLAN_PATH.read_text(encoding="utf-8"))
+    plan = _normalize_content_plan_fields(raw)
+    refreshed = _normalize_content_plan_fields(refresh_stale_content_plan(plan, today_moscow()))
+    if refreshed != raw:
         DEFAULT_CONTENT_PLAN_PATH.write_text(json.dumps(refreshed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return refreshed
-    return plan
+    return refreshed
 
 
 def _content_plan_with_query_period(plan: dict[str, object], query: dict[str, list[str]]) -> dict[str, object]:
@@ -3495,7 +3482,7 @@ def _month_range(value: str) -> tuple[str, str]:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return now_moscow_iso()
 
 
 def _load_editorial_strategy() -> dict[str, object]:
@@ -3982,7 +3969,7 @@ def _save_content_plan_form(data: dict[str, list[str]]) -> str:
         "week": _format_week_range(week_start, week_end),
         "week_start": week_start,
         "week_end": week_end,
-        "focus": value("focus"),
+        "focus": normalize_plan_focus(value("focus")),
         "month_focus": value("month_focus"),
         "content_pillars": text_to_list(value("content_pillars")),
         "platform_targets": text_to_list(value("platform_targets")),
@@ -4497,6 +4484,7 @@ def _generate_content_plan_with_ai(plan: dict[str, object], strategy: dict[str, 
         updated["ai_error"] = f"Не удалось сгенерировать контент-план: {exc}"
         updated["updated_at"] = _now_iso()
         updated["last_action"] = "AI не обновил план."
+    updated["focus"] = normalize_plan_focus(updated.get("focus", ""))
     return updated
 
 
@@ -5309,7 +5297,7 @@ def render_idea_detail(idea: Idea, planned: str = "") -> str:
         <span>{escape(_status_ru(idea.status))}</span>
         <span>{escape(_source_ru(idea.source))}</span>
         <span>{escape(platforms)}</span>
-        <span>{escape(idea.created_at)}</span>
+        <span>{escape(_format_timestamp(idea.created_at, date_only=True))}</span>
       </div>
       <pre>{escape(idea.description)}</pre>
       <div class="form-actions">
@@ -5348,7 +5336,7 @@ def _idea_card(idea: Idea) -> str:
           <span>{escape(_status_ru(idea.status))}</span>
           <span>{escape(_source_ru(idea.source))}</span>
           <span>{escape(platforms)}</span>
-          <span>{escape(idea.created_at)}</span>
+          <span>{escape(_format_timestamp(idea.created_at, date_only=True))}</span>
         </div>
       </div>
       <div class="doc-actions">
@@ -6010,72 +5998,6 @@ def _brief_card(item: BriefItem) -> str:
 
 
 
-def _decisions_section(brief: DailyBrief, ui_state: dict[str, object]) -> str:
-    # Accepted decisions leave the main screen; only open ones stay in "Мои решения".
-    pending = [
-        item
-        for item in brief.approvals
-        if _approval_status(ui_state, _item_key(item.title)) != "accepted"
-    ]
-    if not pending:
-        return ""
-    cards = "".join(_approval_card(item, ui_state) for item in pending)
-    return f"""
-    <section class="block" id="decisions">
-      <div class="section-title">
-        <div>
-          <p class="eyebrow">решения</p>
-          <h2>Мои решения</h2>
-        </div>
-        <span>{len(pending)} на решение</span>
-      </div>
-      <div class="approval-grid">
-        {cards}
-      </div>
-    </section>
-    """
-
-
-def _approval_card(item: ApprovalItem, ui_state: dict[str, object] | None = None) -> str:
-    ui_state = ui_state or _load_ui_state()
-    key = _item_key(item.title)
-    status = _approval_status(ui_state, key)
-    # Once a decision is accepted, drop the action buttons — the status chip is the record.
-    if status == "accepted":
-        actions = (
-            "<div class=\"approval-actions\">"
-            "<form method=\"post\" action=\"/daily-brief/approval\">"
-            f"<input type=\"hidden\" name=\"item_key\" value=\"{escape(key)}\">"
-            "<input type=\"hidden\" name=\"status\" value=\"pending\">"
-            "<button class=\"ghost\" type=\"submit\">Изменить решение</button>"
-            "</form></div>"
-        )
-    else:
-        actions = f"""
-      <div class="approval-actions">
-        <form method="post" action="/daily-brief/approval">
-          <input type="hidden" name="item_key" value="{escape(key)}">
-          <input type="hidden" name="status" value="accepted">
-          <button type="submit">Принять</button>
-        </form>
-        <form method="post" action="/daily-brief/approval">
-          <input type="hidden" name="item_key" value="{escape(key)}">
-          <input type="hidden" name="status" value="deferred">
-          <button class="secondary" type="submit">Вернуться позже</button>
-        </form>
-      </div>"""
-    return f"""
-    <article class="approval" id="{escape(key)}">
-      <h3>{escape(item.title)}</h3>
-      <div class="decision-status {_decision_status_class(status)}">{escape(_decision_status_ru(status))}</div>
-      <p><b>Решение:</b> {escape(item.decision)}</p>
-      <p><b>Рекомендация:</b> {escape(item.recommendation)}</p>
-      <p class="risk"><b>Риск:</b> {escape(item.risk)}</p>
-      {actions}
-    </article>
-    """
-
-
 def _refinement_bar(item_key: str, title: str, text: str, kind: str) -> str:
     buttons = "".join(
         f"""
@@ -6248,7 +6170,7 @@ def _save_ai_action_error(action: str, exc: Exception) -> None:
             "action": action,
             "error": str(exc),
             "type": exc.__class__.__name__,
-            "created_at": date.today().isoformat(),
+            "created_at": today_moscow().isoformat(),
         },
     )
     AI_ACTION_DIAGNOSTICS_PATH.write_text(
@@ -6313,22 +6235,6 @@ def _approval_status(state: dict[str, object], item_key: str) -> str:
         return "pending"
     status = str(approvals.get(item_key, "pending"))
     return status if status in {"pending", "accepted", "deferred"} else "pending"
-
-
-def _decision_status_ru(status: str) -> str:
-    statuses = {
-        "pending": "Ожидает решения",
-        "accepted": "Принято",
-        "deferred": "Отложено",
-    }
-    return statuses.get(status, status)
-
-
-def _decision_status_class(status: str) -> str:
-    return {
-        "accepted": "is-accepted",
-        "deferred": "is-deferred",
-    }.get(status, "is-pending")
 
 
 def _styles() -> str:
@@ -6978,6 +6884,10 @@ def _styles() -> str:
       align-items: flex-end;
       gap: 18px;
       margin-bottom: 18px;
+      min-width: 0;
+    }
+    .section-title > div {
+      min-width: 0;
     }
     .section-title span, .why, .draft-meta, .tags {
       color: var(--muted);
@@ -6988,7 +6898,11 @@ def _styles() -> str:
     .stack-form label + label { margin-top: 18px; }
     .section-title span {
       font-size: 13px;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      min-width: 0;
+      max-width: 100%;
+      text-align: right;
     }
     .card-list, .draft-grid, .approval-grid {
       display: grid;
@@ -7006,6 +6920,18 @@ def _styles() -> str:
     .card:hover, .draft:hover, .approval:hover {
       border-color: var(--line);
       transform: translateY(-1px);
+    }
+    .profile-form,
+    .period-picker,
+    .plan-edit-list,
+    .content-plan,
+    .calendar-block,
+    .text-list {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .state-note {
+      overflow-wrap: anywhere;
     }
     .content-plan {
       background: var(--paper);
@@ -7110,6 +7036,8 @@ def _styles() -> str:
       border: 1px solid var(--line-soft);
       border-radius: var(--radius-sm);
       background: var(--paper-soft);
+      min-width: 0;
+      flex-wrap: wrap;
     }
     .plan-item p {
       color: var(--muted);
@@ -8015,6 +7943,8 @@ def _styles() -> str:
       border-radius: 999px;
       padding: 4px 8px;
       background: var(--paper-soft);
+      max-width: 100%;
+      overflow-wrap: anywhere;
     }
     .doc-actions {
       display: flex;
@@ -8056,9 +7986,11 @@ def _styles() -> str:
       color: var(--muted);
       font-size: 13px;
       font-weight: 680;
+      min-width: 0;
     }
     input, textarea {
       width: 100%;
+      max-width: 100%;
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
       background: var(--paper-soft);
@@ -8071,6 +8003,14 @@ def _styles() -> str:
     }
     input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
     input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+    input[type="date"],
+    input[type="month"],
+    input[type="datetime-local"] {
+      display: block;
+      min-width: 0;
+      -webkit-appearance: none;
+      appearance: none;
+    }
     select {
       width: 100%;
       border: 1px solid var(--line);
@@ -8091,17 +8031,33 @@ def _styles() -> str:
     @media (min-width: 641px) and (max-width: 1100px) {
       .shell { width: min(100% - 40px, 960px); }
       .period-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .section-title {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
+      }
+      .section-title span { text-align: left; }
       .plan-row > summary {
-        grid-template-columns: 1fr auto;
+        grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas:
           "topic topic"
-          "date chev"
-          "platform status";
+          "date date"
+          "platform status"
+          "chev chev";
         gap: 8px 12px;
-        align-items: center;
+        align-items: start;
+      }
+      .plan-row > summary::after {
+        grid-area: chev;
+        justify-self: end;
       }
       .plan-row-topic { font-weight: 600; }
-      .plan-row .status-badge { justify-self: end; }
+      .plan-row-date,
+      .plan-row-platform {
+        font-size: 12px;
+        max-width: 100%;
+      }
+      .plan-row .status-badge { justify-self: start; font-size: 12px; padding: 6px 9px; }
       .hero-cards, .today-details, .week-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .calendar-weekdays { display: none; }
       .calendar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -8122,18 +8078,26 @@ def _styles() -> str:
       .two, .draft-grid, .approval-grid { grid-template-columns: 1fr; }
       .plan-meta-grid, .plan-list, .form-grid, .hero-cards, .edit-row, .today-card, .today-details, .week-list, .ai-result-grid, .draft-context-grid, .score-grid, .text-filter, .plan-fields { grid-template-columns: 1fr; }
       .plan-row > summary {
-        grid-template-columns: 1fr auto;
+        grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas:
           "topic topic"
-          "date chev"
-          "platform status";
+          "date date"
+          "platform status"
+          "chev chev";
         gap: 8px 12px;
-        align-items: center;
+        align-items: start;
+      }
+      .plan-row > summary::after {
+        grid-area: chev;
+        justify-self: end;
       }
       .plan-row-topic { font-weight: 600; }
       .plan-row-date,
-      .plan-row-platform { font-size: 12px; }
-      .plan-row .status-badge { justify-self: end; font-size: 12px; padding: 6px 9px; }
+      .plan-row-platform {
+        font-size: 12px;
+        max-width: 100%;
+      }
+      .plan-row .status-badge { justify-self: start; font-size: 12px; padding: 6px 9px; }
       .knowledge-card {
         flex-direction: column;
         align-items: stretch;

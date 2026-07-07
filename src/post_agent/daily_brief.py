@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from datetime import date, datetime
 import json
@@ -32,6 +33,53 @@ MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 
 def today_moscow() -> date:
     return datetime.now(MOSCOW_TZ).date()
+
+
+def now_moscow_iso() -> str:
+    return datetime.now(MOSCOW_TZ).isoformat(timespec="seconds")
+
+
+def format_moscow_datetime(value: object, *, date_only: bool = False) -> str:
+    """Format stored timestamps for the UI in Europe/Moscow."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, date) and not isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y")
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return ""
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = parse_plan_date(raw)
+            if parsed:
+                return parsed.strftime("%d.%m.%Y")
+            return raw
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=MOSCOW_TZ)
+    else:
+        dt = dt.astimezone(MOSCOW_TZ)
+    if date_only:
+        return dt.strftime("%d.%m.%Y")
+    return dt.strftime("%d.%m.%Y %H:%M") + " МСК"
+
+
+def normalize_plan_focus(focus: object) -> str:
+    """Return a human-readable weekly focus even if AI saved a dict-like string."""
+    if isinstance(focus, dict):
+        return str(focus.get("week_focus") or focus.get("focus") or "").strip()
+    text = str(focus or "").strip()
+    if text.startswith("{") and text.endswith("}"):
+        try:
+            parsed = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return str(parsed.get("week_focus") or parsed.get("focus") or text).strip()
+    return text
 
 
 def _bot_platform_rule(platform: str) -> str:
@@ -200,8 +248,9 @@ def refresh_stale_content_plan(plan: dict[str, Any], today: date) -> dict[str, A
     refreshed["week_start"] = today.isoformat()
     refreshed["week_end"] = latest_shifted.isoformat()
     refreshed["week"] = f"{today.strftime('%d.%m.%Y')} - {latest_shifted.strftime('%d.%m.%Y')}"
-    refreshed["updated_at"] = datetime.now(MOSCOW_TZ).isoformat(timespec="seconds")
+    refreshed["updated_at"] = now_moscow_iso()
     refreshed["last_action"] = "Контент-план автоматически перенесен на актуальные даты."
+    refreshed["focus"] = normalize_plan_focus(refreshed.get("focus", ""))
     return refreshed
 
 
@@ -473,7 +522,7 @@ class DailyBriefService:
     def _content_plan_from_seed(self, seed: dict[str, Any]) -> ContentPlan:
         return ContentPlan(
             week=str(seed["week"]),
-            focus=str(seed["focus"]),
+            focus=normalize_plan_focus(seed.get("focus", "")),
             month_focus=str(seed.get("month_focus", "")),
             content_pillars=tuple(seed.get("content_pillars", ())),
             platform_targets=tuple(seed.get("platform_targets", ())),

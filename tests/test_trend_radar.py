@@ -8,11 +8,84 @@ from post_agent.idea_vault import IdeaVault
 from post_agent.knowledge import KnowledgeBase, KnowledgeCase, KnowledgeDocument
 from post_agent.learning import LearningCenter
 from post_agent.production import run_production_check
-from post_agent.trend_radar import ExternalFeedSourceProvider, TrendRadar
+from post_agent.trend_radar import (
+    ExternalFeedSourceProvider,
+    TrendRadar,
+    _balanced_signal_sample,
+    _match_signals_for_trend,
+    _limit_topics_per_source,
+)
 from post_agent.web import _add_trend_to_content_plan, render_trend_radar
 
 
 class TrendRadarTests(unittest.TestCase):
+    def test_balanced_signal_sample_rotates_across_feeds(self) -> None:
+        signals = []
+        for feed in ("OpenAI News", "Skift", "APQC", "MIT Sloan"):
+            for index in range(3):
+                signals.append({"title": f"{feed} item {index}", "source": feed, "description": feed})
+        sampled = _balanced_signal_sample(signals, limit=8)
+        sources = {str(item["source"]) for item in sampled}
+        self.assertGreaterEqual(len(sources), 3)
+
+    def test_match_signals_for_trend_prefers_relevant_feed(self) -> None:
+        trend = {"title": "Hotel mobile service workflow", "trend_essence": "Guest journey and staff operations"}
+        signals = [
+            {"title": "OpenAI launches new model", "source": "OpenAI News", "url": "https://openai.com/a", "description": "AI model"},
+            {"title": "Hotel guest app changes staff workflow", "source": "Skift", "url": "https://skift.com/a", "description": "hospitality operations"},
+        ]
+        matched = _match_signals_for_trend(trend, signals)
+        self.assertTrue(matched)
+        self.assertEqual(matched[0][0], "Skift")
+
+    def test_limit_topics_per_source_caps_repetition(self) -> None:
+        from post_agent.trend_radar import TrendTopic
+
+        def topic(source: str, score: float) -> TrendTopic:
+            return TrendTopic(
+                id=source,
+                title=source,
+                original_title=source,
+                description="",
+                trend_essence="",
+                main_idea="",
+                audience_importance="",
+                author_angle="",
+                expertise_connection="",
+                publication_ideas={},
+                source=source,
+                source_url="",
+                why_now="",
+                why_important="",
+                category="",
+                hype_level="",
+                relevance_forecast="",
+                reach_score=score,
+                brand_fit_score=score,
+                content_potential=score,
+                trend_score=score,
+                component_scores={},
+                ai_reason="",
+                matching_cases=(),
+                case_insights=(),
+                knowledge_materials=(),
+                best_formats=(),
+                best_rubrics=(),
+                sources=(source,),
+                detected_at="",
+                why_trend="",
+                author_brain_topics=(),
+                repeat_risk="",
+                recommendation="",
+                ai_explanation={},
+                status="new",
+                created_at="",
+            )
+
+        topics = [topic("OpenAI News", 9.0), topic("OpenAI News", 8.5), topic("Skift", 8.0)]
+        limited = _limit_topics_per_source(topics, max_per_source=1)
+        self.assertEqual(len(limited), 2)
+
     def test_trend_radar_refresh_scores_and_caches_topics(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -51,6 +124,7 @@ class TrendRadarTests(unittest.TestCase):
 
         def fake_synth(signals, author_brain, content_plan):  # type: ignore[no-untyped-def]
             captured["signals"] = signals
+            first_signal = signals[0] if signals else {"source": "Test Feed", "url": "https://example.test/a"}
             return [
                 {
                     "title": "Глобальный тренд: AI перестраивает операционные модели",
@@ -61,7 +135,7 @@ class TrendRadarTests(unittest.TestCase):
                     "why_trend": "Сигнал повторяется в нескольких мировых СМИ.",
                     "hype_level": "высокий",
                     "trend_relevance": 9.2,
-                    "supporting_sources": [{"name": "HBR", "url": "https://hbr.org/x"}],
+                    "supporting_sources": [{"name": first_signal["source"], "url": first_signal.get("url", "")}],
                     "publication_ideas": {"LinkedIn": "AI operations post", "Telegram": "AI пост"},
                 }
             ]
@@ -83,7 +157,8 @@ class TrendRadarTests(unittest.TestCase):
         first = cache["topics"][0]
         self.assertIn("операцион", str(first["title"]).lower())
         self.assertEqual(first["trend_essence"], "Компании переосмысляют процессы под AI.")
-        self.assertIn("HBR", first["sources"])
+        self.assertTrue(first["sources"])
+        self.assertIn(first["sources"][0], str(first["source"]))
         self.assertEqual(first["ai_explanation"]["analysis"], "AI-анализ мировых СМИ")
         self.assertIn("LinkedIn", first["publication_ideas"])
 

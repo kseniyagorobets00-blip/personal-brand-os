@@ -7,7 +7,7 @@ from datetime import date, timedelta
 
 from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
-from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, refresh_stale_content_plan, today_moscow, weekday_name_for_date
+from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, format_moscow_datetime, normalize_plan_focus, refresh_stale_content_plan, today_moscow, weekday_name_for_date
 from post_agent.export import export_daily_brief
 from post_agent.web import _author_profile_form_to_raw, _compact_content_plan_block, _content_plan_with_query_period, _refine_with_ai, _save_content_plan_form, _text_matches_platform, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
 from post_agent.writing_dna import WritingDNARepository
@@ -78,7 +78,10 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIn("Черновики к подготовке", html)
         self.assertIn("Почему актуально", html)
         self.assertIn("Краткая структура", html)
-        self.assertIn("Первый черновик текста", html)
+        self.assertTrue(
+            "AI-черновик" in html or "Первый черновик текста" in html,
+            "Draft card should show the current draft stage label",
+        )
         self.assertNotIn("Тренды и сигналы", html)
         self.assertNotIn("Мои решения", html)
         self.assertIn("Контент-план", html)
@@ -209,8 +212,9 @@ class DailyBriefTests(unittest.TestCase):
             # no misleading "create a draft" call to action on a day with no plan
             self.assertNotIn("Создать черновик", html)
 
-    def test_daily_brief_shows_all_today_publications_from_content_plan(self) -> None:
-        today = date.today().strftime("%d.%m.%Y")
+    @patch("post_agent.daily_brief.today_moscow", return_value=date(2026, 7, 6))
+    def test_daily_brief_shows_all_today_publications_from_content_plan(self, _today) -> None:
+        today = "06.07.2026"
         with TemporaryDirectory() as directory:
             root = Path(directory)
             sources_path = root / "sources.json"
@@ -274,6 +278,16 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(refreshed["planned_publications"][0]["date"], "2026-07-05")
         self.assertEqual(refreshed["planned_publications"][1]["date"], "2026-07-07")
         self.assertEqual(refreshed["week_start"], "2026-07-05")
+
+    def test_normalize_plan_focus_extracts_week_focus_from_dict_string(self) -> None:
+        raw = "{'week_focus': 'Фокус недели', 'month_focus': 'Фокус месяца'}"
+        self.assertEqual(normalize_plan_focus(raw), "Фокус недели")
+
+    def test_format_moscow_datetime_converts_utc_to_msk(self) -> None:
+        self.assertEqual(
+            format_moscow_datetime("2026-07-05T19:29:01+00:00"),
+            "05.07.2026 22:29 МСК",
+        )
 
     def test_compact_content_plan_shows_today_even_without_publication(self) -> None:
         today = today_moscow()

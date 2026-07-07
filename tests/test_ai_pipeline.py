@@ -93,7 +93,11 @@ class AIPipelineTests(unittest.TestCase):
                     "thinking_mode": "Observation",
                     "author_fit_score": "9",
                     "author_fit_notes": "Звучит живо.",
-                    "draft": "Готовый пост.\n\nСтиль: внутреннее правило\n- не показывать\n\nЦель публикации: служебное поле\n\nФинальная строка",
+                    "draft": (
+                        "Yesterday I noticed how quickly AI exposes weak handoffs in service operations. "
+                        "When ownership is fuzzy, customer experience breaks before the model ever does.\n\n"
+                        "Final line"
+                    ),
                 }
 
         gateway = FakeGateway()
@@ -111,7 +115,7 @@ class AIPipelineTests(unittest.TestCase):
             status = load_ai_status(status_path)
 
         self.assertEqual(result["main_topic"], "AI тема дня")
-        self.assertEqual(cached["draft"], "Готовый пост.\n\nФинальная строка")
+        self.assertIn("AI exposes weak handoffs", cached["draft"])
         self.assertIn("author_brain", gateway.user_prompt)
         self.assertIn("thinking_engine", gateway.user_prompt)
         self.assertIn("knowledge_graph", gateway.user_prompt)

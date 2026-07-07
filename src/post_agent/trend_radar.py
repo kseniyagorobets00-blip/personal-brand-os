@@ -142,8 +142,17 @@ class TrendRadar:
                 else self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [], author_brain)
                 for source in sources
             ]
+        elif analysis_mode == "ai" and external_count > 0:
+            extras = [
+                self._build_topic(source, content_plan, documents, cases, ideas, graph_links or [], author_brain or {})
+                for source in _pick_diverse_rule_sources(sources, limit=8)
+            ]
+            topics = topics + extras
         grouped = self._group_similar_topics(topics)
-        filtered = sorted(grouped, key=lambda item: item.trend_score, reverse=True)[:12]
+        filtered = _limit_topics_per_source(
+            sorted(grouped, key=lambda item: item.trend_score, reverse=True),
+            max_per_source=2,
+        )[:12]
         generated_at = datetime.now(timezone.utc)
         cache = {
             "generated_at": generated_at.isoformat(timespec="seconds"),
@@ -332,6 +341,14 @@ class TrendRadar:
         graph_links: list[dict[str, str]],
         author_brain: dict[str, object],
     ) -> list[TrendTopic]:
+        signal_sources = [
+            source
+            for source in sources
+            if str(source.get("title", "")).strip()
+        ]
+        if not signal_sources:
+            return []
+        sampled_sources = _balanced_signal_sample(signal_sources, limit=48)
         signals = [
             {
                 "title": str(source.get("title", "")),
@@ -340,11 +357,8 @@ class TrendRadar:
                 "url": str(source.get("url", "")),
                 "category": str(source.get("category", "")),
             }
-            for source in sources
-            if str(source.get("title", "")).strip()
+            for source in sampled_sources
         ]
-        if not signals:
-            return []
         try:
             raw_trends = synthesizer(signals, author_brain, content_plan) or []
         except Exception:  # noqa: BLE001 - synthesis must fail closed to the rule-based path
@@ -353,7 +367,16 @@ class TrendRadar:
         for trend in raw_trends:
             if isinstance(trend, dict) and str(trend.get("title", "")).strip():
                 topics.append(
-                    self._build_ai_topic(trend, content_plan, documents, cases, ideas, graph_links, author_brain)
+                    self._build_ai_topic(
+                        trend,
+                        content_plan,
+                        documents,
+                        cases,
+                        ideas,
+                        graph_links,
+                        author_brain,
+                        source_signals=signal_sources,
+                    )
                 )
         return topics
 
@@ -366,6 +389,7 @@ class TrendRadar:
         ideas: list[object],
         graph_links: list[dict[str, str]],
         author_brain: dict[str, object],
+        source_signals: list[dict[str, object]] | None = None,
     ) -> TrendTopic:
         title = str(trend.get("title", "")).strip()
         category = str(trend.get("category", "")).strip() or _category({"title": title, "description": str(trend.get("trend_essence", ""))})
@@ -381,10 +405,14 @@ class TrendRadar:
         hype_level = str(trend.get("hype_level", "")).strip() or "средний"
         relevance_forecast = str(trend.get("relevance_forecast", "")).strip() or "1-2 недели"
 
-        supporting = _supporting_sources(trend.get("supporting_sources"))
+        supporting = _resolve_trend_sources(
+            trend,
+            _supporting_sources(trend.get("supporting_sources")),
+            source_signals or [],
+        )
         source_names = [name for name, _ in supporting] or _as_list(trend.get("sources", []))
         source_url = next((url for _, url in supporting if url), "")
-        source_label = ", ".join(source_names) if source_names else "Мировые СМИ (AI-анализ)"
+        source_label = ", ".join(dict.fromkeys(source_names)) if source_names else "Мировые СМИ (AI-анализ)"
 
         publication_ideas = _clean_publication_ideas(trend.get("publication_ideas")) or _publication_ideas(title, category)
 
@@ -1402,6 +1430,137 @@ def _clamp_score(value: object, default: float) -> float:
     except (TypeError, ValueError):
         return round(default, 1)
     return round(max(0.0, min(10.0, number)), 1)
+
+
+def _balanced_signal_sample(signals: list[dict[str, object]], limit: int = 48) -> list[dict[str, object]]:
+    if len(signals) <= limit:
+        return signals
+    by_source: dict[str, list[dict[str, object]]] = {}
+    for signal in signals:
+        name = str(signal.get("source", "")).strip() or "unknown"
+        by_source.setdefault(name, []).append(signal)
+    feed_names = sorted(by_source)
+    picked: list[dict[str, object]] = []
+    index = 0
+    while len(picked) < limit:
+        added = False
+        for name in feed_names:
+            items = by_source[name]
+            if index < len(items):
+                picked.append(items[index])
+                added = True
+                if len(picked) >= limit:
+                    break
+        if not added:
+            break
+        index += 1
+    return picked
+
+
+def _match_signals_for_trend(
+    trend: dict[str, object],
+    signals: list[dict[str, object]],
+    *,
+    limit: int = 4,
+) -> list[tuple[str, str]]:
+    query_tokens = _tokens(
+        " ".join(str(trend.get(key, "")) for key in ("title", "trend_essence", "main_idea", "description", "category"))
+    )
+    if not query_tokens:
+        return []
+    scored: list[tuple[float, dict[str, object]]] = []
+    for signal in signals:
+        signal_tokens = _tokens(
+            " ".join(
+                (
+                    str(signal.get("title", "")),
+                    str(signal.get("description", "")),
+                    str(signal.get("summary", "")),
+                    str(signal.get("category", "")),
+                )
+            )
+        )
+        score = _jaccard(query_tokens, signal_tokens)
+        if score >= 0.06:
+            scored.append((score, signal))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    result: list[tuple[str, str]] = []
+    seen_sources: set[str] = set()
+    for _, signal in scored:
+        name = str(signal.get("source", "")).strip()
+        url = str(signal.get("url", "")).strip()
+        if not name:
+            continue
+        if name in seen_sources and len(result) >= 1:
+            continue
+        result.append((name, url))
+        seen_sources.add(name)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _resolve_trend_sources(
+    trend: dict[str, object],
+    ai_supporting: list[tuple[str, str]],
+    signals: list[dict[str, object]],
+) -> list[tuple[str, str]]:
+    matched = _match_signals_for_trend(trend, signals, limit=4)
+    valid_signal_sources = {
+        str(item.get("source", "")).strip()
+        for item in signals
+        if str(item.get("source", "")).strip()
+    }
+    ai_valid = [(name, url) for name, url in ai_supporting if name in valid_signal_sources]
+    if matched and len({name for name, _ in ai_valid}) <= 1:
+        return matched
+    if ai_valid and matched:
+        merged: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for name, url in ai_valid + matched:
+            if name in seen:
+                continue
+            merged.append((name, url))
+            seen.add(name)
+            if len(merged) >= 4:
+                break
+        return merged
+    return ai_valid or matched
+
+
+def _pick_diverse_rule_sources(sources: list[dict[str, object]], limit: int = 8) -> list[dict[str, object]]:
+    preferred_categories = ("Hospitality", "Operations", "Customer Experience", "Management", "External", "AI")
+    by_category: dict[str, list[dict[str, object]]] = {}
+    for source in sources:
+        category = str(source.get("category", "External")).strip() or "External"
+        by_category.setdefault(category, []).append(source)
+    picked: list[dict[str, object]] = []
+    seen_feeds: set[str] = set()
+    for category in preferred_categories:
+        for source in by_category.get(category, []):
+            feed = str(source.get("source", "")).strip()
+            if not feed or feed in seen_feeds:
+                continue
+            seen_feeds.add(feed)
+            picked.append(source)
+            if len(picked) >= limit:
+                return picked
+    return picked
+
+
+def _limit_topics_per_source(topics: list[TrendTopic], max_per_source: int = 2) -> list[TrendTopic]:
+    counts: dict[str, int] = {}
+    result: list[TrendTopic] = []
+    for topic in topics:
+        primary_sources = list(topic.sources) or [
+            part.strip() for part in topic.source.split(",") if part.strip()
+        ]
+        primary = primary_sources[0] if primary_sources else "unknown"
+        if counts.get(primary, 0) >= max_per_source:
+            continue
+        counts[primary] = counts.get(primary, 0) + 1
+        result.append(topic)
+    return result
 
 
 def _supporting_sources(value: object) -> list[tuple[str, str]]:

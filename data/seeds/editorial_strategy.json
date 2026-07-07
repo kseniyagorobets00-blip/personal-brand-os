@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-04T11:51:07+00:00",
+  "updated_at": "2026-07-05T18:26:09+00:00",
   "rubric_library": {
     "Аналитика": [
       "проблема",
@@ -66,15 +66,15 @@
       "day": "Понедельник",
       "platform": "LinkedIn",
       "rubric": "Аналитика",
-      "format": "экспертный пост",
+      "format": "карусель/пост",
       "active": true,
       "note": ""
     },
     {
       "day": "Вторник",
-      "platform": "Telegram",
+      "platform": "Сетка",
       "rubric": "Наблюдение",
-      "format": "короткий пост",
+      "format": "пост",
       "active": true,
       "note": ""
     },
@@ -96,27 +96,27 @@
     },
     {
       "day": "Пятница",
-      "platform": "Telegram",
+      "platform": "Сетка",
       "rubric": "Разговорный пост",
-      "format": "короткий пост",
+      "format": "экспертный пост",
       "active": true,
       "note": ""
     },
     {
       "day": "Суббота",
-      "platform": "Сетка",
-      "rubric": "Наблюдение",
+      "platform": "LinkedIn",
+      "rubric": "Инструменты",
       "format": "экспертный пост",
       "active": true,
       "note": ""
     },
     {
       "day": "Воскресенье",
-      "platform": "Telegram",
-      "rubric": "Наблюдение",
-      "format": "мини-пост",
-      "active": false,
-      "note": "Выходной"
+      "platform": "VC",
+      "rubric": "Storytelling",
+      "format": "пост",
+      "active": true,
+      "note": ""
     }
   ]
 }

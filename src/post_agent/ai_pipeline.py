@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import sys
 from pathlib import Path
@@ -13,7 +12,7 @@ from .ai_context import AIContextEngine, _target_publication
 from .ai_gateway import AIGateway, AIGatewayError, DEFAULT_ENV_PATH, load_ai_config
 from .author_brain import FORBIDDEN_OPENINGS, AuthorBrain, AuthorBrainRepository
 from .author_profile import AuthorProfileRepository
-from .daily_brief import ROOT, SeedRepository
+from .daily_brief import ROOT, SeedRepository, now_moscow_iso
 from .idea_vault import IdeaVault
 from .knowledge import KnowledgeBase
 from .knowledge_graph import KnowledgeGraph
@@ -170,7 +169,7 @@ class AIPipeline:
         return context
 
     def _normalize_response(self, response: dict[str, Any]) -> dict[str, Any]:
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        now = now_moscow_iso()
         return {
             "generated_at": now,
             "model": self.gateway.model_for("ai_pipeline_draft"),
@@ -219,7 +218,7 @@ class AICache:
             "state": state,
             "message": message,
             "error": error,
-            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "updated_at": now_moscow_iso(),
         }
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
         self.status_path.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
