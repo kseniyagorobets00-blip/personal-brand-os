@@ -132,7 +132,9 @@ class TextPostRepository:
             if lowered_query and lowered_query not in post.title.lower():
                 continue
             result.append(post)
-        return sorted(result, key=_sort_key, reverse=True)
+        # Planned: soonest publication first (earliest date at top), so the list
+        # reads as an upcoming schedule. Archive: most recently published first.
+        return sorted(result, key=_sort_key, reverse=(tab == "archive"))
 
     def get(self, post_id: str) -> TextPost | None:
         for item in self._read():

@@ -8,6 +8,31 @@ from post_agent.web import render_text_post_detail, render_text_posts_page
 
 
 class TextPostRepositoryTests(unittest.TestCase):
+    def test_planned_posts_sort_earliest_date_first(self) -> None:
+        plan = {
+            "planned_publications": [
+                {"date": "2026-07-12", "platform": "Сетка", "topic": "Post D", "status": "draft"},
+                {"date": "2026-07-09", "platform": "LinkedIn", "topic": "Post A", "status": "draft"},
+                {"date": "2026-07-11", "platform": "VC", "topic": "Post C", "status": "draft"},
+                {"date": "2026-07-10", "platform": "Telegram", "topic": "Post B", "status": "draft"},
+            ]
+        }
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            repository.sync_from_content_plan(plan)
+            planned = repository.list_posts("planned")
+
+        self.assertEqual([p.title for p in planned], ["Post A", "Post B", "Post C", "Post D"])
+
+    def test_archive_posts_sort_most_recent_first(self) -> None:
+        with TemporaryDirectory() as directory:
+            repository = TextPostRepository(Path(directory) / "posts.json")
+            repository.add_archive("Old post", "LinkedIn", "2026-06-01", "text1")
+            repository.add_archive("New post", "LinkedIn", "2026-07-05", "text2")
+            archive = repository.list_posts("archive")
+
+        self.assertEqual([p.title for p in archive], ["New post", "Old post"])
+
     def test_syncs_planned_posts_without_overwriting_manual_text(self) -> None:
         plan = {
             "week_start": "2026-07-06",
