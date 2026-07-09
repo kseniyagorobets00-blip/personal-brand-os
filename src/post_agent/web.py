@@ -5007,18 +5007,31 @@ def render_idea_vault(
         notices.append("Статус идеи обновлен.")
     notice_html = "".join(f"<div class=\"notice\">{escape(item)}</div>" for item in notices)
     author_profile = AuthorBrainRepository().load_profile()
+    idea_cards = (
+        "".join(_memory_idea_card(idea) for idea in ideas)
+        if ideas
+        else "<div class=\"empty\">Пока нет сохранённых идей. Сохраните тему из Радара трендов, Дневного брифа, или добавьте вручную в «Память → Идеи».</div>"
+    )
     content = f"""
     {notice_html}
-    {_key_ideas_section(author_profile)}
     <section class="block">
-      <p class="page-hint">Свободные идеи и заготовки теперь живут в разделе <a href="/knowledge?section=ideas">«Память → Идеи»</a> — там же появляются идеи из Дневного брифа и Радара трендов. Здесь остаются только ключевые идеи автора.</p>
+      <div class="section-title">
+        <div>
+          <p class="eyebrow">сохранённые идеи</p>
+          <h2>Идеи</h2>
+        </div>
+        <span>{len(ideas)} записей</span>
+      </div>
+      <p class="page-hint">Сюда попадают идеи из Радара трендов, Дневного брифа и добавленные вручную — AI использует их при составлении контент-плана. Этот же список можно редактировать в <a href="/knowledge?section=ideas">«Память → Идеи»</a>.</p>
+      <div class="knowledge-list">{idea_cards}</div>
     </section>
+    {_key_ideas_section(author_profile)}
 """
     return _page_shell(
         title="Идеи",
-        eyebrow="ключевые идеи автора",
-        heading="Ключевые идеи",
-        hint="Опорные убеждения автора, на которые AI опирается при генерации.",
+        eyebrow="идеи и ключевые убеждения автора",
+        heading="Идеи",
+        hint="Сохранённые идеи для будущих постов и ключевые убеждения автора, на которые опирается AI.",
         active="ideas",
         content=content,
     )
@@ -5039,7 +5052,7 @@ def _key_ideas_section(profile: dict[str, object]) -> str:
           <h2>Ключевые идеи автора</h2>
         </div>
       </div>
-      <p class="page-hint">Это опорные убеждения из профиля автора — не то же самое, что свободные идеи в «Память → Идеи». AI опирается на них при генерации. Их также можно редактировать в разделе «Профиль автора».</p>
+      <p class="page-hint">Это опорные убеждения из профиля автора — не то же самое, что сохранённые идеи выше. AI опирается на них при генерации.</p>
       <form class="profile-form" method="post" action="/ideas/key-ideas">
         <div class="card-list">{rows}</div>
         <section class="profile-section">

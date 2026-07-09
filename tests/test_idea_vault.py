@@ -44,19 +44,26 @@ class IdeaVaultTests(unittest.TestCase):
     def test_idea_vault_ui_renders_list_and_detail_actions(self) -> None:
         with TemporaryDirectory() as directory:
             vault = IdeaVault(Path(directory) / "ideas.json")
-            idea = vault.add_idea("AI accelerates chaos", "A strong operations angle.")
+            idea = vault.add_idea("AI accelerates chaos", "A strong operations angle.", source="Trend Radar")
 
             list_html = render_idea_vault(vault.list_ideas())
             detail_html = render_idea_detail(idea)
 
-        # The ideas page now shows only the author's key ideas; free ideas moved to Memory.
+        # Saved ideas (e.g. from the Trend Radar's «Добавить в идеи» button) must be
+        # visible right on this page — the sidebar's «Идеи» link is exactly where a
+        # user looks for them after saving one, so a hint-only stub is not enough.
+        self.assertIn("AI accelerates chaos", list_html)
         self.assertIn("Ключевые идеи", list_html)
         self.assertIn("/knowledge?section=ideas", list_html)
-        self.assertNotIn("Добавить идею вручную", list_html)
         self.assertIn("Обновить статус", detail_html)
         self.assertIn("Удалить идею", detail_html)
         self.assertIn("Добавить в контент-план", detail_html)
         self.assertIn(f"/ideas/plan/{idea.id}", detail_html)
+
+    def test_idea_vault_ui_shows_empty_state_without_saved_ideas(self) -> None:
+        list_html = render_idea_vault([])
+
+        self.assertIn("Пока нет сохранённых идей", list_html)
 
     def test_idea_is_added_to_content_plan_once(self) -> None:
         with TemporaryDirectory() as directory:
