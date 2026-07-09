@@ -35,11 +35,15 @@ class TextPostRepositoryTests(unittest.TestCase):
         self.assertEqual(loaded.status, "approved")
         self.assertIsNotNone(approved)
 
-    def test_orphaned_plan_drafts_are_pruned_but_edited_ones_kept(self) -> None:
+    def test_regenerated_plan_prunes_orphans_but_keeps_manual_and_published(self) -> None:
+        # The planned tab mirrors the current plan. After a regeneration that drops
+        # both plan posts, they must disappear — even one the user typed text into —
+        # while a hand-added post and an archived (published) one are kept.
         plan_a = {
             "planned_publications": [
                 {"date": "2026-07-06", "platform": "LinkedIn", "topic": "Untouched draft", "status": "planned"},
                 {"date": "2026-07-07", "platform": "Telegram", "topic": "Edited draft", "status": "planned"},
+                {"date": "2026-07-08", "platform": "VC", "topic": "Published one", "status": "planned"},
             ]
         }
         plan_b = {"planned_publications": []}
@@ -48,12 +52,20 @@ class TextPostRepositoryTests(unittest.TestCase):
             repository.sync_from_content_plan(plan_a)
             edited = next(p for p in repository.list_posts("planned") if p.title == "Edited draft")
             repository.update(edited.id, edited.title, edited.platform, edited.publication_date, "My real text", "draft")
+            published = next(p for p in repository.list_posts("planned") if p.title == "Published one")
+            repository.update(published.id, published.title, published.platform, published.publication_date, "Posted text", "published", tab="archive")
+            manual = repository.add_planned("My own idea", "LinkedIn", "2026-07-09", "Typed by hand")
             repository.sync_from_content_plan(plan_b)
-            remaining = repository.list_posts("planned")
+            planned_titles = {p.title for p in repository.list_posts("planned")}
+            archive_titles = {p.title for p in repository.list_posts("archive")}
 
-        titles = {p.title for p in remaining}
-        self.assertNotIn("Untouched draft", titles)
-        self.assertIn("Edited draft", titles)
+        # Orphaned content-plan posts are gone, even the edited one.
+        self.assertNotIn("Untouched draft", planned_titles)
+        self.assertNotIn("Edited draft", planned_titles)
+        # Manual posts and the published/archived post survive.
+        self.assertIn("My own idea", planned_titles)
+        self.assertIn("Published one", archive_titles)
+        self.assertEqual(manual.source, "manual")
 
     def test_manual_archive_posts_are_available_for_ai(self) -> None:
         with TemporaryDirectory() as directory:

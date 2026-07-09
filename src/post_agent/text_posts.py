@@ -103,10 +103,10 @@ class TextPostRepository:
                 }
             )
             changed = True
-        # Drop orphaned drafts left over from previous plan versions — but only
-        # untouched ones (came from the content plan, still a draft, empty body).
-        # Anything the user wrote, approved or archived is always kept.
-        pruned = [item for item in raw if not _is_orphan_plan_draft(item, current_keys)]
+        # The «Запланировано» tab mirrors the current content plan: drop posts that
+        # came from a previous plan version and are no longer in it, unless they were
+        # published. Manually added posts and the archive are always kept.
+        pruned = [item for item in raw if not _is_orphan_plan_post(item, current_keys)]
         if len(pruned) != len(raw):
             raw = pruned
             changed = True
@@ -257,16 +257,18 @@ class TextPostRepository:
         )
 
 
-def _is_orphan_plan_draft(item: dict[str, object], current_keys: set[str]) -> bool:
+def _is_orphan_plan_post(item: dict[str, object], current_keys: set[str]) -> bool:
+    """A content-plan post that no longer matches any publication in the current
+    plan and was never published — a stale leftover from a regenerated plan, so it
+    is dropped from «Запланировано». Manually added posts (source != content_plan)
+    and published/archived posts are always kept."""
     if not isinstance(item, dict):
         return False
     if str(item.get("source", "")) != "content_plan":
         return False
     if str(item.get("tab", "planned")) != "planned":
         return False
-    if str(item.get("status", "draft")) != "draft":
-        return False
-    if str(item.get("text", "")).strip():
+    if str(item.get("status", "")).strip().lower() in {"published", "archived"}:
         return False
     return str(item.get("source_key", "")) not in current_keys
 
