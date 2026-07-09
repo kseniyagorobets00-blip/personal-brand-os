@@ -246,7 +246,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         if path == "/content-plan/open-text":
             query = parse_qs(urlparse(self.path).query)
             plan = _load_content_plan_raw()
-            self.text_posts.sync_from_content_plan(plan)
+            self.text_posts.sync_from_content_plan(_current_week_plan_for_sync(plan))
             target = _text_post_for_publication(
                 self.text_posts,
                 query.get("platform", [""])[0],
@@ -260,7 +260,7 @@ class DailyBriefRequestHandler(BaseHTTPRequestHandler):
         if path == "/texts":
             query = parse_qs(urlparse(self.path).query)
             plan = _content_plan_with_query_period(_load_content_plan_raw(), query)
-            self.text_posts.sync_from_content_plan(plan)
+            self.text_posts.sync_from_content_plan(_current_week_plan_for_sync(plan))
             self._send_html(render_text_posts_page(self.text_posts, query, plan))
             return
         if path.startswith("/texts/"):
@@ -3243,6 +3243,17 @@ def _split_week_publications(
     return inside, outside
 
 
+def _current_week_plan_for_sync(plan: dict[str, object]) -> dict[str, object]:
+    """Scope a plan to just its current week's publications before syncing to
+    Тексты. «Запланировано» must mirror exactly the active plan period — not
+    older, out-of-week publications the plan keeps in storage for history."""
+    week_start, week_end = _content_plan_period(plan)
+    week_publications, _ = _split_week_publications(plan.get("planned_publications", []), week_start, week_end)
+    scoped = dict(plan)
+    scoped["planned_publications"] = week_publications
+    return scoped
+
+
 def _published_posts_for_calendar(plan: dict[str, object]) -> list[dict[str, str]]:
     """Every post ever published, as simple dated cards for the calendar.
 
@@ -5499,7 +5510,7 @@ def _textarea(name: str, label: str, value: object) -> str:
 
 
 def _drafts_to_prepare_section(brief: DailyBrief, ai_result: dict[str, object] | None = None) -> str:
-    TextPostRepository().sync_from_content_plan(_load_content_plan_raw())
+    TextPostRepository().sync_from_content_plan(_current_week_plan_for_sync(_load_content_plan_raw()))
     cards = "".join(
         _draft_to_prepare_card(topic, draft, brief, ai_result if index == 0 else None)
         for index, (topic, draft) in enumerate(zip(brief.topics, brief.drafts))

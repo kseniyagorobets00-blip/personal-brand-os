@@ -9,7 +9,7 @@ from post_agent.ai_gateway import AIGatewayError
 from post_agent.author_profile import AuthorProfileRepository
 from post_agent.daily_brief import ContentPlan, DailyBriefService, PlannedPublication, SeedRepository, refresh_stale_content_plan, today_moscow, weekday_name_for_date
 from post_agent.export import export_daily_brief
-from post_agent.web import _author_profile_form_to_raw, _clean_focus_value, _compact_content_plan_block, _content_plan_with_query_period, _mark_plan_publication_published, _publish_reminder_block, _refine_with_ai, _save_content_plan_form, _text_matches_platform, _text_post_for_publication, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
+from post_agent.web import _author_profile_form_to_raw, _clean_focus_value, _compact_content_plan_block, _content_plan_with_query_period, _current_week_plan_for_sync, _load_content_plan_raw, _mark_plan_publication_published, _publish_reminder_block, _refine_with_ai, _save_content_plan_form, _text_matches_platform, _text_post_for_publication, render_author_profile, render_content_plan_page, render_daily_brief, render_idea_vault
 from post_agent.text_posts import TextPostRepository
 
 
@@ -887,6 +887,57 @@ class DailyBriefTests(unittest.TestCase):
         self.assertIsNotNone(found)
         self.assertEqual(found.title, "Синхронная тема")
         self.assertIsNone(missing)
+
+    def test_current_week_plan_for_sync_drops_out_of_week_publications(self) -> None:
+        plan = {
+            "week_start": "2026-07-09",
+            "week_end": "2026-07-12",
+            "planned_publications": [
+                {"date": "2026-07-09", "platform": "LinkedIn", "topic": "Post A"},
+                {"date": "2026-07-12", "platform": "VC", "topic": "Post D"},
+                {"date": "2026-07-15", "platform": "VC", "topic": "Stale leftover"},
+            ],
+        }
+
+        scoped = _current_week_plan_for_sync(plan)
+
+        topics = {p["topic"] for p in scoped["planned_publications"]}
+        self.assertEqual(topics, {"Post A", "Post D"})
+
+    def test_texts_planned_tab_mirrors_current_plan_window_exactly(self) -> None:
+        # Reproduces the reported bug: the plan window is 09-12 with 4 posts, but
+        # «Запланировано» kept showing leftover drafts through the 15th, preserved
+        # in storage from earlier plan regenerations. Тексты must show exactly the
+        # plan's current window — no more, no less.
+        with TemporaryDirectory() as directory:
+            plan_path = Path(directory) / "content_plan.json"
+            posts_path = Path(directory) / "posts.json"
+            plan_path.write_text(
+                json.dumps(
+                    {
+                        "week_start": "2026-07-09",
+                        "week_end": "2026-07-12",
+                        "planned_publications": [
+                            {"date": "2026-07-09", "platform": "LinkedIn", "topic": "Post A", "status": "draft"},
+                            {"date": "2026-07-10", "platform": "Telegram", "topic": "Post B", "status": "draft"},
+                            {"date": "2026-07-11", "platform": "VC", "topic": "Post C", "status": "draft"},
+                            {"date": "2026-07-12", "platform": "Сетка", "topic": "Post D", "status": "draft"},
+                            {"date": "2026-07-13", "platform": "LinkedIn", "topic": "Stale E", "status": "draft"},
+                            {"date": "2026-07-14", "platform": "Telegram", "topic": "Stale F", "status": "approved"},
+                            {"date": "2026-07-15", "platform": "VC", "topic": "Stale G", "status": "draft"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("post_agent.web.DEFAULT_CONTENT_PLAN_PATH", plan_path):
+                plan = _content_plan_with_query_period(_load_content_plan_raw(), {})
+                scoped = _current_week_plan_for_sync(plan)
+                repository = TextPostRepository(posts_path)
+                repository.sync_from_content_plan(scoped)
+                planned_titles = {p.title for p in repository.list_posts("planned")}
+
+        self.assertEqual(planned_titles, {"Post A", "Post B", "Post C", "Post D"})
 
     def test_content_plan_next_stage_advances_publication_status(self) -> None:
         with TemporaryDirectory() as directory:
